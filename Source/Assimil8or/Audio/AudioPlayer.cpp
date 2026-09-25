@@ -1,4 +1,6 @@
 #include "AudioPlayer.h"
+#include <cmath>
+#include <limits>
 #include "../../Assimil8or/PresetManagerProperties.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/PersistentRootProperties.h"
@@ -38,6 +40,10 @@ void AudioPlayer::init (juce::ValueTree rootPropertiesVT)
 
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::owner, AudioPlayerProperties::EnableCallbacks::yes);
     audioPlayerProperties.onShowConfigDialog = [this] () { showConfigDialog (); };
+    audioPlayerProperties.onAuditionRateChange = [this] (double rate) { handleAuditionRate (rate); };
+    audioPlayerProperties.onPreservePitchChange = [this] (bool preserve) { handlePreservePitch (preserve); };
+    handlePreservePitch (audioPlayerProperties.getPreservePitch ());
+    handleAuditionRate (audioPlayerProperties.getAuditionRate ());
     audioPlayerProperties.onPlayStateChange = [this] (AudioPlayerProperties::PlayState newPlayState)
     {
         LogAudioPlayer ("init: audioPlayerProperties.onPlayStateChange");
@@ -57,16 +63,21 @@ void AudioPlayer::init (juce::ValueTree rootPropertiesVT)
     };
     audioDeviceManager.addChangeListener (this);
     configureAudioDevice (audioSettingsProperties.getConfig ());
+    startTimerHz (30);
 }
 
 void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
 {
+    juce::ScopedLock sourceLock (dataCS);
+    playbackPosition.store (-1.0);
     LogAudioPlayer ("initFromZone");
     auto [channelIndex, zoneIndex] { channelAndZoneIndecies };
     jassert (channelIndex < 8);
     jassert (zoneIndex < 8);
     channelProperties.wrap (presetProperties.getChannelVT (channelIndex), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     zoneProperties.wrap (channelProperties.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::yes);
+    zoneProperties.onPitchOffsetChange = [this] (double semitones) { handleZonePitch (semitones); };
+    handleZonePitch (zoneProperties.getPitchOffset ());
     sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::owner, SampleProperties::EnableCallbacks::yes);
 
     if (channelIndex < 7)
@@ -244,6 +255,9 @@ void AudioPlayer::initSamplePoints ()
 
 void AudioPlayer::prepareSampleForPlayback ()
 {
+    juce::ScopedLock sl (dataCS);
+    resetAuditionResampler = true;
+    playbackPosition.store (-1.0);
     jassert (playState == AudioPlayerProperties::PlayState::stop);
     if (zoneProperties.isValid () && sampleProperties.isValid () && sampleProperties.getStatus () == SampleStatus::exists)
     {
@@ -323,9 +337,11 @@ void AudioPlayer::prepareSampleForPlayback ()
 
 void AudioPlayer::shutdownAudio ()
 {
+    stopTimer ();
     audioSourcePlayer.setSource (nullptr);
     audioDeviceManager.removeAudioCallback (&audioSourcePlayer);
     audioDeviceManager.closeAudioDevice ();
+    playbackPosition.store (-1.0);
 }
 
 void AudioPlayer::configureAudioDevice (juce::String config)
@@ -353,6 +369,7 @@ void AudioPlayer::configureAudioDevice (juce::String config)
 void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState)
 {
     juce::ScopedLock sl (dataCS);
+    resetAuditionResampler = true;
     if (newPlayState == AudioPlayerProperties::PlayState::stop)
     {
         LogAudioPlayer ("AudioPlayer::handlePlayState: stop");
@@ -368,6 +385,9 @@ void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState
         curSampleOffset = sampleStart;
     }
     playState = newPlayState;
+    playbackFinished.store (false);
+    playbackPosition.store (newPlayState == AudioPlayerProperties::PlayState::stop || sampleRateRatio <= 0.0
+                                ? -1.0 : curSampleOffset / sampleRateRatio);
 }
 
 void AudioPlayer::showConfigDialog ()
@@ -383,14 +403,61 @@ void AudioPlayer::showConfigDialog ()
 
 void AudioPlayer::prepareToPlay (int samplesPerBlockExpected, double newSampleRate)
 {
+    juce::ScopedLock sl (dataCS);
     LogAudioPlayer ("prepareToPlay");
     sampleRate = newSampleRate;
     blockSize = samplesPerBlockExpected;
     prepareSampleForPlayback ();
+    prepareAuditionResampler ();
 }
 
 void AudioPlayer::releaseResources ()
 {
+    juce::ScopedLock sl (dataCS);
+    auditionResampler.releaseResources ();
+}
+
+void AudioPlayer::handleAuditionRate (double rate)
+{
+    juce::ScopedLock sl (dataCS);
+    auditionRate = std::isfinite (rate) ? juce::jlimit (AudioPlayerProperties::minAuditionRate,
+                                                     AudioPlayerProperties::maxAuditionRate, rate) : 1.0;
+    auditionResampler.setResamplingRatio (effectiveAuditionRate ());
+    // Re-align spectral look-ahead to the audible position at the new rate.
+    // Varispeed can change ratio in place without resetting its phase.
+    if (preservePitch) resetAuditionResampler = true;
+}
+
+void AudioPlayer::handlePreservePitch (bool preserve)
+{
+    juce::ScopedLock sl (dataCS);
+    preservePitch = preserve;
+    auditionResampler.setResamplingRatio (effectiveAuditionRate ());
+    resetAuditionResampler = true;
+}
+
+void AudioPlayer::handleZonePitch (double semitones)
+{
+    juce::ScopedLock sl (dataCS);
+    zonePitchOffset = std::isfinite (semitones) ? juce::jlimit (-90.0, 60.0, semitones) : 0.0;
+    auditionResampler.setResamplingRatio (effectiveAuditionRate ());
+    if (preservePitch) resetAuditionResampler = true;
+}
+
+double AudioPlayer::effectiveAuditionRate () const
+{
+    return auditionRate * (preservePitch ? 1.0 : std::pow (2.0, zonePitchOffset / 12.0));
+}
+
+void AudioPlayer::prepareAuditionResampler ()
+{
+    // Allocate enough input capacity for the fastest rate, even when starting
+    // slowly. Changing speed need not allocate or reprocess the entire sample.
+    // Zone offset can add five octaves in varispeed mode (x32).
+    const auto capacity { std::ceil (blockSize * AudioPlayerProperties::maxAuditionRate * 32.0 / effectiveAuditionRate ()) };
+    auditionResampler.prepareToPlay (static_cast<int> (std::min (capacity, static_cast<double> (std::numeric_limits<int>::max ()))), sampleRate);
+    auditionStretch.prepare (sampleRate);
+    resetAuditionResampler = true;
 }
 
 void AudioPlayer::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -407,80 +474,96 @@ void AudioPlayer::changeListenerCallback (juce::ChangeBroadcaster*)
 void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
 {
     bufferToFill.clearActiveBufferRegion ();
-    // fill buffer with data
-
+    // Audition already uses a lock. Keep the buffer, range and playback cursor
+    // in the same snapshot, including while the UI reloads/resamples a sample.
+    juce::ScopedLock sl (dataCS);
     if (playState == AudioPlayerProperties::PlayState::stop)
         return;
 
-    const auto numOutputSamples { bufferToFill.numSamples };
-    auto& outputBuffer { *bufferToFill.buffer };
-    const auto channels { juce::jmin (outputBuffer.getNumChannels (), sampleBuffer->getNumChannels ()) };
-
-    auto originalSampleOffset { 0 };
-    auto cachedSampleLength { 0 };
-    auto cachedSampleStart { 0 };
-    auto cachedLocalSampleOffset { 0 };
-    auto chachedPlayState { AudioPlayerProperties::PlayState::stop };
+    auto finishPlayback = [this] ()
     {
-        // NOTE: I am using a lock in the audio callback ONLY BECAUSE the audio play back is a simple audition feature, not recording or performance playback
-        juce::ScopedLock sl (dataCS);
-        jassert (curSampleOffset >= sampleStart);
-        jassert (curSampleOffset < sampleStart + sampleLength);
-        originalSampleOffset =  curSampleOffset; // should be >= sampleStart and < sampleStart + sampleLength
-        cachedSampleLength = sampleLength;
-        cachedSampleStart = sampleStart;
-        chachedPlayState = playState;
-        cachedLocalSampleOffset = curSampleOffset - sampleStart;
-        LogAudioPlayback ("AudioPlayer::getNextAudioBlock - cachedSampleStart: " + juce::String (cachedSampleStart) + ", chachedSampleLength: " + juce::String (cachedSampleLength) +
-                        ", curSampleOffset: " + juce::String (curSampleOffset) + ", cachedLocalSampleOffset: " + juce::String (cachedLocalSampleOffset));
+        playState = AudioPlayerProperties::PlayState::stop;
+        playbackPosition.store (-1.0);
+        playbackFinished.store (true);
+    };
+    if (sampleBuffer == nullptr || sampleBuffer->getNumChannels () < 2 || sampleStart < 0 || sampleLength <= 0 ||
+        sampleStart >= sampleBuffer->getNumSamples () || sampleRateRatio <= 0.0)
+    {
+        finishPlayback ();
+        return;
     }
-    auto numSamplesToCopy { 0 };
-    auto outputBufferWritePos { 0 };
-    while (cachedSampleLength > 0 && outputBufferWritePos < numOutputSamples)
+
+    const auto end { sampleStart + juce::jmin (sampleLength, sampleBuffer->getNumSamples () - sampleStart) };
+    if (curSampleOffset < sampleStart || curSampleOffset >= end)
+        curSampleOffset = sampleStart;
+    const auto looping { playState == AudioPlayerProperties::PlayState::loop };
+    const auto stretching { preservePitch && (std::abs (auditionRate - 1.0) > 1.0e-9 || std::abs (zonePitchOffset) > 1.0e-9) };
+    const auto speed { effectiveAuditionRate () };
+    if (resetAuditionResampler || renderedStart != sampleStart || renderedEnd != end)
     {
-        numSamplesToCopy = juce::jmin (numOutputSamples - outputBufferWritePos, cachedSampleLength - cachedLocalSampleOffset);
-        LogAudioPlayback ("AudioPlayer::getNextAudioBlock - numSamplesToCopy: " + juce::String (numSamplesToCopy));
-        jassert (numSamplesToCopy >= 0);
-
-        // copy data from sample buffer to output buffer, this may, or may not, fill the entire output buffer
-        auto ch { 0 };
-        for (; ch < channels; ++ch)
-            outputBuffer.copyFrom (ch, bufferToFill.startSample + outputBufferWritePos, *sampleBuffer, ch, cachedSampleStart + cachedLocalSampleOffset, numSamplesToCopy);
-
-        // clear any unused channels
-        for (; ch < outputBuffer.getNumChannels (); ++ch)
-            outputBuffer.clear (ch, bufferToFill.startSample + outputBufferWritePos, numSamplesToCopy);
-
-        outputBufferWritePos += numSamplesToCopy;
-        cachedLocalSampleOffset += numSamplesToCopy;
-        if (chachedPlayState == AudioPlayerProperties::PlayState::loop)
-        {
-            if (cachedLocalSampleOffset >= cachedSampleLength)
-                cachedLocalSampleOffset = 0;
-        }
+        // The input may have read beyond the audible cursor. Discard that
+        // look-ahead when the source/range changes or playback restarts.
+        if (! stretching) curSampleOffset = std::floor (curSampleOffset);
+        readSampleOffset = static_cast<int> (curSampleOffset);
+        renderedStart = sampleStart;
+        renderedEnd = end;
+        auditionResampler.flushBuffers ();
+        if (stretching)
+            auditionStretch.reset (*sampleBuffer, sampleStart, end, curSampleOffset, speed, zonePitchOffset, looping);
+        resetAuditionResampler = false;
+    }
+    const auto count { looping ? bufferToFill.numSamples
+                               : static_cast<int> (std::min (static_cast<double> (bufferToFill.numSamples),
+                                                             std::ceil ((end - curSampleOffset) / speed))) };
+    if (count > 0)
+    {
+        const juce::AudioSourceChannelInfo output { bufferToFill.buffer, bufferToFill.startSample, count };
+        if (stretching) auditionStretch.process (output, speed);
+        else auditionResampler.getNextAudioBlock (output);
+    }
+    curSampleOffset += count * speed;
+    if (curSampleOffset >= end)
+    {
+        if (looping)
+            curSampleOffset = sampleStart + std::fmod (curSampleOffset - sampleStart, end - sampleStart);
         else
         {
-            LogAudioPlayback ("AudioPlayer::getNextAudioBlock - outputBufferWritePos : " + juce::String (outputBufferWritePos) + ", numOutputSamples: " + juce::String (numOutputSamples));
-            if (outputBufferWritePos < numOutputSamples)
-            {
-                outputBuffer.clear (bufferToFill.startSample + outputBufferWritePos, numOutputSamples - outputBufferWritePos);
-                audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
-                break;
-            }
+            finishPlayback ();
+            return; // the one-shot tail is already silent
         }
     }
+    playbackPosition.store (curSampleOffset / sampleRateRatio);
+}
+
+void AudioPlayer::renderAuditionInput (const juce::AudioSourceChannelInfo& bufferToFill)
+{
+    // Called only by auditionResampler inside getNextAudioBlock's dataCS lock.
+    // Feed the resampler, but never finish playback based on its read-ahead.
+    bufferToFill.clearActiveBufferRegion ();
+    const auto channels { juce::jmin (bufferToFill.buffer->getNumChannels (), sampleBuffer->getNumChannels ()) };
+    auto written { 0 };
+    while (written < bufferToFill.numSamples)
     {
-        // NOTE: I am using a lock in the audio callback ONLY BECAUSE the audio play back is a simple audition feature, not recording or performance playback
-        juce::ScopedLock sl (dataCS);
-        if (originalSampleOffset == curSampleOffset && cachedSampleStart == sampleStart && cachedSampleLength == sampleLength) // if the offset has not changed externally
+        if (readSampleOffset >= renderedEnd)
         {
-            curSampleOffset = cachedSampleStart + cachedLocalSampleOffset;
-            LogAudioPlayback ("AudioPlayer::getNextAudioBlock setting new curSampleOffset: " + juce::String (curSampleOffset) + ", cachedSampleStart: " + juce::String (cachedSampleStart) + ", chachedSampleLength: " + juce::String (cachedSampleLength) +
-                            ", cachedLocalSampleOffset: " + juce::String (cachedLocalSampleOffset));
+            if (playState == AudioPlayerProperties::PlayState::loop)
+                readSampleOffset = renderedStart;
+            else
+                return;
         }
-        else
-        {
-            LogAudioPlayback ("AudioPlayer::getNextAudioBlock - curSampleOffset: " + juce::String (cachedSampleStart) + " != originalSampleOffset: " + juce::String (originalSampleOffset));
-        }
+        const auto count { juce::jmin (bufferToFill.numSamples - written, renderedEnd - readSampleOffset) };
+        for (auto channel { 0 }; channel < channels; ++channel)
+            bufferToFill.buffer->copyFrom (channel, bufferToFill.startSample + written, *sampleBuffer, channel, readSampleOffset, count);
+        written += count;
+        readSampleOffset += count;
     }
+}
+
+void AudioPlayer::timerCallback ()
+{
+    // All ValueTree/UI notifications stay on the message thread. The audio
+    // callback only publishes atomics, including natural one-shot completion.
+    if (playbackFinished.exchange (false))
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+    audioPlayerProperties.setPlaybackPosition (playbackPosition.load (), true);
 }

@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "ModernTheme.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 
 const auto toolWindowHeight { 30 };
@@ -36,6 +37,8 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
     {
         assimil8orEditorComponent.overwritePresetOrCancel (overwriteFunction, cancelFunction);
     };
+    currentFolderComponent.overwritePresetOrCancel = fileViewComponent.overwritePresetOrCancel;
+    fileViewComponent.onSelectRootFolder = [this] () { currentFolderComponent.selectRootFolder (); };
     presetListComponent.overwritePresetOrCancel = [this] (std::function<void ()> overwriteFunction, std::function<void ()> cancelFunction)
     {
         assimil8orEditorComponent.overwritePresetOrCancel (overwriteFunction, cancelFunction);
@@ -82,6 +85,16 @@ void MainComponent::restoreLayout ()
 
 void MainComponent::saveLayoutChanges ()
 {
+    // Preserve a useful parameter-grid size; the outer viewport handles small windows.
+    if (folderBrowserEditorSplitter.getWidth () > 1000)
+    {
+        folderBrowserEditorSplitter.setSplitOffset (std::clamp (folderBrowserEditorSplitter.getSplitOffset (), 120,
+            juce::jmax (120, folderBrowserEditorSplitter.getWidth () - 940)));
+        presetListEditorSplitter.setSplitOffset (std::clamp (presetListEditorSplitter.getSplitOffset (), 120,
+            juce::jmax (120, presetListEditorSplitter.getWidth () - 810)));
+    }
+    if (topAndBottomSplitter.getHeight () >= 700)
+        topAndBottomSplitter.setSplitOffset (std::clamp (topAndBottomSplitter.getSplitOffset (), 620, topAndBottomSplitter.getHeight () - 80));
     const auto splitter1Size { presetListEditorSplitter.getSplitOffset () };
     const auto splitter2Size { folderBrowserEditorSplitter.getSplitOffset () };
     const auto splitter3Size { topAndBottomSplitter.getSplitOffset () };
@@ -90,7 +103,7 @@ void MainComponent::saveLayoutChanges ()
 
 void MainComponent::paint ([[maybe_unused]] juce::Graphics& g)
 {
-    g.setColour (juce::Colours::red);
+    g.fillAll (Theme::background);
 }
 
 void MainComponent::resized ()
@@ -100,5 +113,6 @@ void MainComponent::resized ()
     bottomStatusWindow.setBounds (localBounds.removeFromBottom (toolWindowHeight));
     localBounds.reduce (3, 3);
     topAndBottomSplitter.setBounds (localBounds);
+    if (guiProperties.isValid ()) saveLayoutChanges ();
     midiConfigComponent.setBounds (localBounds);
 }

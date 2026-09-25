@@ -8,7 +8,7 @@
 #include "../../../Assimil8or/Audio/AudioManager.h"
 #include "../../../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "../../../Assimil8or/Preset/ZoneProperties.h"
-#include "oolib/GUI/CustomTextEditor.h"
+#include "../../DragValueEditor.h"
 #include "oolib/GUI/FileSelectLabel.h"
 
 class ZoneEditor : public juce::Component,
@@ -27,6 +27,7 @@ public:
 
     // TODO - can we make this local, since we should be able to access the edits through the EditManager
     std::function<void (int zoneIndex)> displayToolsMenu;
+    std::function<void (bool continueSlice)> copyToNext;
 
 private:
     class ClickListener : public juce::MouseListener
@@ -72,28 +73,31 @@ private:
     juce::TextButton oneShotPlayButton;
     juce::TextButton loopPlayButton;
     juce::TextButton toolsButton;
+    juce::TextButton copyNextButton { "Copy > next" };
+    juce::TextButton continueNextButton { "Continue > next" };
+    void updateNextButtons ();
     juce::Rectangle<int> samplePointsBackground;
     juce::Rectangle<int> loopPointsBackground;
     juce::Rectangle<int>* activePointBackground { &samplePointsBackground };
 
     juce::Label levelOffsetLabel;
-    CustomTextEditorDouble levelOffsetTextEditor; // double
+    DragValueEditorDouble levelOffsetTextEditor; // double
     juce::Label loopLengthLabel;
-    CustomTextEditorDouble loopLengthTextEditor; // double
+    DragValueEditorDouble loopLengthTextEditor; // double
     juce::Label loopStartLabel;
-    CustomTextEditorInt64 loopStartTextEditor; // int
+    DragValueEditorInt64 loopStartTextEditor; // int
     juce::Label minVoltageLabel;
-    CustomTextEditorDouble minVoltageTextEditor; // double
+    DragValueEditorDouble minVoltageTextEditor; // double
     juce::Label pitchOffsetLabel;
-    CustomTextEditorDouble pitchOffsetTextEditor; // double
+    DragValueEditorDouble pitchOffsetTextEditor; // double
     juce::TextButton leftChannelSelectButton;
     juce::TextButton rightChannelSelectButton;
     juce::Label sampleNameLabel;
     FileSelectLabel sampleNameSelectLabel; // filename
     juce::Label sampleEndLabel;
-    CustomTextEditorInt64 sampleEndTextEditor; // int
+    DragValueEditorInt64 sampleEndTextEditor; // int
     juce::Label sampleStartLabel;
-    CustomTextEditorInt64 sampleStartTextEditor; // int
+    DragValueEditorInt64 sampleStartTextEditor; // int
 
     ClickListener selectSamplePointsClickListener;
     ClickListener selectLoopPointsClickListener;

@@ -1,6 +1,21 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.24)
 
-project(A8Manager VERSION 2.7.0)
+project(A8Manager VERSION 3.0.0)
+
+# Header-only DSP libraries, pinned for reproducible pitch-preserving audition.
+# Downloads are cached in the build tree, not added to the JUCE/oolib submodules.
+include(FetchContent)
+FetchContent_Declare(signalsmith-linear
+    GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git
+    GIT_TAG de55e6a50ffcf6f8f43f649692d94691c7025151
+    UPDATE_DISCONNECTED TRUE
+    GIT_SUBMODULES "")
+FetchContent_Declare(signalsmith-stretch
+    GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
+    GIT_TAG a670068d9aeb64913331d5cc29337b19a457a7df
+    UPDATE_DISCONNECTED TRUE
+    GIT_SUBMODULES "")
+FetchContent_MakeAvailable(signalsmith-linear signalsmith-stretch)
 
 # Submodules must be initialised before building:
 #   git submodule update --init --recursive
@@ -50,6 +65,8 @@ set(ASSIMIL8OR_AUDIO_FILES
     Source/Assimil8or/Audio/AudioManager.h
     Source/Assimil8or/Audio/AudioPlayer.cpp
     Source/Assimil8or/Audio/AudioPlayer.h
+    Source/Assimil8or/Audio/AuditionStretch.cpp
+    Source/Assimil8or/Audio/AuditionStretch.h
     Source/Assimil8or/Audio/AudioPlayerProperties.cpp
     Source/Assimil8or/Audio/AudioPlayerProperties.h
     Source/Assimil8or/Audio/AudioSettingsProperties.cpp
@@ -116,6 +133,7 @@ set(GUI_EDITOR_FILES
     Source/GUI/Assimil8or/Editor/Assimil8orEditorComponent.h
     Source/GUI/Assimil8or/Editor/ChannelEditor.cpp
     Source/GUI/Assimil8or/Editor/ChannelEditor.h
+    Source/GUI/Assimil8or/Editor/ZoneVoltageDisplay.h
     Source/GUI/Assimil8or/Editor/CvInputComboBox.cpp
     Source/GUI/Assimil8or/Editor/CvInputComboBox.h
     Source/GUI/Assimil8or/Editor/EditManager.cpp
@@ -148,6 +166,8 @@ set(GUI_EDITOR_SAMPLEMANAGER_FILES
     Source/GUI/Assimil8or/Editor/SampleManager/SampleStatus.h)
 
 set(GUI_EDITOR_WAVEFORM_FILES
+    Source/GUI/Assimil8or/Editor/Waveform/RegionMove.h
+    Source/GUI/Assimil8or/Editor/Waveform/RegionMoveWaveform.h
     Source/GUI/Assimil8or/Editor/Waveform/WaveformDisplay.cpp
     Source/GUI/Assimil8or/Editor/Waveform/WaveformDisplay.h)
 
@@ -252,6 +272,7 @@ target_compile_definitions(A8Manager
 
 target_link_libraries(A8Manager
     PRIVATE
+        signalsmith-stretch
         A8ManagerBinaryData
         juce::juce_audio_processors_headless
         juce::juce_audio_utils
@@ -261,6 +282,26 @@ target_link_libraries(A8Manager
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Optimise spectral DSP in Clang/GCC Debug builds, without changing other code.
+# MSVC Debug retains its runtime checks; use Release for listening on Windows.
+set_source_files_properties(Source/Assimil8or/Audio/AuditionStretch.cpp PROPERTIES
+    COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
+
+# Carry the MIT notices with distributed builds, including the macOS app bundle.
+foreach(dependency IN ITEMS signalsmith-stretch signalsmith-linear)
+    configure_file("${${dependency}_SOURCE_DIR}/LICENSE.txt"
+                   "${CMAKE_CURRENT_BINARY_DIR}/licenses/${dependency}-LICENSE.txt" COPYONLY)
+    if(APPLE)
+        target_sources(A8Manager PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/licenses/${dependency}-LICENSE.txt")
+        set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/licenses/${dependency}-LICENSE.txt"
+            PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/licenses")
+    else()
+        add_custom_command(TARGET A8Manager POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_BINARY_DIR}/licenses" "$<TARGET_FILE_DIR:A8Manager>/licenses")
+    endif()
+endforeach()
 
 option(A8MANAGER_BUILD_TESTS "Build the parser/CV and stereo split regression probes" OFF)
 if(A8MANAGER_BUILD_TESTS)

@@ -1,4 +1,6 @@
 #include "ChannelEditor.h"
+#include "../../../Assimil8or/Preset/ZoneContinuation.h"
+#include "../../ModernTheme.h"
 #include "FormatHelpers.h"
 #include "ParameterToolTipData.h"
 #include "../../../SystemServices.h"
@@ -23,10 +25,10 @@
 #define LogDataAndUiChanges(text) ;
 #endif
 
-const auto kLargeLabelSize { 20.0f };
+const auto kLargeLabelSize { 14.0f };
 const auto kMediumLabelSize { 14.0f };
 const auto kSmallLabelSize { 12.0f };
-const auto kLargeLabelIntSize { static_cast<int> (kLargeLabelSize) };
+const auto kLargeLabelIntSize { 18 };
 const auto kMediumLabelIntSize { static_cast<int> (kMediumLabelSize) };
 const auto kSmallLabelIntSize { static_cast<int> (kSmallLabelSize) };
 
@@ -34,7 +36,7 @@ const auto kParameterLineHeight { 20 };
 const auto kFirstControlSectionYOffset { 1 };
 const auto kInterControlYOffset { 2 };
 const auto kInitialYOffset { 5 };
-const auto kNewSectionOffset { 5 };
+const auto kNewSectionOffset { 10 };
 
 const auto kMaxEnvelopeTime { 99.0 };
 
@@ -43,7 +45,7 @@ ChannelEditor::ChannelEditor ()
     // TODO - these lambdas are copies of what is in ChannelEditor::setupChannelComponents, need to DRY
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { juce::Colours::black };
+        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
         label.setColour (juce::Label::ColourIds::textColourId, textColor);
@@ -60,10 +62,10 @@ ChannelEditor::ChannelEditor ()
 
     for (auto curZoneIndex { 0 }; curZoneIndex < 8; ++curZoneIndex)
     {
-        zoneTabs.addTab (juce::String::charToString ('1' + curZoneIndex), juce::Colours::darkgrey, &zoneEditors [curZoneIndex], false);
+        zoneTabs.addTab (juce::String::charToString ('1' + curZoneIndex), Theme::panel, &zoneEditors [curZoneIndex], false);
         zoneTabs.setTabBackgroundColour (curZoneIndex, zoneTabs.getTabBackgroundColour (curZoneIndex).darker (0.2f));
     }
-    zoneTabs.setTabBarDepth (zoneTabs.getTabBarDepth () + 5);
+    zoneTabs.setTabBarDepth (58); // room for the parenthesised access voltage
     zoneTabs.setLookAndFeel (&zonesTabbedLookAndFeel);
     zoneTabs.onSelectedTabChanged = [this] (int)
     {
@@ -179,6 +181,54 @@ void ChannelEditor::copyZone (int zoneIndex, bool settingsOnly)
 }
 
 // TODO - move this to the EditManger
+void ChannelEditor::copyToNextZone (int zoneIndex, bool continueSlice)
+{
+    if (zoneIndex < 0 || zoneIndex >= 7 || channelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
+        return;
+    auto& source { zoneProperties [zoneIndex] };
+    auto& target { zoneProperties [zoneIndex + 1] };
+    SampleProperties sample (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+    const auto next { ZoneContinuation::makeNext (source.getValueTree (), sample.getStatus () == SampleStatus::exists ? sample.getLengthInSamples () : 0, continueSlice) };
+    if (! next.isValid ())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Cannot continue this zone",
+            "Load a sample and set the current zone's end before the end of the file. At least four samples must remain for the next slice.");
+        return;
+    }
+    const auto sourceBefore { source.getValueTree ().createCopy () };
+    const auto targetBefore { target.getValueTree ().createCopy () };
+    const auto channelBefore { channelProperties.getValueTree () };
+    auto apply = [safe = juce::Component::SafePointer<ChannelEditor> (this), zoneIndex, next, sourceBefore, targetBefore, channelBefore] ()
+    {
+        if (safe == nullptr || safe->channelProperties.getValueTree () != channelBefore) return;
+        auto& from { safe->zoneProperties [zoneIndex] };
+        auto& to { safe->zoneProperties [zoneIndex + 1] };
+        if (! from.getValueTree ().isEquivalentTo (sourceBefore) || ! to.getValueTree ().isEquivalentTo (targetBefore)) return;
+        const auto occupied { to.getSample ().isNotEmpty () };
+        const auto targetVoltage { to.getMinVoltage () };
+        const auto lower { from.getMinVoltage () };
+        const auto upper { zoneIndex == 0 ? 5.0 : safe->zoneProperties [zoneIndex - 1].getMinVoltage () };
+        to.copyFrom (next, false);
+        if (occupied)
+            to.setMinVoltage (targetVoltage, true);
+        else
+        {
+            from.setMinVoltage ((upper + lower) / 2.0, true);
+            to.setMinVoltage (lower, true);
+        }
+        safe->updateAllZoneTabNames ();
+        safe->ensureProperZoneIsSelected ();
+        safe->zoneTabs.setCurrentTabIndex (zoneIndex + 1);
+        safe->sampleWaveformDisplay.focusZone ();
+    };
+    if (target.getSample ().isNotEmpty ())
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Replace zone " + juce::String (zoneIndex + 2) + "?",
+            "The next zone already contains a sample. Its sample and settings will be replaced; its voltage boundary will be preserved.",
+            "Replace", "Cancel", nullptr, juce::ModalCallbackFunction::create ([apply] (int result) { if (result != 0) apply (); }));
+    else
+        apply ();
+}
+
 void ChannelEditor::deleteZone (int zoneIndex)
 {
     zoneProperties [zoneIndex].copyFrom (defaultZoneProperties.getValueTree (), false);
@@ -485,13 +535,19 @@ void ChannelEditor::setupChannelComponents ()
 
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { juce::Colours::black };
+        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
         label.setColour (juce::Label::ColourIds::textColourId, textColor);
         label.setFont (label.getFont ().withPointHeight (fontSize));
         label.setText (text, juce::NotificationType::dontSendNotification);
         addAndMakeVisible (label);
+    };
+    auto setupSectionLabel = [&setupLabel] (juce::Label& label, juce::String text)
+    {
+        setupLabel (label, text, kLargeLabelSize, juce::Justification::centredLeft);
+        label.setFont (label.getFont ().boldened ());
+        label.setColour (juce::Label::textColourId, Theme::accent.interpolatedWith (Theme::muted, 0.35f));
     };
     auto setupTextEditor = [this, &parameterToolTipData] (juce::TextEditor& textEditor, juce::Justification justification, int maxLen, juce::String validInputCharacters,
                                                           juce::String parameterName)
@@ -530,7 +586,7 @@ void ChannelEditor::setupChannelComponents ()
     // column one
     //
     // PITCH SECTION LABEL
-    setupLabel (pitchLabel, "PITCH", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (pitchLabel, "PITCH");
 
     // PITCH EDITOR
     pitchTextEditor.getMinValueCallback = [this] () { return minChannelProperties.getPitch (); };
@@ -611,7 +667,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (pitchCVTextEditor, juce::Justification::centred, 0, "+-.0123456789", "PitchCV");
 
     // LINFM SECTION LABEL
-    setupLabel (linFMLabel, "LIN FM", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (linFMLabel, "LIN FM");
 
     // LINFM CV INPUT COMBOBOX
     linFMComboBox.onDragCallback = [this] (double valueDelta)
@@ -669,7 +725,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (linFMTextEditor, juce::Justification::centred, 0, "+-.0123456789", "LinFM");
 
     // EXPFM SECTION LABEL
-    setupLabel (expFMLabel, "EXP FM", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (expFMLabel, "EXP FM");
 
     // EXPFM CV INPUT COMBOBOX
     expFMComboBox.onDragCallback = [this] (double valueDelta)
@@ -727,7 +783,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (expFMTextEditor, juce::Justification::centred, 0, "+-.0123456789", "ExpFM");
 
     // LEVEL SECTION LABEL
-    setupLabel (levelLabel, "LEVEL", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (levelLabel, "LEVEL");
 
     // LEVEL EDITOR
     levelTextEditor.getMinValueCallback = [this] () { return minChannelProperties.getLevel (); };
@@ -753,7 +809,7 @@ void ChannelEditor::setupChannelComponents ()
     setupLabel (levelDbLabel, "dB", kSmallLabelSize, juce::Justification::centredLeft);
 
     // LINAM SECTION LABEL
-    setupLabel (linAMLabel, "LIN AM", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (linAMLabel, "LIN AM");
 
     // LINAM EXT ENVELOPE LABEL
     setupLabel (linAMisExtEnvLabel, "BIAS", kMediumLabelSize, juce::Justification::centredRight);
@@ -835,7 +891,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (linAMTextEditor, juce::Justification::centred, 0, "+-.0123456789", "LinAM");
 
     // EXPAM SECTION LABEL
-    setupLabel (expAMLabel, "EXP AM", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (expAMLabel, "EXP AM");
 
     // EXPAM CV INPUT COMBOBOX
     expAMComboBox.onDragCallback = [this] (double valueDelta)
@@ -895,7 +951,7 @@ void ChannelEditor::setupChannelComponents ()
     /////////////////////////////////////////
     // column two
     // PHASE MOD SOURCE SECTION LABEL
-    setupLabel (phaseSourceSectionLabel, "PHASE MOD", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (phaseSourceSectionLabel, "PHASE MOD");
 
     // PHASE MOD SOURCE LABEL
     setupLabel (pMSourceLabel, "SRC", kMediumLabelSize, juce::Justification::centredRight);
@@ -979,7 +1035,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (phaseCVTextEditor, juce::Justification::centred, 0, "+-.0123456789", "PhaseCV");
 
     // PHASE MOD INDEX SECTION LABEL
-    setupLabel (phaseModIndexSectionLabel, "PHASE MOD", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (phaseModIndexSectionLabel, "PHASE MOD");
 
     // PHASE MOD INDEX LABEL
     setupLabel (pMIndexLabel, "INDEX", kMediumLabelSize, juce::Justification::centredLeft);
@@ -1060,7 +1116,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (pMIndexModTextEditor, juce::Justification::centred, 0, "+-.0123456789", "PMIndexMod");
 
     // ENVELOPE SECTION LABEL
-    setupLabel (envelopeLabel, "ENVELOPE", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (envelopeLabel, "ENVELOPE");
 
     // ATTACK START FROM LABEL
     setupLabel (attackFromCurrentLabel, "FROM", kMediumLabelSize, juce::Justification::centredRight);
@@ -1278,7 +1334,7 @@ void ChannelEditor::setupChannelComponents ()
     // column three
 
     // MUTATE SECTION LABEL
-    setupLabel (mutateLabel, "MUTATE", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (mutateLabel, "MUTATE");
 
     // BITS LABEL
     setupLabel (bitsLabel, "BITS", kMediumLabelSize, juce::Justification::centredRight);
@@ -1456,7 +1512,7 @@ void ChannelEditor::setupChannelComponents ()
     setupButton (spliceSmoothingButton, "SMOOTH", "SpliceSmoothing", [this] () { spliceSmoothingUiChanged (spliceSmoothingButton.getToggleState ()); });
 
     // PAN/MIX SECTION LABEL
-    setupLabel (panMixLabel, "PAN/MIX", kLargeLabelSize, juce::Justification::centred);
+    setupSectionLabel (panMixLabel, "PAN/MIX");
 
     // PAN LABEL
     setupLabel (panLabel, "PAN", kMediumLabelSize, juce::Justification::centredRight);
@@ -1638,7 +1694,7 @@ void ChannelEditor::setupChannelComponents ()
     // column four
 
     // CHANNEL MODE LABEL
-    setupLabel (channelModeLabel, "MODE", kMediumLabelSize, juce::Justification::centred);
+    setupSectionLabel (channelModeLabel, "MODE");
 
     // CHANNEL MODE COMBOBOX
     channelModeComboBox.addItem ("Master", ChannelProperties::ChannelMode::master + 1); // 0 = Master, 1 = Link, 2 = Stereo/Right, 3 = Cycle
@@ -1707,7 +1763,7 @@ void ChannelEditor::setupChannelComponents ()
     setupComboBox (playModeComboBox, "PlayMode", [this] () { playModeUiChanged (playModeComboBox.getSelectedId () - 1); });
 
     // SAMPLE START MOD LABEL
-    setupLabel (sampleStartModLabel, "SAMPLE START", kMediumLabelSize, juce::Justification::centred);
+    setupSectionLabel (sampleStartModLabel, "SAMPLE START");
 
     // SAMPLE START CV INPUT COMBOBOX
     sampleStartModComboBox.onDragCallback = [this] (double valueDelta)
@@ -1765,7 +1821,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (sampleStartModTextEditor, juce::Justification::centred, 0, "+-.0123456789", "SampleStartMod");
 
     // SAMPLE END MOD LABEL
-    setupLabel (sampleEndModLabel, "SAMPLE END", kMediumLabelSize, juce::Justification::centred);
+    setupSectionLabel (sampleEndModLabel, "SAMPLE END");
 
     // SAMPLE END CV INPUT COMBOBOX
     sampleEndModComboBox.onDragCallback = [this] (double valueDelta)
@@ -1844,7 +1900,7 @@ void ChannelEditor::setupChannelComponents ()
     setupComboBox (loopModeComboBox, "LoopMode", [this] () { loopModeUiChanged (loopModeComboBox.getSelectedId () - 1); });
 
     // LOOP START MOD LABEL
-    setupLabel (loopStartModLabel, "LOOP START", kMediumLabelSize, juce::Justification::centred);
+    setupSectionLabel (loopStartModLabel, "LOOP START");
 
     // LOOP START CV INPUT COMBOBOX
     loopStartModComboBox.onDragCallback = [this] (double valueDelta)
@@ -1902,7 +1958,7 @@ void ChannelEditor::setupChannelComponents ()
     setupTextEditor (loopStartModTextEditor, juce::Justification::centred, 0, "+-.0123456789", "LoopStartMod");
 
     // LOOP END MOD LABEL
-    setupLabel (loopLengthModLabel, "LOOP LENGTH", kMediumLabelSize, juce::Justification::centred);
+    setupSectionLabel (loopLengthModLabel, "LOOP LENGTH");
 
     // LOOP END CV INPUT COMBOBOX
     loopLengthModComboBox.onDragCallback = [this] (double valueDelta)
@@ -2151,6 +2207,7 @@ void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree u
         // Zone Editor setup
         auto& zoneEditor { zoneEditors [zoneIndex] };
         zoneEditor.init (zonePropertiesVT, uneditedChannelProperties.getZoneVT (zoneIndex), rootPropertiesVT);
+        zoneEditor.copyToNext = [this, zoneIndex] (bool continueSlice) { copyToNextZone (zoneIndex, continueSlice); };
         zoneEditor.displayToolsMenu = [this] (int zoneIndex)
         {
             auto* popupMenuLnF { new juce::LookAndFeel_V4 };
@@ -2682,7 +2739,7 @@ void ChannelEditor::resized ()
     toolsButton.setBounds (5, getHeight () - 5 - 20, 40, 20);
 
     // layout the Zones section. ie. the tabs and the channel level controls
-    auto zoneColumn { getLocalBounds ().removeFromRight (213) };
+    auto zoneColumn { getLocalBounds ().removeFromRight (236) }; // preserve the zone editor's width
     zoneColumn.removeFromTop (3);
     auto zoneTopSection { zoneColumn.removeFromTop (75).withTrimmedBottom (5).withTrimmedRight (3) };
     zonesLabel.setBounds (zoneTopSection.getX () + 15, zoneTopSection.getHeight () / 2 - kMediumLabelIntSize / 2, 80, kMediumLabelIntSize);
@@ -2694,7 +2751,7 @@ void ChannelEditor::resized ()
     zonesRTLabel.setBounds (zonesRTComboBox.getX () - zoneSectionLabelWidth - 3, zonesRTComboBox.getY (), zoneSectionLabelWidth, kParameterLineHeight);
     loopLengthIsEndComboBox.setBounds (zoneTopSection.getRight () - zoneSectionInputWidth, zonesRTComboBox.getBottom () + 3, zoneSectionInputWidth, kParameterLineHeight);
     loopLengthIsEndLabel.setBounds (loopLengthIsEndComboBox.getX () - zoneSectionLabelWidth - 3, loopLengthIsEndComboBox.getY (), zoneSectionLabelWidth, kParameterLineHeight);
-    zoneMaxVoltage.setBounds (zoneColumn.getX () + 2, zoneColumn.getY () - 12, 40, 11);
+    zoneMaxVoltage.setBounds (zoneColumn.getX () + 2, zoneColumn.getY () - 12, 56, 11);
     zoneTabs.setBounds (zoneColumn);
 
     // layout the four columns of controls
@@ -2709,8 +2766,10 @@ void ChannelEditor::resized ()
 
     // TODO - improve size calculation
     // Waveform Display
-    sampleWaveformDisplay.setBounds (mixModComboBox.getX (), xfadeGroupComboBox.getBounds ().getBottom () + kInterControlYOffset + 5,
-                                     zoneTabs.getX () - mixModComboBox.getX () - 15, getHeight () - xfadeGroupComboBox.getBounds ().getBottom () - kInterControlYOffset - 15);
+    const auto waveformTop { std::max ({ expAMTextEditor.getBottom (), arEnvelopeComponent.getBottom (),
+                                        mixModTextEditor.getBottom (), xfadeGroupComboBox.getBottom () }) + 12 };
+    sampleWaveformDisplay.setBounds (15, waveformTop, juce::jmax (0, zoneTabs.getX () - 30),
+                                    juce::jmax (0, getHeight () - waveformTop - 35));
 }
 
 void ChannelEditor::updateWaveformDisplay ()
@@ -2744,13 +2803,12 @@ void ChannelEditor::updateAllZoneTabNames ()
 
 void ChannelEditor::updateZoneTabName (int zoneIndex)
 {
-    auto zoneTabName { juce::String (zoneIndex + 1) };
-    if (zoneProperties [zoneIndex].getSample ().isNotEmpty ())
-    {
-        const auto minVoltage { zoneProperties [zoneIndex].getMinVoltage () };
-        zoneTabName += "\r" + juce::String (minVoltage >= 0.0 ? "+" : "") + juce::String (minVoltage, 2);
-    }
-    zoneTabs.setTabName (zoneIndex, zoneTabName);
+    const auto populated { zoneProperties [zoneIndex].getSample ().isNotEmpty () };
+    const auto lower { zoneProperties [zoneIndex].getMinVoltage () };
+    const auto upper { zoneIndex == 0 ? 5.0 : zoneProperties [zoneIndex - 1].getMinVoltage () };
+    zoneTabs.setTabName (zoneIndex, ZoneVoltageDisplay::tabName (zoneIndex + 1, populated, lower, upper));
+    if (auto* button { zoneTabs.getTabbedButtonBar ().getTabButton (zoneIndex) })
+        button->setTooltip (ZoneVoltageDisplay::tooltip (zoneIndex + 1, populated, lower, upper));
 }
 
 void ChannelEditor::aliasingDataChanged (int aliasing)

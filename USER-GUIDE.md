@@ -1,0 +1,478 @@
+# A8Manager 3.0.0 — User Guide
+
+A8Manager prepares sample assignments, zones, and presets for the Rossum
+Assimil8or. You can see and adjust sample boundaries, audition regions on your
+computer, and save the resulting preset for use with the module.
+
+The computer audition is an editing aid, **not a complete simulation of the
+Assimil8or**. In particular, it previews the selected region and zone PITCH
+OFFSET, but not all the channel processing you can configure in the editor.
+
+## Contents
+
+- [Your first preset](#your-first-preset)
+- [Finding your way around](#finding-your-way-around)
+- [Editing parameter values](#editing-parameter-values)
+- [Sample regions and loop regions](#sample-regions-and-loop-regions)
+- [Zooming and navigating the waveform](#zooming-and-navigating-the-waveform)
+- [Auditioning a sample or loop](#auditioning-a-sample-or-loop)
+- [Speed, pitch, and PITCH OFFSET](#speed-pitch-and-pitch-offset)
+- [Stereo samples](#stereo-samples)
+- [Zone selection voltages](#zone-selection-voltages)
+- [Making consecutive slices](#making-consecutive-slices)
+- [Saving and moving your work](#saving-and-moving-your-work)
+- [Common questions](#common-questions)
+
+## Your first preset
+
+1. **Start with a working copy of your sample folder.** Keep a backup of the
+   originals, especially while learning the file-management tools.
+2. Choose **OPTIONS → Select Root Folder** above the file browser. Select the
+   folder containing the samples and presets you want to work on, then confirm.
+   Scanning starts after confirmation, not while browsing the chooser.
+3. Select a preset in the preset list. Turn on its **Show All** checkbox to
+   reveal unused preset slots as well as existing presets; an unused slot starts
+   with a new preset. Give it a name at the top of the editor.
+4. Select a channel tab, such as **CH 1**, and a numbered zone. For a new
+   channel, begin with zone **1**.
+5. **Double-click a sample in the file browser to assign it to the selected
+   zone.** This is an assignment, not just a file-browser preview. You can also
+   drag a sample file onto the zone editor.
+6. Click **SMPL START** or **SMPL END** to select the sample region, then press
+   **ONCE** to listen. Adjust the white waveform handles or the numeric values
+   to choose a smaller region. See the sections below for loop auditioning.
+7. Click the preset's **SAVE** button when satisfied. Review any warnings or
+   errors in the lower validation pane before transferring the files.
+
+Loading samples from outside the current folder can copy or convert audio files
+into it immediately. File operations are separate from saving the preset. Use
+distinct filenames and backups rather than relying on SAVE as an undo boundary
+for everything in the application.
+
+## Finding your way around
+
+- **Current path:** the line beneath the application heading shows the folder
+  being used, and scan progress when applicable. It is a display, not a path
+  entry field.
+- **File browser:** the left pane contains folders and sample files. Its
+  **Show All** checkbox includes files otherwise hidden by the file filter.
+- **Preset list:** the next pane selects which preset you are editing. Its
+  separate **Show All** checkbox includes unused preset slots.
+- **Channel editor:** the CH tabs select one of eight channels. The parameter
+  sections configure channel settings, while the numbered zones select a
+  sample assignment and its individual boundaries and offsets.
+- **Waveform:** the large display shows the current zone's source audio and
+  editable markers. The small END/START display in the zone editor shows the
+  join between the end and beginning of the selected region.
+- **Validation pane:** the lower pane reports file/preset information, warnings,
+  and errors. The **I**, **W**, and **E** buttons filter those categories; hiding
+  a message does not resolve it.
+
+Resize the window and use **UI size** to scale text and controls together, from
+100% to 200%. Pane dividers can be dragged to redistribute space. If the window
+is too small for the chosen scale, use the workspace scrollbars. The UI size and
+layout are remembered.
+
+Hover over a control for its tooltip, including useful ranges or explanations.
+**Quick help** gives a short reminder of the main gestures.
+**SETTINGS** at the bottom opens the computer's audition audio-device settings.
+It is separate from the preset's MIDI SETUP selection.
+
+### Jumping to a different folder
+
+The file browser is convenient for nearby folders, but navigating through it
+changes the working folder and starts scanning. To jump somewhere unrelated,
+use **OPTIONS → Select Root Folder** instead. Browse freely in the chooser and
+confirm only at the destination. Cancel leaves the current folder unchanged.
+
+On macOS, press **⌘⇧G** (Command–Shift–G) inside the folder chooser to type or
+paste a path. If there are unsaved preset edits, cancel the discard warning and
+save before switching folders if you want to keep them.
+
+## Editing parameter values
+
+Most numeric parameter boxes support both direct entry and mouse adjustment.
+When a numeric field gains focus, its contents are automatically selected:
+typing replaces the existing value. You do not need to delete it first.
+
+| Action | Gesture |
+| --- | --- |
+| Enter an exact value | Click the box, type, then press Return or move focus to another control. |
+| Increase/decrease a value | Left-click and drag vertically: up increases, down decreases. No modifier is required. |
+| Make fine adjustments | Hold Shift while left-dragging vertically. This disables acceleration and slows the adjustment. |
+| Select text within a field | Drag horizontally. |
+| Adjust with the scroll wheel | Hold ⌘ on macOS, or Ctrl on Windows/Linux, while scrolling over the field. |
+| Nudge with the scroll wheel | Add Shift to the above shortcut for one minimum increment per scroll event, without acceleration. |
+| Open parameter-specific options | Right-click the field. Available menus may include Clone, Default, or Revert. |
+
+Ordinary scrolling over a numeric field does not change its value. Normal
+vertical dragging is accelerated for larger ranges. Shift-drag uses one minimum
+increment per 16 logical pixels of vertical movement, four times slower than the
+slowest normal drag; small movements accumulate. For example, a pitch field steps
+by 0.01 semitone, while an integer sample-position field steps by one frame.
+At larger UI sizes, the physical distance scales with the interface. Shift-scroll
+works even when the mouse/OS translates it into horizontal scrolling. For exact
+positions, you can also type a value. Values are limited to each parameter's allowed
+range, so a boundary field may stop moving when it reaches another boundary or
+the end of the file.
+
+**Revert** is not a general undo history: where offered, it restores the saved
+or loaded reference value. **Default** restores that parameter's default.
+Check the scope of a menu before applying it: parameter, zone, channel, and
+preset tools affect different amounts of your work.
+
+## Sample regions and loop regions
+
+A sample file can contain much more audio than a particular zone needs. The
+zone stores positions into that file; moving its markers does not cut or rewrite
+the source audio.
+
+There are two separate pairs of boundaries:
+
+| Waveform indicator | Meaning | Matching zone fields |
+| --- | --- | --- |
+| **White solid lines, handles at the top** | The sample region assigned for playback by this zone | SMPL START and SMPL END |
+| **Orange/amber dashed lines, handles at the bottom** | The region designated for looping | LOOP START and LOOP LENGTH, or LOOP END |
+| **Yellow moving line with a small cap** | Current computer-audition position; not an editable boundary | None |
+
+With **Edit edges** selected in the waveform toolbar, drag the small **handles**,
+not the vertical lines, to move individual boundaries. Handles
+point inward toward the region they bound. Their position labels appear while
+dragging. If markers are hard to separate, zoom in or use the numeric fields.
+
+The **sample region** chooses the portion of the recording used by the zone.
+The **loop region** chooses the portion to repeat when looping is used. For
+example, a sample region can include an attack and a tail, while its loop region
+covers a smaller, steady section in between. The two regions can also match,
+which is useful when a zone represents a single repeating slice.
+
+They are independent settings: changing the white markers does not automatically
+make the orange markers match. The editor does not force the loop to stay inside
+the white sample region. Check both pairs when preparing a conventional loop
+within a sample.
+
+### Moving a region without resizing it
+
+Choose **Move zone** or **Move loop** in the waveform toolbar, then left-drag
+horizontally anywhere on the large waveform (including a marker handle):
+
+- **Move zone** shifts the white SMPL START/END pair together.
+- **Move loop** shifts the orange loop pair together, in both Length and End
+  display modes. Even fractional loop lengths are preserved.
+- Hold **Shift** for ten-times-finer movement, or zoom in for greater precision.
+- Movement stops at the source file's beginning/end without shortening the
+  region. A region spanning the whole file cannot move.
+
+Only the chosen pair moves: moving the zone does not move its loop, and moving
+the loop does not change the white sample boundaries. “Move zone” here means
+sliding its audio region within the same file, not reordering the zone list or
+changing its voltage range. The audio file itself is not modified.
+
+Choose **Edit edges** again to resize individual boundaries and restore ordinary
+left-drag panning. Scrollbar/horizontal scrolling and right-drag zoom remain
+available in the move modes. These edits update the in-memory preset; click
+**SAVE** to keep them. Moving a region does not switch the audition selection.
+
+### Positions, lengths, and units
+
+Zone boundary values are **sample-frame positions/counts**, not milliseconds.
+At a source-file sample rate of 48 kHz, 48,000 frames represent one second.
+Positions refer to the original file, not to the time after changing audition
+speed or pitch.
+
+- **SMPL START** is the first frame in the sample region.
+- **SMPL END** is the boundary just after that region: length = end − start.
+- **LOOP START** is the loop's starting position in the file, not a distance
+  measured from SMPL START.
+- **LOOP LENGTH** is a duration in frames. Loop end = loop start + loop length.
+
+For example, a loop start of `48000` and length of `24000` ends at `72000`.
+At 48 kHz, this is a half-second region before audition speed/pitch adjustments.
+
+The **LENGTH/END** selector above the zones changes whether the last loop field
+is displayed as a length or an end position. In **Length** mode, moving LOOP
+START normally carries the loop's end along with it by preserving the length.
+In **End** mode, moving LOOP START adjusts the length to keep the end fixed,
+subject to the valid range. Loop length has a four-frame minimum.
+
+Right-click the waveform's timeline ruler to choose **Samples** or
+**Minutes:Seconds**. This changes ruler and marker-drag labels, not the units of
+the zone's numeric boundary fields.
+
+## Zooming and navigating the waveform
+
+| Control or gesture | Result |
+| --- | --- |
+| **+ / −** | Zoom in/out around the centre of the visible waveform. |
+| **Fit** or double-click the waveform | Show the whole source file and reset vertical magnification. |
+| **Zone** | Frame the white sample start/end region. |
+| **Loop** in the waveform toolbar | Frame the orange loop region. This does not start playback. |
+| Vertical wheel/trackpad scrolling over the waveform | Zoom horizontally around the pointer. |
+| Left-drag the waveform away from a handle, in **Edit edges** mode | Pan along the file. |
+| Left-drag in **Move zone / Move loop** mode | Slide the selected marker pair without resizing it; Shift moves more finely. |
+| Bottom scrollbar or horizontal scrolling | Move along the file while zoomed in. |
+| Control + wheel over the waveform | Magnify/reduce waveform height. On macOS this is Control, not Command. |
+| Right-button drag away from a handle | Horizontal movement zooms time; vertical movement zooms waveform height. |
+
+Zooming changes only the view. It does not alter sample boundaries, playback
+volume, audio files, or audition speed. The yellow playhead follows playback
+but does not automatically scroll the view; it may move off-screen when zoomed.
+
+## Auditioning a sample or loop
+
+First choose **which region** to hear:
+
+1. Click a **SMPL START / SMPL END** label or value to choose the sample region,
+   or a **LOOP START / LOOP LENGTH (END)** label or value to choose the loop
+   region.
+2. Check the outlined/shaded box in the zone editor. It encloses the selected
+   fields, small waveform, and transport buttons.
+3. Press **ONCE** to play that region once, or **LOOP** to repeat that same
+   region. The active button becomes **STOP**; click it to stop.
+
+**LOOP repeats the selected region.** It can therefore repeat the whole white
+sample region as well as the orange loop region. Conversely, ONCE can play the
+orange loop region just once. Selecting the other pair of fields stops playback;
+press ONCE or LOOP again to hear the new selection. Dragging a large-waveform
+marker does not itself switch which pair of fields is selected for audition.
+
+Three controls use the word “loop,” but have different jobs:
+
+- **LOOP below the small waveform:** repeat the currently selected audition
+  region on the computer; does not enable looping in the saved preset.
+- **Loop above the large waveform:** zoom the view to the orange markers.
+- **LOOP mode in the channel parameters** (No Loop, Loop, Loop and Release):
+  a saved playback setting for the module, not the computer's transport button.
+
+### Reading the small END/START display
+
+This is a magnified **join preview**, not a miniature overview of the file.
+It places the selected region's final frames on the **left** (END, amber) and
+its first frames on the **right** (START, teal). The centre line is where the
+audio jumps when that region repeats.
+
+Both halves share automatic visual gain so quiet waveforms remain visible
+without hiding their relative levels. This affects the drawing only, not audio
+volume. The colours here distinguish end from start; they do **not** indicate
+which sample/loop marker pair is selected.
+
+A large discontinuity at the join can cause a click. Zoom in, adjust the start
+or end, and listen repeatedly. Similar levels and slopes across the join can
+help, but the picture alone cannot guarantee a seamless loop.
+
+## Speed, pitch, and PITCH OFFSET
+
+The waveform toolbar's **Audition speed** slider controls preview speed from
+**0.0625x** (1/16 speed) to **4x**. Drag it or type a multiplier in its box;
+double-click the slider to return to **1x**. You can adjust it while playing.
+
+**PITCH OFFSET** belongs to the selected zone and is measured in semitones.
+Positive values raise pitch, negative values lower it; `+12` is an octave up,
+`−12` an octave down. Fractional values such as `+3.01` are also heard in the
+preview. It is separate from the channel-level **PITCH** parameter.
+
+The **Keep pitch** checkbox determines how speed and pitch interact.
+
+### Keep pitch on — the default
+
+Speed changes duration without transposing the sound. Zone PITCH OFFSET then
+transposes it independently, without changing that duration. “Keep pitch” means
+keep speed changes from altering pitch; it does **not** disable PITCH OFFSET.
+
+### Keep pitch off — linked pitch and speed
+
+The preview uses ordinary sampler-style variable-speed playback. Slowing down
+lowers pitch; speeding up raises it. Zone PITCH OFFSET also changes the playback
+rate, so its pitch change affects duration as well.
+
+| Keep pitch | Audition speed | Zone PITCH OFFSET | Heard pitch relative to the file | Duration relative to the selected region |
+| --- | --- | --- | --- | --- |
+| On | 0.5x | 0 | Unchanged | Twice as long |
+| On | 0.5x | +12 | One octave higher | Twice as long |
+| On | 2x | −12 | One octave lower | Half as long |
+| Off | 0.5x | 0 | One octave lower | Twice as long |
+| Off | 1x | +12 | One octave higher | Half as long |
+| Off | 0.5x | +12 | Unchanged: the two shifts cancel | Unchanged |
+
+With Keep pitch off, the effective rate is
+`audition speed × 2^(PITCH OFFSET / 12)`. For a loop, “duration” in the table is
+the time taken for one repetition.
+
+Shortening a loop makes it repeat more frequently even at an unchanged speed;
+very short loops can sound like pitched tones. The speed control does not
+automatically compensate for loop-length edits.
+
+### What the preview does and does not save
+
+- **PITCH OFFSET is part of the zone** and is written with the preset when you
+  click SAVE.
+- **Audition speed and Keep pitch are temporary listening controls.** They are
+  shared across channels/zones during the session, reset to 1x / on when the app
+  is relaunched, and are not written into the preset or sample file.
+- For a stereo pair, auditioning the master/left zone applies its PITCH OFFSET
+  to both sides.
+- Channel PITCH, CV modulation, envelopes, level/pan processing, and other
+  module behaviour are not simulated by this preview. A control being editable
+  does not mean it changes the computer audition.
+
+Time stretching can introduce smearing or other artifacts, particularly at
+extreme speeds, large transpositions, or with very short loops. Keep pitch is
+an editing aid, not a promise that the module will sound identical. Make the
+final musical and looping checks on your Assimil8or.
+
+## Stereo samples
+
+The small **L / R** buttons beside FILE choose which side of a stereo source
+file that zone uses. The selected side has a teal background and dark text.
+These buttons change the zone's assignment; they are not just monitor-mute
+buttons.
+
+A stereo pair uses two channel tabs, for example **CH 1-L** and **CH 2-R**.
+The right companion inherits several controls from the master/left channel,
+so some fields are unavailable there. Edit shared boundaries/settings from the
+left/master channel. Loading a stereo file can set up the following channel as
+its right companion when the corresponding zone there is empty; do not assume
+it will replace an already populated neighbour. Check both channel assignments.
+
+## Zone selection voltages
+
+**MIN VOLTAGE is a lower boundary, not a centre voltage or an exact-match target.**
+The first voltage beneath each populated zone's number is that same boundary.
+The teal value **in parentheses below it** is the zone's **access value**: a
+read-only midpoint target to send from your external CV source, not another
+saved setting. Empty zones have no voltage labels.
+The `+5.00` above the zone list is its overall upper boundary. Zone 1 extends
+from its MIN VOLTAGE up to +5 V; each following zone extends from its own minimum
+up to the preceding zone's minimum. The last populated zone extends down to −5 V.
+
+Assimil8or selects a zone when its assigned zone-selection CV falls within that
+zone's range. It does not require a hit on the boundary. In **Gate Rise** mode,
+selection is read at the gate/trigger; in **Continuous** mode it follows the CV
+as it changes. Selecting a zone by CV and triggering playback are distinct:
+normally patch a selection CV to the assigned **ZONES CV** input and a gate or
+trigger to the channel's Gate/Trig input. See Rossum's
+[operation manual, chapter 10, pages 32–34](https://cdn.shopify.com/s/files/1/0277/4548/4865/files/Assimil8or_man_040618-2.pdf?v=1785520023#page=32).
+**Advance** and **Random** selection modes ignore the zone-selection CV; see the
+[2.0 update guide, page 8](https://cdn.shopify.com/s/files/1/0277/4548/4865/files/A8_update_manual_061820.pdf?v=1785520029#page=8).
+
+### Send a midpoint voltage for a reliable selection
+
+For maximum margin to either boundary, the practical target to send from your
+sequencer is **(lower boundary + upper boundary) / 2**. The parenthesized access
+value calculates this for you and updates automatically when boundaries change,
+including the preceding zone's boundary. This is a recommendation derived from
+the ranges, not another saved zone parameter. For example, with
+four evenly balanced zones across −5 V to +5 V:
+
+| Zone | MIN VOLTAGE shown/saved | Selection range, excluding exact shared boundaries | Suggested CV to send |
+| --- | --- | --- | --- |
+| 1 | +2.50 V | +2.50 to +5.00 V | +3.75 V |
+| 2 | 0.00 V | 0.00 to +2.50 V | +1.25 V |
+| 3 | −2.50 V | −2.50 to 0.00 V | −1.25 V |
+| 4 | −5.00 V | −5.00 to −2.50 V | −3.75 V |
+
+These are example boundaries, not the automatic result of every new zone you
+add. Zone **TOOLS → Balance → 10V** distributes existing zones across this full
+range. Check the updated access values and adjust your external CV source after
+editing boundaries or adding zones. Hover over a zone tab for its range and
+access-value explanation. Targets are rounded for display, using extra decimal
+places when needed to stay close to the midpoint and preserve half-steps in narrow
+ranges, for example `(+0.005)` for 0.00–0.01 V. `(--)`
+means there is no reliable displayed target: check for reversed, zero-width,
+or extremely narrow ranges. Very narrow zones still require suitably accurate
+external CV hardware.
+
+Do **not** replace MIN VOLTAGE with the suggested CV: that moves a boundary and
+changes the neighbouring zone's range. Instead, leave the desired boundaries in
+the preset and send the midpoint from the external CV source. Avoid exact shared
+boundaries; noise, calibration error, and source timing reduce the available
+margin. In Gate Rise mode, make sure the selection CV is settled when the trigger
+arrives. Midpoint targeting improves voltage margin but does not fix a late CV.
+
+## Making consecutive slices
+
+You can use several zones to reference different parts of one recording without
+creating a separate audio file for each part.
+
+- **Copy > next** copies the current zone's sample assignment and settings,
+  including its existing sample and loop boundaries, into the following zone.
+- **Continue > next** copies the assignment and settings, but starts the new
+  sample region at the current SMPL END. It normally keeps the current region's
+  duration and sets the new loop boundaries to match the new sample region.
+
+Both buttons select the destination zone. If it is occupied, replacement
+requires confirmation and preserves that zone's voltage boundary. If it is
+empty, the source zone's voltage range is split to make room for the new zone.
+Review **MIN VOLTAGE** after adding zones if precise CV selection matters.
+
+For example, a region from `10000` to `14000` continues as `14000` to `18000`.
+Adjust the new end to the next musical boundary and continue again. Near the
+file's end, the final slice is shortened to fit. Continuation requires at least
+four frames remaining, and creates at least a four-frame slice. Neither button
+can copy onward from zone 8 or a stereo-right channel.
+
+These are preset edits, not audio-file slicing operations. Click SAVE to keep
+the resulting zone assignments.
+
+## Saving and moving your work
+
+**SAVE** writes the current preset to its file in the working folder. It becomes
+available when the preset differs from its loaded/saved state. Switching presets
+or folders with unsaved edits can prompt you to discard them: **Continue (lose
+changes)** really discards the edits. Choose **Cancel**, then SAVE, to keep them.
+
+The preset-level **TOOLS** menu offers import/export of **Settings Only** or
+**Settings and Samples**. Use the latter when you need a portable copy that
+includes the audio, rather than expecting the preset settings alone to contain
+it. Settings and Samples exports a ZIP archive; extract it before copying its
+contents for use on the module. When transferring a folder yourself, include
+the samples referenced by its presets and preserve their filenames. Verify the
+result on the module.
+
+The file browser and validation tools also offer operations such as renaming,
+deletion, conversion, and removal of unused samples. These operate on files;
+they are not deferred until the preset's SAVE button is clicked. Review the
+scope and keep backups before using them. There is no comprehensive undo/redo
+history for all application operations.
+
+## Common questions
+
+**Why is there no sound?**  
+Check that the zone has a successfully loaded sample, the selected region has
+nonzero length, and ONCE or LOOP is running. Open SETTINGS to check the computer's
+audio output device and routing, and check its volume. Review validation errors
+if the sample is missing or cannot be loaded.
+
+**Why am I hearing the wrong part of the file?**  
+Check the outlined field group beside the small waveform. Click SMPL START/END
+for the white region or LOOP START/LENGTH/END for the orange region, then restart
+audition. The waveform's Loop zoom button does not select the audition source.
+
+**Why doesn't the channel PITCH control change what I hear?**  
+The preview applies zone PITCH OFFSET, not the full channel-processing chain.
+Configure channel settings for the preset, then test their effect on the module.
+
+**Why did a loop change pitch or duration?**  
+Check Audition speed, Keep pitch, and the selected zone's PITCH OFFSET. With
+Keep pitch off they combine to set the playback rate. Also check whether you
+changed the loop length itself.
+
+**Why does a quiet sample look large in the small display?**  
+The join preview is visually normalised. Its amplitude is not a level meter and
+does not indicate a volume change.
+
+**Why are markers missing?**  
+They may be outside the zoomed view. Press Fit, Zone, or Loop as appropriate.
+Use the top white handles for the sample and bottom orange handles for the loop.
+
+**Why is SAVE disabled after changing zoom or audition speed?**  
+Those controls do not modify the preset. No preset save is needed for them.
+
+**Why did opening a sample replace my zone's assignment?**  
+Double-clicking a sample in the browser assigns it to the selected channel/zone.
+Select the intended destination before loading another file.
+
+---
+
+This guide describes A8Manager 3.0.0. Build instructions and implementation/test
+notes are in [README.md](README.md) and [UI-PREVIEW.md](UI-PREVIEW.md).

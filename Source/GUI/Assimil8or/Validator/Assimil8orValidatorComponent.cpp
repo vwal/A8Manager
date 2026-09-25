@@ -1,4 +1,5 @@
 #include "Assimil8orValidatorComponent.h"
+#include "../../ModernTheme.h"
 #include "RenameDialogComponent.h"
 #include "LocateFileComponent.h"
 #include "../../../SystemServices.h"
@@ -185,7 +186,7 @@ void Assimil8orValidatorComponent::buildQuickLookupList ()
 
 void Assimil8orValidatorComponent::paint ([[maybe_unused]] juce::Graphics& g)
 {
-    g.fillAll (juce::Colours::navajowhite);
+    g.fillAll (Theme::panel);
 }
 
 juce::String Assimil8orValidatorComponent::getCellTooltip (int rowNumber, int columnId)
@@ -227,11 +228,11 @@ void Assimil8orValidatorComponent::paintRowBackground (juce::Graphics& g, int ro
 
     if (rowIsSelected)
     {
-        g.fillAll (juce::Colours::lightblue);
+        g.fillAll (Theme::accent.withAlpha (0.16f));
     }
     else
     {
-        auto unSelectedBackgroundColour { juce::Colours::lightgrey };
+        auto unSelectedBackgroundColour { Theme::field };
         if (rowNumber % 2)
             unSelectedBackgroundColour = unSelectedBackgroundColour.interpolatedWith (juce::Colours::black, 0.1f);
         g.fillAll (unSelectedBackgroundColour);
@@ -246,7 +247,7 @@ void Assimil8orValidatorComponent::paintCell (juce::Graphics& g, int rowNumber, 
         g.fillRect (width - 1, 0, 1, height);
         ValidatorResultProperties validatorResultProperties (validatorResultsQuickLookupList [rowNumber],
                                                              ValidatorResultProperties::WrapperType::client, ValidatorResultProperties::EnableCallbacks::no);
-        auto textColor { juce::Colours::black };
+        auto textColor { Theme::text };
         if (validatorResultProperties.getType () == ValidatorResultProperties::ResultTypeWarning)
             textColor = juce::Colours::orange.darker (0.3f);
         else if (validatorResultProperties.getType () == ValidatorResultProperties::ResultTypeError)

@@ -33,4 +33,51 @@ target_link_libraries(A8ManagerRegressionTests PRIVATE
 
 add_test(NAME ParserCvRegression COMMAND A8ManagerRegressionTests --parser-cv)
 add_test(NAME StereoSplitRegression COMMAND A8ManagerRegressionTests --stereo-split)
+add_test(NAME ZoneContinuationRegression COMMAND A8ManagerRegressionTests --zone-continuation)
+set_tests_properties(ZoneContinuationRegression PROPERTIES TIMEOUT 60)
 set_tests_properties(ParserCvRegression StereoSplitRegression PROPERTIES TIMEOUT 60)
+
+juce_add_console_app(A8ManagerInteractionTests PRODUCT_NAME "A8Manager Interaction Tests")
+juce_generate_juce_header(A8ManagerInteractionTests)
+target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
+    RootFolderTests.cpp
+    PlaybackTests.cpp
+    LoopPointsTests.cpp
+    ZoneVoltageTests.cpp
+    RegionMoveTests.cpp
+    ../submodules/oolib/oolib/GUI/WaveformView.cpp
+    ../Source/GUI/Assimil8or/Editor/LoopPoints/LoopPointsView.cpp
+    ../Source/Assimil8or/Audio/AudioPlayer.cpp
+    ../Source/Assimil8or/Audio/AuditionStretch.cpp
+    ../Source/Assimil8or/Audio/AudioPlayerProperties.cpp
+    ../Source/Assimil8or/Audio/AudioSettingsProperties.cpp
+    ../Source/Assimil8or/PresetManagerProperties.cpp
+    ../Source/Assimil8or/Preset/ChannelProperties.cpp
+    ../Source/Assimil8or/Preset/PresetProperties.cpp
+    ../Source/Assimil8or/Preset/ZoneProperties.cpp
+    ../Source/Assimil8or/Preset/PresetHelpers.cpp
+    ../Source/Assimil8or/Preset/ParameterPresetsSingleton.cpp
+    ../Source/Assimil8or/Preset/ParameterPresetListProperties.cpp
+    ../Source/GUI/Assimil8or/Editor/SampleManager/SampleProperties.cpp
+    ../Source/GUI/Assimil8or/Editor/SampleManager/SampleManagerProperties.cpp
+    ../Source/GUI/CurrentFolderComponent.cpp
+    ../Source/AppProperties.cpp
+    ../submodules/oolib/oolib/Directory/DirectoryDataProperties.cpp
+    ../submodules/oolib/oolib/Properties/PersistentRootProperties.cpp
+    ../submodules/oolib/oolib/Properties/RuntimeRootProperties.cpp
+    ../submodules/oolib/oolib/ValueTree/ValueTreeHelpers.cpp
+    ../submodules/oolib/oolib/GUI/CustomComponentMouseHandler.cpp
+    ../submodules/oolib/oolib/GUI/ErrorHelpers.cpp)
+target_include_directories(A8ManagerInteractionTests PRIVATE ../Source ${OOLIB_INCLUDE_DIR})
+target_compile_features(A8ManagerInteractionTests PRIVATE cxx_std_17)
+target_compile_definitions(A8ManagerInteractionTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 DONT_SET_USING_JUCE_NAMESPACE=1)
+target_link_libraries(A8ManagerInteractionTests PRIVATE A8ManagerBinaryData signalsmith-stretch juce::juce_audio_utils juce::juce_data_structures juce::juce_recommended_config_flags)
+set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPERTIES
+    COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
+add_test(NAME ValueDragRegression COMMAND A8ManagerInteractionTests)
+add_test(NAME RootFolderRegression COMMAND A8ManagerInteractionTests --root-folder)
+add_test(NAME PlaybackRegression COMMAND A8ManagerInteractionTests --playback)
+add_test(NAME LoopPointsRegression COMMAND A8ManagerInteractionTests --loop-preview)
+add_test(NAME ZoneVoltageRegression COMMAND A8ManagerInteractionTests --zone-voltages)
+add_test(NAME RegionMoveRegression COMMAND A8ManagerInteractionTests --region-move)
+set_tests_properties(ValueDragRegression RootFolderRegression PlaybackRegression LoopPointsRegression ZoneVoltageRegression RegionMoveRegression PROPERTIES TIMEOUT 60)

@@ -1,4 +1,5 @@
 #include "Assimil8orEditorComponent.h"
+#include "../../ModernTheme.h"
 #include "ParameterToolTipData.h"
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Assimil8orPreset.h"
@@ -30,7 +31,7 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
     saveButton.setEnabled (false);
 
     for (auto curChannelIndex { 0 }; curChannelIndex < 8; ++curChannelIndex)
-        channelTabs.addTab ("CH " + juce::String::charToString ('1' + curChannelIndex), juce::Colours::darkgrey, &channelEditors [curChannelIndex], false);
+        channelTabs.addTab ("CH " + juce::String::charToString ('1' + curChannelIndex), Theme::panel, &channelEditors [curChannelIndex], false);
     addAndMakeVisible (channelTabs);
 
     // add this AFTER the Channels tabs, because it occupies some of the same space, and ends up behind the tabs if we add it before
@@ -153,7 +154,7 @@ void Assimil8orEditorComponent::setupPresetComponents ()
 
         // Xfade Label
         xfadeGroup.xfadeCvLabel.setBorderSize ({ 0, 0, 0, 0 });
-        xfadeGroup.xfadeCvLabel.setColour (juce::Label::ColourIds::textColourId, juce::Colours::black);
+        xfadeGroup.xfadeCvLabel.setColour (juce::Label::ColourIds::textColourId, Theme::muted);
         xfadeGroup.xfadeCvLabel.setText ("CV", juce::NotificationType::dontSendNotification);
         addAndMakeVisible (xfadeGroup.xfadeCvLabel);
 
@@ -232,7 +233,7 @@ void Assimil8orEditorComponent::setupPresetComponents ()
 
         // Xfade Group Width Label
         xfadeGroup.xfadeWidthLabel.setBorderSize ({ 0, 0, 0, 0 });
-        xfadeGroup.xfadeWidthLabel.setColour (juce::Label::ColourIds::textColourId, juce::Colours::black);
+        xfadeGroup.xfadeWidthLabel.setColour (juce::Label::ColourIds::textColourId, Theme::muted);
         xfadeGroup.xfadeWidthLabel.setText ("Width", juce::NotificationType::dontSendNotification);
         addAndMakeVisible (xfadeGroup.xfadeWidthLabel);
 
@@ -568,7 +569,7 @@ void Assimil8orEditorComponent::savePreset ()
 
 void Assimil8orEditorComponent::paint ([[maybe_unused]] juce::Graphics& g)
 {
-    g.fillAll (juce::Colours::darkgrey.darker (0.7f));
+    g.fillAll (Theme::background);
 }
 
 void Assimil8orEditorComponent::explodeChannel (int channelIndex, int explodeCount)
@@ -637,7 +638,7 @@ void Assimil8orEditorComponent::updateChannelTabName (int channelIndex)
     }
     else if (channelProperties [channelIndex].getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
     {
-        channelTabTitle = "R-" + channelTabTitle;
+        channelTabTitle += "-R";
     }
 
     channelTabs.setTabName (channelIndex, channelTabTitle);
@@ -853,11 +854,12 @@ void Assimil8orEditorComponent::resized ()
     // Save Button
     saveButton.setBounds (topRow.removeFromRight (75));
     // Tools Button
-    toolsButton.setBounds (getWidth () - 43, saveButton.getBottom () + 3, 40, 20);
+    topRow.removeFromRight (6);
+    toolsButton.setBounds (topRow.removeFromRight (54));
 
     // Channel Tabs
     const auto channelSectionY { titleLabel.getBottom () + 3 };
-    channelTabs.setBounds (3, channelSectionY, 765, 406);
+    channelTabs.setBounds (3, channelSectionY, juce::jmax (0, getWidth () - 6), juce::jmax (0, getHeight () - channelSectionY - 32));
     const auto bottomRowY (getLocalBounds ().getBottom () - 26);
     // this is used to overlay the 'right channel' to indicate it is inactive
     windowDecorator.setBounds (getLocalBounds ().removeFromBottom (26));

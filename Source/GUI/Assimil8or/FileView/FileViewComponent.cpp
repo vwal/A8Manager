@@ -1,4 +1,5 @@
 #include "FileViewComponent.h"
+#include "../../ModernTheme.h"
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Assimil8orPreset.h"
 #include "../../../Assimil8or/FileTypeHelpers.h"
@@ -23,7 +24,11 @@ FileViewComponent::FileViewComponent ()
     optionsButton.onClick = [this] ()
     {
         juce::PopupMenu optionsMenu;
-        optionsMenu.addItem ("Open Folder", true, false, [this] () { openFolder (); });
+        optionsMenu.addItem ("Select Root Folder", onSelectRootFolder != nullptr, false, [this] ()
+        {
+            if (onSelectRootFolder != nullptr)
+                onSelectRootFolder ();
+        });
         optionsMenu.addItem ("New Folder", true, false, [this] () { newFolder (); });
         optionsMenu.addItem ("Remove Unused Samples", true, false, [this] ()
         {
@@ -159,17 +164,6 @@ void FileViewComponent::buildQuickLookupList ()
     }
 }
 
-void FileViewComponent::openFolder ()
-{
-    fileChooser.reset (new juce::FileChooser ("Please select the folder to scan as an Assimil8or SD Card...",
-                                               appProperties.getMostRecentFolder (), ""));
-    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this] (const juce::FileChooser& fc) mutable
-    {
-        if (fc.getURLResults ().size () == 1 && fc.getURLResults () [0].isLocalFile ())
-            appProperties.setMostRecentFolder (fc.getURLResults () [0].getLocalFile ().getFullPathName ());
-    }, nullptr);
-}
-
 void FileViewComponent::newFolder ()
 {
     newAlertWindow = std::make_unique<juce::AlertWindow> ("NEW FOLDER", "Enter the name for new folder", juce::MessageBoxIconType::NoIcon);
@@ -235,7 +229,7 @@ void FileViewComponent::paintListBoxItem (int row, juce::Graphics& g, int width,
         else if (static_cast<int> (directoryEntryVT.getProperty (FileProperties::TypePropertyId)) == audioFileTypeId)
         {
             filePrefix = "-  ";
-            textColor = juce::Colours::forestgreen;
+            textColor = Theme::accent;
             if (curBlinkTime != 0 && doubleClickedRow == row)
             {
                 filePrefix += "Loading ";
@@ -251,7 +245,8 @@ void FileViewComponent::paintListBoxItem (int row, juce::Graphics& g, int width,
         fileListItem = " " + filePrefix + file.getFileName ();
     }
 
-    g.setColour (juce::Colours::darkslategrey);
+    g.fillAll (rowIsSelected ? Theme::accent.withAlpha (0.16f) : Theme::field);
+    g.setColour (Theme::border);
     g.fillRect (width - 1, 0, 1, height);
     g.setColour (textColor);
     g.drawText (fileListItem, juce::Rectangle<float>{ 0.0f, 0.0f, (float) width, (float) height }, juce::Justification::centredLeft, true);

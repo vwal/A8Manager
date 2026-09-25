@@ -1,7 +1,9 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <atomic>
 #include "AudioPlayerProperties.h"
+#include "AuditionStretch.h"
 #include "AudioSettingsProperties.h"
 #include "../Preset/ChannelProperties.h"
 #include "../Preset/PresetProperties.h"
@@ -12,13 +14,15 @@
 #include "../../GUI/Assimil8or/Editor/SampleManager/SampleProperties.h"
 
 class AudioPlayer : public juce::AudioSource,
-                    public juce::ChangeListener
+                    public juce::ChangeListener,
+                    private juce::Timer
 {
 public:
     void init (juce::ValueTree rootProperties);
     void shutdownAudio ();
 
 private:
+    friend struct AudioPlayerTestAccess;
     AudioSettingsProperties audioSettingsProperties;
     AudioPlayerProperties audioPlayerProperties;
     AppProperties appProperties;
@@ -38,13 +42,35 @@ private:
 
     juce::CriticalSection dataCS;
     AudioPlayerProperties::PlayState playState { AudioPlayerProperties::PlayState::stop };
-    int curSampleOffset { 0 };
+    double curSampleOffset { 0.0 }; // audible cursor, independent of resampler read-ahead
     int sampleStart { 0 };
     int sampleLength { 0 };
+    std::atomic<double> playbackPosition { -1.0 };
+    std::atomic<bool> playbackFinished { false };
 
     double sampleRate { 44100.0 };
     int blockSize { 128 };
     double sampleRateRatio { 0.0 };
+    double auditionRate { 1.0 };
+    double zonePitchOffset { 0.0 };
+    bool preservePitch { true };
+    AuditionStretch auditionStretch;
+    int readSampleOffset { 0 };
+    int renderedStart { 0 }, renderedEnd { 0 };
+    bool resetAuditionResampler { true };
+
+    class AuditionInputSource : public juce::AudioSource
+    {
+    public:
+        explicit AuditionInputSource (AudioPlayer& player) : owner (player) {}
+        void prepareToPlay (int, double) override {}
+        void releaseResources () override {}
+        void getNextAudioBlock (const juce::AudioSourceChannelInfo& info) override { owner.renderAuditionInput (info); }
+    private:
+        AudioPlayer& owner;
+    };
+    AuditionInputSource auditionInput { *this };
+    juce::ResamplingAudioSource auditionResampler { &auditionInput, false, 2 };
 
     class LeftRightCombinerAudioSource : public juce::AudioSource
     {
@@ -90,6 +116,12 @@ private:
 
     void configureAudioDevice (juce::String deviceName);
     void handlePlayState (AudioPlayerProperties::PlayState playState);
+    void handleAuditionRate (double rate);
+    void handlePreservePitch (bool preserve);
+    void handleZonePitch (double semitones);
+    double effectiveAuditionRate () const;
+    void prepareAuditionResampler ();
+    void renderAuditionInput (const juce::AudioSourceChannelInfo& bufferToFill);
     void initFromZone (std::tuple<int, int> channelAndZoneIndecies);
     void initSamplePoints ();
     void prepareSampleForPlayback ();
@@ -99,4 +131,5 @@ private:
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) override;
     void releaseResources () override;
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
+    void timerCallback () override;
 };

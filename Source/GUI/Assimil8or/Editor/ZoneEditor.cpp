@@ -1,4 +1,5 @@
 #include "ZoneEditor.h"
+#include "../../ModernTheme.h"
 #include "FormatHelpers.h"
 #include "ParameterToolTipData.h"
 #include "SampleManager/SampleManagerProperties.h"
@@ -30,7 +31,7 @@ ZoneEditor::ZoneEditor ()
 
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { juce::Colours::black };
+        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
         label.setColour (juce::Label::ColourIds::textColourId, textColor);
@@ -47,6 +48,13 @@ ZoneEditor::ZoneEditor ()
         displayToolsMenu (zoneProperties.getId () - 1);
     };
     addAndMakeVisible (toolsButton);
+    copyNextButton.setTooltip ("Copy this sample and its settings to the next zone, then select it. Existing content requires confirmation.");
+    continueNextButton.setTooltip ("Copy to the next zone starting at this zone's end, with the same duration clamped to the file. Then select the next slice.");
+    copyNextButton.onClick = [this] () { if (copyToNext != nullptr) copyToNext (false); };
+    continueNextButton.onClick = [this] () { if (copyToNext != nullptr) copyToNext (true); };
+    addAndMakeVisible (copyNextButton);
+    addAndMakeVisible (continueNextButton);
+    updateNextButtons ();
 
     addAndMakeVisible (loopPointsView);
 
@@ -288,7 +296,7 @@ void ZoneEditor::setupZoneComponents ()
 
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { juce::Colours::black };
+        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
         label.setColour (juce::Label::ColourIds::textColourId, textColor);
@@ -346,9 +354,12 @@ void ZoneEditor::setupZoneComponents ()
     // AUDIO FILE CHANNEL SELECT BUTTONS
     auto setupChannelSelectButton = [this] (juce::TextButton& channelSelectButton, juce::String buttonText, int side)
     {
-        channelSelectButton.setColour (juce::TextButton::ColourIds::buttonOnColourId, juce::Colours::lightgrey);
-        channelSelectButton.setColour (juce::TextButton::ColourIds::textColourOnId, juce::Colours::black);
+        channelSelectButton.setColour (juce::TextButton::ColourIds::buttonOnColourId, Theme::accent);
+        channelSelectButton.setColour (juce::TextButton::ColourIds::textColourOnId, Theme::field);
+        channelSelectButton.setColour (juce::TextButton::ColourIds::buttonColourId, Theme::field);
+        channelSelectButton.setColour (juce::TextButton::ColourIds::textColourOffId, Theme::text);
         channelSelectButton.setButtonText (buttonText);
+        channelSelectButton.setTooltip ("Use the " + juce::String (side == 0 ? "left" : "right") + " channel of this audio file for the zone");
         channelSelectButton.setEnabled (false);
         channelSelectButton.onClick = [this, side] ()
         {
@@ -808,9 +819,17 @@ void ZoneEditor::setLoopLengthIsEnd (bool newLoopLengthIsEnd)
     loopLengthDataChanged (zoneProperties.getLoopLength ());
 }
 
+void ZoneEditor::updateNextButtons ()
+{
+    const auto canCopy { zoneIndex >= 0 && zoneIndex < 7 && ! isStereoRightChannelMode && zoneProperties.isValid () && zoneProperties.getSample ().isNotEmpty () };
+    copyNextButton.setEnabled (canCopy);
+    continueNextButton.setEnabled (canCopy);
+}
+
 void ZoneEditor::setStereoRightChannelMode (bool newStereoRightChannelMode)
 {
     isStereoRightChannelMode = newStereoRightChannelMode;
+    updateNextButtons ();
 
     oneShotPlayButton.setEnabled (! isStereoRightChannelMode && sampleProperties.getStatus () == SampleStatus::exists);
     loopPlayButton.setEnabled (! isStereoRightChannelMode && sampleProperties.getStatus () == SampleStatus::exists);
@@ -854,12 +873,14 @@ void ZoneEditor::paint ([[maybe_unused]] juce::Graphics& g)
     // draw area to indicate active sample points (sample or loop)
     g.setColour (juce::Colours::grey.withAlpha (0.3f));
     g.fillRoundedRectangle (activePointBackground->toFloat (), 0.5f);
-    g.setColour (juce::Colours::black);
-    g.drawRoundedRectangle (activePointBackground->toFloat (), 0.5f, 1.f);
 }
 
 void ZoneEditor::paintOverChildren (juce::Graphics& g)
 {
+    // Keep the active region's outline visible above the opaque waveform view.
+    g.setColour (Theme::muted);
+    g.drawRoundedRectangle (activePointBackground->toFloat (), 0.5f, 1.f);
+
     juce::Colour fillColor { juce::Colours::white };
     float activeAlpha { 0.7f };
     float nonActiveAlpha { 0.2f };
@@ -873,7 +894,7 @@ void ZoneEditor::paintOverChildren (juce::Graphics& g)
                 g.setColour (fillColor.withAlpha (activeAlpha));
                 g.fillRect (localBounds);
                 g.setFont (20.0f);
-                g.setColour (juce::Colours::black);
+                g.setColour (Theme::muted);
                 g.drawText ("Start on Zone " + juce::String (zoneProperties.getId ()), localBounds, juce::Justification::centred, false);
             }
             else
@@ -885,7 +906,7 @@ void ZoneEditor::paintOverChildren (juce::Graphics& g)
                 g.fillRect (localBounds);
 
                 g.setFont (20.0f);
-                g.setColour (juce::Colours::black);
+                g.setColour (Theme::muted);
                 if (dropIndex == 0)
                     g.drawText ("Start on Zone 1", topHalfBounds, juce::Justification::centred, false);
                 else
@@ -906,6 +927,8 @@ void ZoneEditor::paintOverChildren (juce::Graphics& g)
 
 void ZoneEditor::resized ()
 {
+    copyNextButton.setBounds (10, getHeight () - 78, getWidth () - 20, 22);
+    continueNextButton.setBounds (10, getHeight () - 52, getWidth () - 20, 22);
     const auto xOffset { 10 };
     const auto width { 160 };
     const auto interParameterYOffset { 1 };
@@ -917,14 +940,14 @@ void ZoneEditor::resized ()
 
     const auto sampleNameLabelScale { 0.156f };
     const auto sampleNameInputScale { 1.f - sampleNameLabelScale };
-    sampleNameLabel.setBounds (xOffset, 5, scaleWidth (sampleNameLabelScale), 20);
+    sampleNameLabel.setBounds (xOffset, 5, scaleWidth (sampleNameLabelScale), 30);
     sampleNameSelectLabel.setBounds (sampleNameLabel.getRight () + spaceBetweenLabelAndInput, 5,
-                                     scaleWidth (sampleNameInputScale) - spaceBetweenLabelAndInput + 1 - 22, 20);
+                                     scaleWidth (sampleNameInputScale) - spaceBetweenLabelAndInput + 1 - 26, 30);
 
-    leftChannelSelectButton.setBounds (sampleNameSelectLabel.getRight () + 2, sampleNameSelectLabel.getY (), 20, 10);
-    rightChannelSelectButton.setBounds (sampleNameSelectLabel.getRight () + 2, leftChannelSelectButton.getBottom () + 1, 20, 10);
+    leftChannelSelectButton.setBounds (sampleNameSelectLabel.getRight () + 2, sampleNameSelectLabel.getY (), 24, 14);
+    rightChannelSelectButton.setBounds (sampleNameSelectLabel.getRight () + 2, leftChannelSelectButton.getBottom () + 2, 24, 14);
 
-    const auto loopPointsViewHeight { 50 };
+    const auto loopPointsViewHeight { 82 }; // trace plus a separate transport row
     const auto samplePointLabelScale { 0.45f };
     const auto samplePointInputScale { 1.f - samplePointLabelScale };
     sampleStartLabel.setBounds (xOffset, sampleNameSelectLabel.getBottom () + 5, scaleWidth (samplePointLabelScale), 20);
@@ -936,20 +959,17 @@ void ZoneEditor::resized ()
                                sampleStartTextEditor.getHeight () + sampleEndTextEditor.getHeight () + loopPointsViewHeight + (interParameterYOffset * 2) + 1 };
 
     auto loopPointsViewBounds { juce::Rectangle<int> { xOffset, sampleEndTextEditor.getBottom () + interParameterYOffset, width + 1, loopPointsViewHeight } };
-    loopPointsView.setBounds (loopPointsViewBounds/*.reduced (3, 0)*/);
+    loopPointsView.setBounds (loopPointsViewBounds.withTrimmedBottom (24));
 
-    loopStartLabel.setBounds (xOffset, loopPointsView.getBottom () + interParameterYOffset, scaleWidth (samplePointLabelScale), 20);
+    loopStartLabel.setBounds (xOffset, loopPointsViewBounds.getBottom () + interParameterYOffset, scaleWidth (samplePointLabelScale), 20);
     loopStartTextEditor.setBounds (loopStartLabel.getRight () + spaceBetweenLabelAndInput, loopStartLabel.getY (), scaleWidth (samplePointInputScale) - spaceBetweenLabelAndInput, 20);
     loopLengthLabel.setBounds (xOffset, loopStartLabel.getBottom () + interParameterYOffset, scaleWidth (samplePointLabelScale), 20);
     loopLengthTextEditor.setBounds (loopLengthLabel.getRight () + spaceBetweenLabelAndInput, loopLengthLabel.getY (), scaleWidth (samplePointInputScale) - spaceBetweenLabelAndInput, 20);
-    loopPointsBackground = { loopStartLabel.getX (), loopStartLabel.getY () - loopPointsViewHeight,
-                             loopLengthTextEditor.getRight () - loopStartLabel.getX () + 1,
-                             loopStartTextEditor.getHeight () + loopLengthTextEditor.getHeight () + loopPointsViewHeight + (interParameterYOffset * 2) + 1 };
+    loopPointsBackground = juce::Rectangle<int>::leftTopRightBottom (loopStartLabel.getX (), loopPointsView.getY () - 1,
+                                                                   loopLengthTextEditor.getRight () + 1, loopLengthTextEditor.getBottom () + 1);
 
-    auto playControlsArea { loopPointsView.getBounds () };
-    const auto buttonHeight { playControlsArea.getHeight () / 3 };
-    oneShotPlayButton.setBounds (playControlsArea.getX () + 3, playControlsArea.getY () + 3, 35, buttonHeight);
-    loopPlayButton.setBounds (playControlsArea.getX () + 3, playControlsArea.getBottom () - 3 - buttonHeight, 35, buttonHeight);
+    oneShotPlayButton.setBounds (xOffset + 2, loopPointsView.getBottom () + 2, 76, 20);
+    loopPlayButton.setBounds (xOffset + 82, loopPointsView.getBottom () + 2, 76, 20);
 
     const auto otherLabelScale { 0.66f };
     const auto otherInputScale { 1.f - otherLabelScale };
@@ -1220,6 +1240,7 @@ void ZoneEditor::updateSideSelectButtons (int side)
 
 void ZoneEditor::sampleDataChanged (juce::String sample)
 {
+    updateNextButtons ();
     //DebugLog ("ZoneEditor", "ZoneEditor[" + juce::String (zoneProperties.getId ()) + "]::sampleDataChanged: '" + sample + "'");
     sampleNameSelectLabel.setText (sample, juce::NotificationType::dontSendNotification);
 }

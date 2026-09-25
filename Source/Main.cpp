@@ -11,6 +11,7 @@
 #include "GUI/GuiControlProperties.h"
 #include "GUI/GuiProperties.h"
 #include "GUI/MainComponent.h"
+#include "GUI/WorkspaceComponent.h"
 #include "GUI/Assimil8or/Editor/EditManager.h"
 #include "GUI/Assimil8or/Editor/SampleManager/SampleManager.h"
 #include "oolib/Debug/DebugLog.h"
@@ -47,6 +48,7 @@ public:
 
     void initialise ([[maybe_unused]] const juce::String& commandLine) override
     {
+        juce::LookAndFeel::setDefaultLookAndFeel (&modernLookAndFeel);
         initAppDirectory ();
         initLogger ();
         initCrashHandler ();
@@ -68,6 +70,7 @@ public:
         audioPlayer.shutdownAudio ();
         persitentPropertiesFile.save ();
         mainWindow = nullptr; // (deletes our window)
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         juce::Logger::setCurrentLogger (nullptr);
     }
 
@@ -229,7 +232,7 @@ public:
         // locate the appProperties file in the User Application Data Directory
 
         const juce::String propertiesFilePath { juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getFullPathName () };
-        appDirectory = juce::File (propertiesFilePath).getChildFile (ProjectInfo::companyName).getChildFile (getApplicationName ());
+        appDirectory = juce::File (propertiesFilePath).getChildFile (ProjectInfo::companyName).getChildFile (getApplicationName () + "-UI-Preview");
         if (! appDirectory.exists ())
         {
             const auto result { appDirectory.createDirectory () };
@@ -294,12 +297,13 @@ public:
                               DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
-            setContentOwned (new MainComponent (rootPropertiesVT), true);
+            setContentOwned (new WorkspaceComponent (rootPropertiesVT), true);
 
            #if JUCE_IOS || JUCE_ANDROID
             setFullScreen (true);
            #else
             setResizable (true, true);
+            setResizeLimits (800, 560, 6000, 4000);
            #endif
 
             PersistentRootProperties prp (rootPropertiesVT, PersistentRootProperties::WrapperType::client, PersistentRootProperties::EnableCallbacks::no);
@@ -321,13 +325,15 @@ public:
 #if (! JUCE_IOS) && (! JUCE_ANDROID)
         void moved () override
         {
-            guiProperties.setPosition (getBounds ().getX (), getBounds ().getY (), false);
+            if (guiProperties.isValid ())
+                guiProperties.setPosition (getBounds ().getX (), getBounds ().getY (), false);
             DocumentWindow::moved ();
         }
 
         void resized () override
         {
-            guiProperties.setSize (getBounds ().getWidth (), getBounds ().getHeight (), false);
+            if (guiProperties.isValid ())
+                guiProperties.setSize (getBounds ().getWidth (), getBounds ().getHeight (), false);
             DocumentWindow::resized ();
         }
 #endif // ! JUCE_IOS && ! JUCE_ANDROID
@@ -346,6 +352,7 @@ public:
     };
 
 private:
+    ModernLookAndFeel modernLookAndFeel;
     juce::File appDirectory;
     RootProperties rootProperties;
     ValueTreeFile persitentPropertiesFile;

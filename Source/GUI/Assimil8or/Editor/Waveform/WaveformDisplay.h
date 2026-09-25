@@ -6,7 +6,9 @@
 #include "../SampleManager/SampleProperties.h"
 #include "../../../../Assimil8or/Preset/ChannelProperties.h"
 #include "../../../../Assimil8or/Preset/ZoneProperties.h"
-#include "oolib/GUI/InteractiveWaveform.h"
+#include "../../../../Assimil8or/Audio/AudioPlayerProperties.h"
+#include "RegionMove.h"
+#include "RegionMoveWaveform.h"
 #include "oolib/GUI/MarkerOverlay.h"
 #include "oolib/GUI/TimelineComponent.h"
 
@@ -25,29 +27,16 @@
     through the waveform, and the timeline is handed the same view, so all three
     stay locked together while panning and zooming.
 */
-class WaveformDisplay : public juce::Component
+class WaveformDisplay : public juce::Component, private juce::ScrollBar::Listener
 {
 public:
     WaveformDisplay ();
+    void focusZone ();
 
     void init (juce::ValueTree channelPropertiesVT, juce::ValueTree rootPropertiesVT);
     void setZone (int zoneIndex);
 
 private:
-    // Double-click anywhere on the waveform returns to the whole sample: with no
-    // scrollbars it is the only way back out of a deep zoom.
-    class ZoomableWaveform : public InteractiveWaveform
-    {
-    public:
-        std::function<void ()> onDoubleClick;
-
-        void mouseDoubleClick (const juce::MouseEvent&) override
-        {
-            if (onDoubleClick != nullptr)
-                onDoubleClick ();
-        }
-    };
-
     // Marker list indices, in the order they are added to the overlay.
     enum MarkerIndex
     {
@@ -63,11 +52,23 @@ private:
     SampleManagerProperties sampleManagerProperties;
     ZoneProperties zoneProperties;
     SampleProperties sampleProperties;
+    AudioPlayerProperties audioPlayerProperties;
+    double playheadSample { -1.0 };
     EditManager* editManager { nullptr };
 
     TimelineComponent timeline;
-    ZoomableWaveform waveform;
-    MarkerOverlay markerOverlay;
+    RegionMoveWaveform waveform;
+    RegionMarkerOverlay markerOverlay;
+    juce::ComboBox editMode;
+    std::optional<RegionMove::Region> movingRegion;
+    juce::TextButton zoomIn { "+" }, zoomOut { "-" }, fit { "Fit" }, zone { "Zone" }, loop { "Loop" };
+    juce::Label zoomInfo;
+    juce::Label auditionRateLabel;
+    juce::Slider auditionRateSlider;
+    juce::ToggleButton preservePitchButton { "Keep pitch" };
+    juce::ScrollBar scrollbar { false };
+    void scrollBarMoved (juce::ScrollBar*, double start) override;
+    void focusRange (double start, double end);
 
     bool hasSample ();
     juce::int64 getSampleLength ();
@@ -78,6 +79,7 @@ private:
     void updateAudioSource ();
     void updateDisplayChannel ();
     void updateMarkerPositions ();
+    void updateEditMode ();
     void publishView ();
 
     double constrainMarker (int markerIndex, double proposedPosition);

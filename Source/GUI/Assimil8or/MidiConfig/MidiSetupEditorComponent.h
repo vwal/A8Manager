@@ -2,7 +2,7 @@
 
 #include "../../../Assimil8or/MidiSetup/MidiSetupProperties.h"
 #include "oolib/GUI/CustomComboBox.h"
-#include "oolib/GUI/CustomTextEditor.h"
+#include "../../DragValueEditor.h"
 #include "oolib/GUI/NoArrowComboBoxLnF.h"
 
 // Mode : Omni, Uni, Multi - 0,1,2
@@ -77,7 +77,7 @@ private:
     juce::Label pitchWheelSemiLabel;
     CustomComboBox pitchWheelSemiComboBox;
     juce::Label velocityDepthLabel;
-    CustomTextEditorInt velocityDepthTextEditor;
+    DragValueEditorInt velocityDepthTextEditor;
     juce::Label notificationsLabel;
     CustomComboBox notificationsComboBox;
     juce::Label indexBaseKeyLabel;

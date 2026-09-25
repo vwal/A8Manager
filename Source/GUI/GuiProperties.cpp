@@ -2,21 +2,24 @@
 
 const auto defaultXPos { -1 };
 const auto defaultYPos { -1 };
-const auto defaultWidth { 1117 };
-const auto defaultHeight { 609 };
+const auto defaultWidth { 1460 };
+const auto defaultHeight { 950 };
 const auto defaultSplitter1Offset { 140 };
 const auto defaultSplitter2Offset { 170 };
-const auto defaultSplitter3Offset { 480 };
+const auto defaultSplitter3Offset { 640 };
 
 void GuiProperties::initValueTree ()
 {
     setPosition (defaultXPos, defaultYPos, false);
     setSize (defaultWidth, defaultHeight, false);
     setPaneSizes (defaultSplitter1Offset, defaultSplitter2Offset, defaultSplitter3Offset, false);
+    setUiScale (1.25);
 }
 
 void GuiProperties::processValueTree ()
 {
+    if (! data.hasProperty (UiScalePropertyId))
+        setUiScale (1.25);
     if (! data.hasProperty (PositionPropertyId))
         setPosition (defaultXPos, defaultYPos, false);
     if (! data.hasProperty (SizePropertyId))

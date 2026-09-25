@@ -1,4 +1,5 @@
 #include "Assimil8or/Assimil8orPreset.h"
+#include "Assimil8or/Preset/ZoneContinuation.h"
 #include "Assimil8or/Audio/AudioManager.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "oolib/Debug/DebugLog.h"
@@ -71,6 +72,36 @@ namespace
         }
     };
 
+    void testZoneContinuation ()
+    {
+        ZoneProperties source;
+        source.setId (1, false);
+        source.setSample ("slices.wav", false);
+        source.setSampleStart (100, false);
+        source.setSampleEnd (300, false);
+        source.setLoopStart (100, false);
+        source.setLoopLength (200, false);
+        source.setPitchOffset (2.0, false);
+        source.setLevelOffset (-3.0, false);
+        source.setSide (1, false);
+        const auto before { source.getValueTree ().createCopy () };
+        const auto copied { ZoneContinuation::makeNext (source.getValueTree (), 1000, false) };
+        require (copied.isEquivalentTo (before) && copied != source.getValueTree (), "Copy must be detached and preserve all settings");
+        ZoneProperties next (ZoneContinuation::makeNext (source.getValueTree (), 1000, true), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        require (next.getSampleStart () == 300 && next.getSampleEnd () == 500, "Continuation must start at the previous end with the same duration");
+        require (next.getLoopStart () == 300 && std::abs (next.getLoopLength ().value_or (0) - 200.0) < 1e-9, "Loop points must move with the new slice");
+        require (next.getSample () == "slices.wav" && next.getSide () == 1 && std::abs (next.getPitchOffset () - 2.0) < 1e-9, "Continuation lost sample settings");
+        ZoneProperties tail (ZoneContinuation::makeNext (source.getValueTree (), 350, true), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        require (tail.getSampleEnd () == 350 && tail.getSampleStart () == 300, "Tail must stop at the file end");
+        require (! ZoneContinuation::makeNext (source.getValueTree (), 300, true).isValid (), "End-of-file continuation should be refused");
+        require (! ZoneContinuation::makeNext (source.getValueTree (), 303, true).isValid (), "Sub-four-sample tail should be refused");
+        require (! ZoneContinuation::makeNext (source.getValueTree (), 0, true).isValid (), "Unavailable sample should be refused");
+        require (source.getValueTree ().isEquivalentTo (before), "Preparing the next slice must not mutate the source");
+        ZoneProperties empty;
+        require (! ZoneContinuation::makeNext (empty.getValueTree (), 1000, false).isValid (), "Empty zone copy should be refused");
+        std::cout << "PASS: zone copy/continuation (settings, boundaries, tail, invalid inputs, source preservation)\n";
+    }
+
     void testStereoSplit ()
     {
         AudioManager audio;
@@ -133,12 +164,14 @@ int main (int argc, char** argv)
     auto result { 0 };
     try
     {
-        require (argc == 2, "Usage: A8ManagerRegressionTests --parser-cv | --stereo-split");
+        require (argc == 2, "Usage: A8ManagerRegressionTests --parser-cv | --stereo-split | --zone-continuation");
         const juce::String selection { argv[1] };
         if (selection == "--parser-cv")
             testParserAndCv ();
         else if (selection == "--stereo-split")
             testStereoSplit ();
+        else if (selection == "--zone-continuation")
+            testZoneContinuation ();
         else
             require (false, "Unknown test selection: " + selection);
     }

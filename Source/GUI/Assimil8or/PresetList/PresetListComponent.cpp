@@ -1,4 +1,5 @@
 #include "PresetListComponent.h"
+#include "../../ModernTheme.h"
 #include "../../../Assimil8or/Assimil8orPreset.h"
 #include "../../../Assimil8or/FileTypeHelpers.h"
 #include "../../../Assimil8or/PresetManagerProperties.h"
@@ -289,12 +290,12 @@ void PresetListComponent::paintListBoxItem (int row, juce::Graphics& g, int widt
         if (rowIsSelected)
         {
             lastSelectedPresetIndex = row;
-            rowColor = juce::Colours::darkslategrey;
-            textColor = juce::Colours::yellow;
+            rowColor = Theme::accent.withAlpha (0.16f);
+            textColor = Theme::accent;
         }
         else
         {
-            rowColor = juce::Colours::black;
+            rowColor = Theme::field;
             textColor = juce::Colours::whitesmoke;
         }
         auto [presetNumber, thisPresetExists, presetName] { presetInfoList [row] };
@@ -308,7 +309,7 @@ void PresetListComponent::paintListBoxItem (int row, juce::Graphics& g, int widt
             textColor = textColor.withAlpha (0.5f);
         }
         g.setColour (rowColor);
-        g.fillRect (width - 1, 0, 1, height);
+        g.fillRect (0, 0, width, height);
         g.setColour (textColor);
         g.drawText ("  " + juce::String (presetNumber) + "-" + presetName, juce::Rectangle<float>{ 0.0f, 0.0f, (float) width, (float) height }, juce::Justification::centredLeft, true);
     }

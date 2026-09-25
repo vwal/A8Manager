@@ -8,7 +8,7 @@
 #include "../../../AppProperties.h"
 #include "../../../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "../../../Assimil8or/Preset/PresetProperties.h"
-#include "oolib/GUI/CustomTextEditor.h"
+#include "../../DragValueEditor.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 
@@ -18,8 +18,8 @@ public:
 private:
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colours::grey);
-        g.setColour (juce::Colours::white);
+        g.fillAll (Theme::panel);
+        g.setColour (Theme::border);
         g.drawLine ({ getLocalBounds ().getTopLeft ().toFloat (),getLocalBounds ().getTopRight ().toFloat () });
     }
 };
@@ -73,7 +73,7 @@ private:
         juce::Label xfadeCvLabel;
         CvInputGlobalComboBox xfadeCvComboBox;
         juce::Label xfadeWidthLabel;
-        CustomTextEditorDouble xfadeWidthEditor;
+        DragValueEditorDouble xfadeWidthEditor;
     };
     enum XfadeGroupIndex
     {

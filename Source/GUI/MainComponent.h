@@ -10,6 +10,20 @@
 #include "Assimil8or/PresetList/PresetListComponent.h"
 #include "Assimil8or/Validator/Assimil8orValidatorComponent.h"
 #include "oolib/GUI/SplitWindowComponent.h"
+#include "ModernTheme.h"
+
+class WorkspaceSplitter : public SplitWindowComponent
+{
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (Theme::panel);
+        g.setColour (Theme::border);
+        if (getHorizontalSplit ())
+            g.fillRect (4, getSplitOffset (), getWidth () - 8, 3);
+        else
+            g.fillRect (getSplitOffset (), 4, 3, getHeight () - 8);
+    }
+};
 
 class MainComponent : public juce::Component
 {
@@ -25,9 +39,9 @@ private:
     MidiConfigComponent midiConfigComponent;
     FileViewComponent fileViewComponent;
     PresetListComponent presetListComponent;
-    SplitWindowComponent topAndBottomSplitter;
-    SplitWindowComponent presetListEditorSplitter;
-    SplitWindowComponent folderBrowserEditorSplitter;
+    WorkspaceSplitter topAndBottomSplitter;
+    WorkspaceSplitter presetListEditorSplitter;
+    WorkspaceSplitter folderBrowserEditorSplitter;
     BottomStatusWindow bottomStatusWindow;
 
     juce::TooltipWindow tooltipWindow;

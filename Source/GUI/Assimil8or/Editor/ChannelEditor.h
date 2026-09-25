@@ -5,6 +5,7 @@
 #include "EditManager.h"
 #include "FormatHelpers.h"
 #include "ZoneEditor.h"
+#include "ZoneVoltageDisplay.h"
 #include "Envelope/AREnvelopeComponent.h"
 #include "Envelope/AREnvelopeProperties.h"
 #include "Waveform/WaveformDisplay.h"
@@ -13,11 +14,12 @@
 #include "../../../Assimil8or/Preset/ChannelProperties.h"
 #include "oolib/GUI/CustomComboBox.h"
 #include "oolib/GUI/CustomTextButton.h"
-#include "oolib/GUI/CustomTextEditor.h"
+#include "../../DragValueEditor.h"
+#include "../../ModernTheme.h"
 #include "oolib/GUI/ErrorHelpers.h"
 #include "oolib/GUI/NoArrowComboBoxLnF.h"
 
-class CvOffsetTextEditor : public CustomTextEditorDouble
+class CvOffsetTextEditor : public DragValueEditorDouble
 {
 public:
     CvOffsetTextEditor ()
@@ -69,7 +71,7 @@ private:
     }
 };
 
-class ZonesTabbedLookAndFeel : public juce::LookAndFeel_V4
+class ZonesTabbedLookAndFeel : public ModernLookAndFeel
 {
 public:
 //#define USE_COLOR_VOLTAGE
@@ -128,17 +130,16 @@ public:
         //const juce::Rectangle<float> area (button.getTextArea ().toFloat ());
         const juce::Rectangle<float> area (button.getActiveArea ().toFloat ());
 
-        float length { area.getWidth () };
-        float depth { area.getHeight () };
-
-        if (button.getTabbedButtonBar ().isVertical ())
-            std::swap (length, depth);
-
         auto textToDraw { button.getButtonText ().trim () };
         auto zoneIndexString { textToDraw.upToFirstOccurrenceOf ("\r" , false, true) };
-        auto minVoltageString { textToDraw.fromFirstOccurrenceOf ("\r", false, true) };
-        const auto zoneIndexBounds { juce::Rectangle<float> { 0.f, 3.f, static_cast<float> (area.getWidth ()), static_cast<float> (area.getHeight () / 2) } };
+        const auto voltages { textToDraw.fromFirstOccurrenceOf ("\r", false, true) };
+        const auto minVoltageString { voltages.upToFirstOccurrenceOf ("\r", false, true) };
+        const auto accessVoltageString { voltages.fromFirstOccurrenceOf ("\r", false, true) };
+        auto textArea { area.reduced (3.0f, 3.0f) };
+        const auto rowHeight { textArea.getHeight () / 3.0f };
+        const auto zoneIndexBounds { textArea.removeFromTop (rowHeight) };
         g.setColour (col);
+        g.setFont (juce::FontOptions (juce::jmin (14.0f, rowHeight * 0.85f), juce::Font::bold));
         g.drawText (zoneIndexString, zoneIndexBounds, juce::Justification::centred, false);
         if (minVoltageString.isNotEmpty ())
         {
@@ -149,18 +150,17 @@ public:
             else if (minVoltage <= 0.01 && minVoltage >= -0.01)
                 col = juce::Colours::lightgrey.darker (0.3f);
             else
-                col = juce::Colours::black;
+                col = Theme::muted;
 #else
             col = kZeroVoltageColor;
 #endif
-            auto currentFont { g.getCurrentFont () };
-            juce::Font voltageFont { currentFont.withHeight (depth * 0.35f) };
-            g.setFont (voltageFont);
-
-            const auto minVoltageBounds { juce::Rectangle<float> { 2.f, static_cast<float> (area.getHeight () / 2), static_cast<float> (area.getWidth () - 4), static_cast<float> (area.getHeight () / 2) } };
+            const auto minVoltageBounds { textArea.removeFromTop (rowHeight) };
+            g.setFont (juce::FontOptions (juce::jmin (12.0f, rowHeight * 0.85f)));
             g.setColour (col);
             g.drawText (minVoltageString, minVoltageBounds, juce::Justification::centred, false);
-            g.setFont (currentFont);
+            g.setFont (juce::FontOptions (juce::jmin (11.0f, rowHeight * 0.85f)));
+            g.setColour (Theme::accent.withMultipliedAlpha (alpha));
+            g.drawFittedText (accessVoltageString, textArea.toNearestInt (), juce::Justification::centred, 1);
         }
     }
 
@@ -217,11 +217,11 @@ private:
     juce::TextButton toolsButton;
 
     juce::Label aliasingLabel;
-    CustomTextEditorInt aliasingTextEditor; // integer
+    DragValueEditorInt aliasingTextEditor; // integer
     CvInputChannelComboBox aliasingModComboBox; // 0A - 8C
     CvOffsetTextEditor aliasingModTextEditor; // double
     juce::Label attackLabel;
-    CustomTextEditorDouble attackTextEditor; // double
+    DragValueEditorDouble attackTextEditor; // double
     juce::Label attackFromCurrentLabel;
     CustomComboBox attackFromCurrentComboBox; // false = start from zero, true = start from last value
     CvInputChannelComboBox attackModComboBox; // 0A - 8C
@@ -229,7 +229,7 @@ private:
     juce::Label autoTriggerLabel;
     CustomComboBox autoTriggerComboBox; //
     juce::Label bitsLabel;
-    CustomTextEditorDouble bitsTextEditor; // double
+    DragValueEditorDouble bitsTextEditor; // double
     CvInputChannelComboBox bitsModComboBox; // 0A - 8C
     CvOffsetTextEditor bitsModTextEditor; // double
     juce::Label channelModeLabel;
@@ -243,7 +243,7 @@ private:
     CvOffsetTextEditor expFMTextEditor; // double
     juce::Label levelLabel;
     juce::Label levelDbLabel;
-    CustomTextEditorDouble levelTextEditor; // double
+    DragValueEditorDouble levelTextEditor; // double
     juce::Label linAMLabel;
     CvInputChannelComboBox linAMComboBox; // 0A - 8C
     CvOffsetTextEditor linAMTextEditor; // double
@@ -263,14 +263,14 @@ private:
     CvInputChannelComboBox loopStartModComboBox; // 0A - 8C
     CvOffsetTextEditor loopStartModTextEditor; // double
     juce::Label mixLevelLabel;
-    CustomTextEditorDouble mixLevelTextEditor; // double
+    DragValueEditorDouble mixLevelTextEditor; // double
     CvInputChannelComboBox mixModComboBox; // 0A - 8C
     CvOffsetTextEditor mixModTextEditor; // double
     juce::Label mixModIsFaderLabel; //
     CustomComboBox mixModIsFaderComboBox; //
     juce::Label mutateLabel;
     juce::Label panMixLabel;
-    CustomTextEditorDouble panTextEditor; // double
+    DragValueEditorDouble panTextEditor; // double
     juce::Label panLabel;
     CvInputChannelComboBox panModComboBox; // 0A - 8C
     CvOffsetTextEditor panModTextEditor; // double
@@ -279,20 +279,20 @@ private:
     CvOffsetTextEditor phaseCVTextEditor; // double
     juce::Label pitchLabel;
     juce::Label pitchSemiLabel;
-    CustomTextEditorDouble pitchTextEditor; // double
+    DragValueEditorDouble pitchTextEditor; // double
     CvInputChannelComboBox pitchCVComboBox; // 0A - 8C
     CvOffsetTextEditor pitchCVTextEditor;
     juce::Label playModeLabel;
     CustomComboBox playModeComboBox; // 2 Play Modes: 0 = Gated, 1 = One Shot, Latch / Latch may not be a saved preset option.
     juce::Label phaseModIndexSectionLabel;
-    CustomTextEditorDouble pMIndexTextEditor; // double
+    DragValueEditorDouble pMIndexTextEditor; // double
     juce::Label pMIndexLabel;
     CvInputChannelComboBox pMIndexModComboBox; // 0A - 8C
     CvOffsetTextEditor pMIndexModTextEditor; // double
     juce::Label pMSourceLabel;
     CustomComboBox pMSourceComboBox; // Channel 1 is 0, 2 is 1, etc. Left Input is 8, Right Input is 9, and PhaseCV is 10
     juce::Label releaseLabel;
-    CustomTextEditorDouble releaseTextEditor; // double
+    DragValueEditorDouble releaseTextEditor; // double
     CvInputChannelComboBox releaseModComboBox; // 0A - 8C
     CvOffsetTextEditor releaseModTextEditor; // double
     CustomTextButton reverseButton; //
@@ -327,6 +327,7 @@ private:
     void clearAllZones ();
     void configAudioPlayer ();
     void copyZone (int zoneIndex, bool settingsOnly);
+    void copyToNextZone (int zoneIndex, bool continueSlice);
     void deleteZone (int zoneIndex);
     void duplicateZone (int zoneIndex);
     void ensureProperZoneIsSelected ();

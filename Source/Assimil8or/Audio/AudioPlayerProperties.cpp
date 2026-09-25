@@ -1,10 +1,46 @@
 #include "AudioPlayerProperties.h"
+#include <cmath>
 
 void AudioPlayerProperties::initValueTree ()
 {
     setPlayState (PlayState::stop, false);
     setSampleSource (-1, -1, false);
     setSamplePointsSelector (SamplePointsSelector::SamplePoints, false);
+    setPlaybackPosition (-1.0, false);
+    setAuditionRate (1.0, false);
+    setPreservePitch (true, false);
+}
+
+void AudioPlayerProperties::setPreservePitch (bool preserve, bool includeSelfCallback)
+{
+    setValue (preserve, PreservePitchPropertyId, includeSelfCallback);
+}
+
+bool AudioPlayerProperties::getPreservePitch ()
+{
+    return data.hasProperty (PreservePitchPropertyId) ? getValue<bool> (PreservePitchPropertyId) : true;
+}
+
+void AudioPlayerProperties::setAuditionRate (double rate, bool includeSelfCallback)
+{
+    setValue (std::isfinite (rate) ? juce::jlimit (minAuditionRate, maxAuditionRate, rate) : 1.0,
+              AuditionRatePropertyId, includeSelfCallback);
+}
+
+double AudioPlayerProperties::getAuditionRate ()
+{
+    const auto rate { data.hasProperty (AuditionRatePropertyId) ? getValue<double> (AuditionRatePropertyId) : 1.0 };
+    return std::isfinite (rate) ? juce::jlimit (minAuditionRate, maxAuditionRate, rate) : 1.0;
+}
+
+void AudioPlayerProperties::setPlaybackPosition (double position, bool includeSelfCallback)
+{
+    setValue (position, PlaybackPositionPropertyId, includeSelfCallback);
+}
+
+double AudioPlayerProperties::getPlaybackPosition ()
+{
+    return getValue<double> (PlaybackPositionPropertyId);
 }
 
 void AudioPlayerProperties::setPlayState (PlayState playState, bool includeSelfCallback)
@@ -49,7 +85,22 @@ void AudioPlayerProperties::valueTreePropertyChanged (juce::ValueTree& treeWhose
 {
     if (treeWhosePropertyHasChanged == data)
     {
-        if (property == PlayStatePropertyId)
+        if (property == PreservePitchPropertyId)
+        {
+            if (onPreservePitchChange != nullptr)
+                onPreservePitchChange (getPreservePitch ());
+        }
+        else if (property == AuditionRatePropertyId)
+        {
+            if (onAuditionRateChange != nullptr)
+                onAuditionRateChange (getAuditionRate ());
+        }
+        else if (property == PlaybackPositionPropertyId)
+        {
+            if (onPlaybackPositionChange != nullptr)
+                onPlaybackPositionChange (getPlaybackPosition ());
+        }
+        else if (property == PlayStatePropertyId)
         {
             if (onPlayStateChange != nullptr)
                 onPlayStateChange (getPlayState ());
@@ -71,4 +122,3 @@ void AudioPlayerProperties::valueTreePropertyChanged (juce::ValueTree& treeWhose
         }
     }
 }
-

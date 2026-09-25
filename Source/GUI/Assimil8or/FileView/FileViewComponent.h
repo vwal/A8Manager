@@ -19,6 +19,7 @@ public:
     void init (juce::ValueTree rootPropertiesVT);
 
     std::function<void (juce::File audioFile)> onAudioFileSelected;
+    std::function<void ()> onSelectRootFolder;
     std::function<void (std::function<void ()>, std::function<void ()>)> overwritePresetOrCancel;
 
 private:
@@ -36,7 +37,6 @@ private:
 
     juce::TextButton optionsButton;
     juce::ToggleButton showAllFiles { "Show All" };
-    std::unique_ptr<juce::FileChooser> fileChooser;
     juce::ListBox directoryContentsListBox { {}, this };
     juce::CriticalSection queuedFolderLock;
     juce::File queuedFolderToScan;
@@ -58,7 +58,6 @@ private:
     juce::ValueTree getDirectoryEntryVT (int row);
     void importSamples (const juce::StringArray& files);
     void newFolder ();
-    void openFolder ();
     void resetDropInfo ();
     void updateDropInfo (const juce::StringArray& files);
     void updateFromNewData ();
