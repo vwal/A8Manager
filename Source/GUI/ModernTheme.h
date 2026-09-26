@@ -37,6 +37,7 @@ public:
         setColour (juce::ListBox::outlineColourId, Theme::border);
         setColour (juce::PopupMenu::backgroundColourId, Theme::panel);
         setColour (juce::PopupMenu::textColourId, Theme::text);
+        setColour (juce::PopupMenu::headerTextColourId, Theme::accent);
         setColour (juce::PopupMenu::highlightedBackgroundColourId, Theme::accent.darker (0.6f));
         setColour (juce::ScrollBar::thumbColourId, Theme::border.brighter (0.3f));
         setColour (juce::TabbedButtonBar::frontTextColourId, Theme::accent);

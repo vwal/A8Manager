@@ -94,9 +94,14 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
     }
     else
     {
-        nextChannelProperties.wrap ({}, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
-        nextZoneProperties.wrap ({}, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-        nextSampleProperties.wrap ({}, SampleProperties::WrapperType::owner, SampleProperties::EnableCallbacks::no);
+        // Channel eight has no partner. An invalid client wrap is an error and
+        // retains the previous tree; release the optional bindings explicitly.
+        nextChannelProperties.enableCallbacks (false);
+        nextZoneProperties.enableCallbacks (false);
+        nextSampleProperties.enableCallbacks (false);
+        nextChannelProperties.release ();
+        nextZoneProperties.release ();
+        nextSampleProperties.release ();
     }
 
     channelProperties.onChannelModeChange = [this] (int)

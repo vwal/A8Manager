@@ -4,6 +4,7 @@
 #include "../../../Assimil8or/Assimil8orPreset.h"
 #include "../../../Assimil8or/FileTypeHelpers.h"
 #include "../../../Assimil8or/SafeRename.h"
+#include "../../../Assimil8or/Audio/SafeAudioImport.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 #include "oolib/ValueTree/ValueTreeHelpers.h"
@@ -592,93 +593,23 @@ void FileViewComponent::resetDropInfo ()
 
 void FileViewComponent::importSamples (const juce::StringArray& files)
 {
-    auto errorDialog = [this] (juce::String message)
+    const juce::File folder { appProperties.getMostRecentFolder () };
+    juce::StringArray failures;
+    bool importedAny { false };
+    for (const auto& fileName : files)
     {
-        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Import Failed", message, {}, nullptr,
-                                                juce::ModalCallbackFunction::create ([this] (int) {}));
-    };
-
-    for (auto& fileName : files)
-    {
-        auto file { juce::File { fileName } };
-        // skip files in the preset folder
-        if (file.getParentDirectory () == appProperties.getMostRecentFolder ())
-            continue;
-        if (auto reader { audioManager->getReaderFor (file) }; reader != nullptr)
-        {
-            auto destinationFile { juce::File (appProperties.getMostRecentFolder ()).getChildFile (file.getFileNameWithoutExtension ()).withFileExtension ("wav") };
-            if (destinationFile.existsAsFile ())
-            {
-                errorDialog ("The file '" + destinationFile.getFileName () + "' already exists. Import was skipped.");
-                continue;
-            }
-
-            auto sampleRate { reader->sampleRate };
-            auto numChannels { reader->numChannels };
-            auto bitsPerSample { reader->bitsPerSample };
-
-            if (bitsPerSample < 8)
-                bitsPerSample = 8;
-            else if (bitsPerSample > 24) // the wave writer supports int 8/16/24
-                bitsPerSample = 24;
-            if (numChannels == 0)
-            {
-                errorDialog ("The file '" + file.getFileName () + "' contains no audio channels.");
-                continue;
-            }
-            if (numChannels > 2)
-                numChannels = 2;
-            if (reader->sampleRate > 192000)
-            {
-                errorDialog ("The sample rate of '" + file.getFileName () + "' exceeds 192 kHz.");
-                continue;
-            }
-
-            juce::TemporaryFile temporaryDestination (destinationFile);
-            auto destinationOutputFileStream { temporaryDestination.getFile ().createOutputStream () };
-            if (destinationOutputFileStream == nullptr || destinationOutputFileStream->failedToOpen ())
-            {
-                errorDialog ("Unable to create a temporary file for '" + destinationFile.getFileName () + "'.");
-                continue;
-            }
-
-            // JUCE's writer takes ownership through a base-typed unique_ptr reference.
-            std::unique_ptr<juce::OutputStream> destinationFileStream { std::move (destinationOutputFileStream) };
-            auto writeSucceeded { false };
-            juce::WavAudioFormat wavAudioFormat;
-            // on success, the writer takes ownership of the output stream, and will delete it when done
-            if (auto writer { wavAudioFormat.createWriterFor (destinationFileStream, juce::AudioFormatWriterOptions {}.withSampleRate (sampleRate)
-                                                                                                                     .withNumChannels (static_cast<int> (numChannels))
-                                                                                                                     .withBitsPerSample (bitsPerSample)) }; writer != nullptr)
-            {
-                // copy the whole thing
-                // TODO - two things
-                //   a) this needs to be done in a thread
-                //   b) we should locally read into a buffer and then write that, so we can display progress if needed
-                writeSucceeded = writer->writeFromAudioReader (*reader.get (), 0, -1);
-            }
-            else
-            {
-                //failure to create writer
-                errorDialog ("Failure to create a writer for '" + destinationFile.getFileName () + "'.");
-                continue;
-            }
-
-            if (! writeSucceeded)
-            {
-                errorDialog ("Failure to write '" + destinationFile.getFileName () + "'.");
-                continue;
-            }
-
-            if (destinationFile.existsAsFile () || ! temporaryDestination.overwriteTargetFileWithTemporary ())
-                errorDialog ("Unable to complete the import of '" + destinationFile.getFileName () + "'.");
-        }
-        else
-        {
-            // failure to create reader
-            errorDialog ("Failure to read '" + file.getFileName () + "'.");
-        }
+        const juce::File source { fileName };
+        // Files already in this folder are left alone, as before.
+        if (source.getParentDirectory () == folder) continue;
+        juce::File imported;
+        const auto result { audioManager ? SafeAudioImport::importFile (*audioManager, source, folder, imported)
+                                        : juce::Result::fail ("The audio service is unavailable.") };
+        if (result.failed ()) failures.add (source.getFileName () + ": " + result.getErrorMessage ());
+        else importedAny = true;
     }
+    if (importedAny) directoryDataProperties.triggerStartScan (false);
+    if (! failures.isEmpty ())
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Import Failed", failures.joinIntoString ("\n\n"));
 }
 
 bool FileViewComponent::isInterestedInFileDrag ([[maybe_unused]] const juce::StringArray& files)

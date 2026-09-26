@@ -3,6 +3,8 @@
 #include "ParameterToolTipData.h"
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Assimil8orPreset.h"
+#include "../../../Assimil8or/PresetFileOperations.h"
+#include "../../../Assimil8or/PresetArchive.h"
 #include "../../../Assimil8or/PresetManagerProperties.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "../../../Assimil8or/Preset/PresetHelpers.h"
@@ -538,33 +540,32 @@ void Assimil8orEditorComponent::overwritePresetOrCancel (std::function<void ()> 
     jassert (overwriteFunction != nullptr);
     jassert (cancelFunction != nullptr);
 
-    if (PresetHelpers::areEntirePresetsEqual (unEditedPresetProperties.getValueTree (), presetProperties.getValueTree ()))
-    {
-        overwriteFunction ();
-    }
-    else
-    {
-        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Overwriting Edited Preset",
-            "You have not saved a preset that you have edited.\n  Select Continue to lose your changes.\n  Select Cancel to go back and save.", "Continue (lose changes)", "Cancel", nullptr,
-            juce::ModalCallbackFunction::create ([this, overwriteFunction, cancelFunction] (int option)
-            {
-                juce::MessageManager::callAsync ([this, option, overwriteFunction,cancelFunction] ()
+    PresetFileOperations::guardedChange (presetProperties.getValueTree (), unEditedPresetProperties.getValueTree (),
+        [safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this)] (std::function<void ()> proceed, std::function<void ()> cancel)
+        {
+            juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Overwriting Edited Preset",
+                "You have not saved a preset that you have edited.\n  Select Continue to lose your changes.\n  Select Cancel to go back and save.", "Continue (lose changes)", "Cancel", nullptr,
+                juce::ModalCallbackFunction::create ([safe, proceed, cancel] (int option)
                 {
-                    if (option == 1) // Continue
-                        overwriteFunction ();
-                    else // cancel
-                        cancelFunction ();
-                });
-            }));
-    }
+                    juce::MessageManager::callAsync ([safe, option, proceed, cancel] ()
+                    {
+                        if (safe == nullptr) return;
+                        if (option == 1) // Continue
+                            proceed ();
+                        else // cancel
+                            cancel ();
+                    });
+                }));
+        }, std::move (overwriteFunction), std::move (cancelFunction));
 }
 
 void Assimil8orEditorComponent::savePreset ()
 {
-    auto presetFile { juce::File (appProperties.getMRUList () [0]) };
-    Assimil8orPreset assimil8orPreset;
-    assimil8orPreset.write (presetFile, presetProperties.getValueTree ());
-    PresetProperties::copyTreeProperties (presetProperties.getValueTree (), unEditedPresetProperties.getValueTree ());
+    if (appProperties.getMRUList ().isEmpty ()) return;
+    const auto presetFile { juce::File (appProperties.getMRUList () [0]) };
+    const auto result { PresetFileOperations::save (presetFile, presetProperties.getValueTree (), unEditedPresetProperties.getValueTree ()) };
+    if (result.failed ())
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Preset save failed", result.getErrorMessage () + " Your edits remain unsaved; you can retry or export them.");
 }
 
 void Assimil8orEditorComponent::paint ([[maybe_unused]] juce::Graphics& g)
@@ -693,7 +694,8 @@ void Assimil8orEditorComponent::exportPresetSettings ()
             auto exportPresetFile { fc.getURLResults () [0].getLocalFile () };
             appProperties.setImportExportMruFolder (exportPresetFile.getParentDirectory ().getFullPathName ());
             Assimil8orPreset assimil8orPreset;
-            assimil8orPreset.write (exportPresetFile, presetProperties.getValueTree ());
+            const auto result { assimil8orPreset.write (exportPresetFile, presetProperties.getValueTree ()) };
+            if (result.failed ()) juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Export failed", result.getErrorMessage ());
         }
     }, nullptr);
 }
@@ -723,13 +725,22 @@ void Assimil8orEditorComponent::exportPresetSettingsAndSamples ()
                          sampleFiles.emplace (sampleFolder.getChildFile (sampleProperties.getName ()));
                 }
             // create temp folder to hold temp preset file
-            auto tempFolder { exportContainerFile.getParentDirectory ().getChildFile ("temp_" + juce::String::toHexString (juce::Random::getSystemRandom ().nextInt ())) };
-            tempFolder.createDirectory ();
+            const auto tempFolder { exportContainerFile.getParentDirectory ().getNonexistentChildFile (".a8-preset-export", "", false) };
+            if (auto result { tempFolder.createDirectory () }; result.failed ())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Export failed", result.getErrorMessage ());
+                return;
+            }
+            struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { tempFolder };
 
             // write out temp preset file
             Assimil8orPreset assimil8orPreset;
             auto presetFile { tempFolder.getChildFile (exportContainerFile.getFileNameWithoutExtension () + (".yml")) };
-            assimil8orPreset.write (presetFile, presetProperties.getValueTree ());
+            if (auto result { assimil8orPreset.write (presetFile, presetProperties.getValueTree ()) }; result.failed ())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Export failed", result.getErrorMessage ());
+                return;
+            }
 
             juce::ZipFile::Builder exportContainerBuilder;
             // add preset file to zip file
@@ -739,12 +750,18 @@ void Assimil8orEditorComponent::exportPresetSettingsAndSamples ()
                 exportContainerBuilder.addFile (sampleFile, 9);
 
             // write out zip file
+            juce::TemporaryFile stagedArchive (exportContainerFile);
+            auto outputStream { stagedArchive.getFile ().createOutputStream () };
+            if (outputStream == nullptr || outputStream->failedToOpen () || ! exportContainerBuilder.writeToStream (*outputStream, nullptr))
             {
-                auto outputStream { exportContainerFile.createOutputStream () };
-                exportContainerBuilder.writeToStream (*outputStream, nullptr);
+                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Export failed", "Unable to write the archive. The previous destination was not replaced.");
+                return;
             }
-            // clean up temp folder
-            tempFolder.deleteRecursively ();
+            outputStream->flush ();
+            const auto result { outputStream->getStatus () };
+            outputStream.reset ();
+            if (result.failed () || ! stagedArchive.overwriteTargetFileWithTemporary ())
+                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Export failed", "Unable to finish saving the archive. Check the destination and available space.");
         }
     }, nullptr);
 }
@@ -761,15 +778,16 @@ void Assimil8orEditorComponent::importPresetSettings ()
                 auto importPresetFile { fc.getURLResults () [0].getLocalFile () };
 
                 appProperties.setImportExportMruFolder (importPresetFile.getParentDirectory ().getFullPathName ());
-                juce::StringArray fileContents;
-                importPresetFile.readLines (fileContents);
-
-                // TODO - check for import errors and handle accordingly
-                Assimil8orPreset assimil8orPreset;
-                assimil8orPreset.parse (fileContents);
+                juce::ValueTree imported;
+                const auto result { PresetFileOperations::read (importPresetFile, imported) };
+                if (result.failed ())
+                {
+                    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Import failed", result.getErrorMessage ());
+                    return;
+                }
 
                 // change the imported Preset Id to the current Preset Id
-                PresetProperties importedPresetProperties (assimil8orPreset.getPresetVT (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+                PresetProperties importedPresetProperties (imported, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
                 importedPresetProperties.setId (presetProperties.getId (), false);
 
                 // copy imported preset to current preset
@@ -782,53 +800,33 @@ void Assimil8orEditorComponent::importPresetSettings ()
 
 void Assimil8orEditorComponent::importPresetSettingsAndSamples ()
 {
-    // query user for folder/file name to import from. This will be a zip file containing the preset settings and samples
-    fileChooser.reset (new juce::FileChooser ("Please select the zip file to import from...", appProperties.getImportExportMruFolder (), "*.zip"));
-    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) mutable
+    const auto safe { juce::Component::SafePointer<Assimil8orEditorComponent> (this) };
+    overwritePresetOrCancel ([safe] ()
     {
-        if (fc.getURLResults ().size () == 1 && fc.getURLResults () [0].isLocalFile ())
-        {
-            auto importContainerFile { fc.getURLResults () [0].getLocalFile () };
-            appProperties.setImportExportMruFolder (importContainerFile.getParentDirectory ().getFullPathName ());
-
-            juce::ZipFile importContainerReader (importContainerFile);
-
-            auto sampleFolder { juce::File (appProperties.getMostRecentFolder ()) };
-
-            for (auto curEntryIndex { 0 }; curEntryIndex < importContainerReader.getNumEntries (); ++curEntryIndex)
+        if (safe == nullptr) return;
+        const auto folder { safe->appProperties.getMostRecentFolder () };
+        const auto before { safe->presetProperties.getValueTree ().createCopy () };
+        safe->fileChooser = std::make_unique<juce::FileChooser> ("Import preset and samples (existing samples will not be overwritten)", safe->appProperties.getImportExportMruFolder (), "*.zip");
+        safe->fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [safe, folder, before] (const juce::FileChooser& chooser)
             {
-                auto entry { importContainerReader.getEntry (curEntryIndex) };
-                if (entry->filename.endsWithIgnoreCase (".yml"))
+                if (safe == nullptr || safe->appProperties.getMostRecentFolder () != folder ||
+                    ! safe->presetProperties.getValueTree ().isEquivalentTo (before)) return;
+                const auto results { chooser.getURLResults () };
+                if (results.size () != 1 || ! results[0].isLocalFile ()) return;
+                const auto archive { results[0].getLocalFile () };
+                juce::ValueTree imported;
+                const auto result { PresetArchive::importPreset (archive, juce::File (folder), imported) };
+                if (result.failed ())
                 {
-                     // import settings from this file into the current preset
-                    auto tempFolder { sampleFolder.getChildFile ("temp_" + juce::String::toHexString (juce::Random::getSystemRandom ().nextInt ())) };
-                    tempFolder.createDirectory ();
-
-                    // extract the preset file into the temp folder and read it
-                    importContainerReader.uncompressEntry (curEntryIndex, tempFolder, true);
-                    auto tempPresetFile { tempFolder.getChildFile (entry->filename) };
-                    juce::StringArray fileContents;
-                    tempPresetFile.readLines (fileContents);
-                    // TODO - check for import errors and handle accordingly
-                    Assimil8orPreset assimil8orPreset;
-                    assimil8orPreset.parse (fileContents);
-
-                    // change the imported Preset Id to the current Preset Id
-                    PresetProperties importedPresetProperties (assimil8orPreset.getPresetVT (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
-                    importedPresetProperties.setId (presetProperties.getId (), false);
-                    // copy imported preset to current preset
-                    PresetProperties::copyTreeProperties (importedPresetProperties.getValueTree (), presetProperties.getValueTree ());
-
-                    tempFolder.deleteRecursively ();
+                    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Import failed", result.getErrorMessage ());
+                    return;
                 }
-                else
-                {
-                    // extract this file into the current preset folder, overwrite if necessary
-                    importContainerReader.uncompressEntry (curEntryIndex, sampleFolder, true);
-                }
-            }
-        }
-    }, nullptr);
+                imported.setProperty (PresetProperties::IdPropertyId, safe->presetProperties.getId (), nullptr);
+                PresetProperties::copyTreeProperties (imported, safe->presetProperties.getValueTree ());
+                safe->appProperties.setImportExportMruFolder (archive.getParentDirectory ().getFullPathName ());
+            }, nullptr);
+    }, [] () {});
 }
 
 void Assimil8orEditorComponent::resized ()

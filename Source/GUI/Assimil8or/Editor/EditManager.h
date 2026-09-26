@@ -22,6 +22,7 @@ public:
     void forZones (int channelIndex, std::vector<int> zoneIndexList, std::function<void (juce::ValueTree, juce::ValueTree)> zoneCallback);
 
     bool assignSamples (int channelIndex, int zoneIndex, const juce::StringArray& files);
+    const juce::String& getLastAssignmentError () const { return lastAssignmentError; }
     double clampMinVoltage (int channelIndex, int zoneIndex, double voltage);
     juce::ValueTree getChannelDefaults ();
     juce::ValueTree getZoneDefaults ();
@@ -32,6 +33,8 @@ public:
     void resetMinVoltage (int channelIndex, int zoneIndex);
 
 private:
+    friend struct AudioFileSafetyTestAccess;
+    juce::String lastAssignmentError;
     PresetProperties presetProperties;
     AppProperties appProperties;
     ChannelProperties defaultChannelProperties;
@@ -50,4 +53,3 @@ private:
     std::array<std::array<ZoneAndSampleProperties, 8>, 8> zoneAndSamplePropertiesList;
     AudioManager* audioManager { nullptr };
 };
-

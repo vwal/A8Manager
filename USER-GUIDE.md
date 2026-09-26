@@ -251,6 +251,17 @@ Zooming changes only the view. It does not alter sample boundaries, playback
 volume, audio files, or audition speed. The yellow playhead follows playback
 but does not automatically scroll the view; it may move off-screen when zoomed.
 
+**Diagonal gray stripes** always identify the gap from Sample End to a later
+Loop Start, so that bridge remains visible while editing—even with **No Loop**
+saved in the channel. With **Loop** or **Loop/Release** enabled, the striped
+extent continues through a Loop End beyond Sample End. Showing the bridge in
+No Loop mode does not enable hardware looping. The waveform stays visible through
+the stripes; ordinary unselected audio remains uniformly dimmed. The stripes
+update with markers, channel loop mode, zoom and selected zone, in both sizes.
+They describe the configured loop extent in source coordinates, independently of
+the SAMPLE/LOOP audition selection—not a simulation of reverse playback, gate
+release or modulation. Audition still plays only the selected region.
+
 ### Expanded view and marker tools
 
 Click the **expand arrow** at the waveform's top left for a larger view over the
@@ -259,7 +270,10 @@ expanded when you switch zones. Click **X**, or press **Escape** with the wavefo
 focused, to return to the compact layout. The same zoom, editing, menus and
 audition controls work in both views.
 
-The **gear button** and waveform **right-click menu** contain:
+The **gear button** and waveform **right-click menu** offer Zoom and Jump to
+Marker commands directly under section headings, without opening submenus. The
+right-click menu also has a direct **SET MARKER HERE** section. Zero Crossing
+Nudge and Match Opposite Boundary remain submenus below a separator:
 
 - **Zoom:** reset both axes, fit the sample region, or fit the loop region.
 - **Jump to Marker:** centre a chosen marker without changing zoom. With the
@@ -489,6 +503,15 @@ can copy onward from zone 8 or a stereo-right channel.
 These are preset edits, not audio-file slicing operations. Click SAVE to keep
 the resulting zone assignments.
 
+For linked stereo channels, Copy/Continue, Insert, Paste, Flip, Explode and Clear
+operate on both sides together. Each side keeps its own source file and L/R
+selector; voltage boundaries stay aligned. Inserting refuses to discard an
+occupied final slot on either side. Replacing occupied zones and Clear require
+confirmation. Settings-only Paste preserves the target samples and L/R choices.
+Pasting or assigning an unpaired mono source into an existing stereo pair puts
+that source on both sides; it does not silently keep the previous right sample.
+An independent, occupied next channel is never automatically made stereo-right.
+
 ### Purging a zone
 
 Right-click the numbered zone square and choose **Purge this zone…**, then
@@ -508,6 +531,11 @@ explicitly identifies this. A stereo-right zone cannot be purged independently.
 available when the preset differs from its loaded/saved state. Switching presets
 or folders with unsaved edits can prompt you to discard them: **Continue (lose
 changes)** really discards the edits. Choose **Cancel**, then SAVE, to keep them.
+If saving fails, an error is shown and edits remain unsaved. MIDI setup likewise
+stays open after a failed save. Preset **Move** goes to the adjacent numbered slot
+(also in a filtered list); if occupied, the two presets swap. The editor and Save
+target follow the moved preset. A failed move attempts to restore both originals;
+if recovery needs assistance, the error gives the backup location.
 
 The preset-level **TOOLS** menu offers import/export of **Settings Only** or
 **Settings and Samples**. Use the latter when you need a portable copy that
@@ -517,11 +545,26 @@ contents for use on the module. When transferring a folder yourself, include
 the samples referenced by its presets and preserve their filenames. Verify the
 result on the module.
 
+ZIP import asks about unsaved edits first and validates a flat archive containing
+one preset and its WAV samples. Identical existing samples may be reused, but a
+different sample with the same name stops the import without overwriting it.
+Use a separate root folder or resolve the conflicting names before retrying.
+
 The file browser and validation tools also offer operations such as renaming,
 deletion, conversion, and removal of unused samples. These operate on files;
 they are not deferred until the preset's SAVE button is clicked. Review the
 scope and keep backups before using them. There is no comprehensive undo/redo
 history for all application operations.
+
+Sample assignment and file-browser import preserve source files and choose an
+unused WAV name for collisions or conversions. Converted output is checked before use. The
+validator also stages conversion before replacing an incompatible WAV and keeps
+a recoverable hidden `.a8-original-…` sibling backup. Non-WAV originals remain at
+their original paths. Assignment, file-browser import and validator conversion reject files above
+192 kHz or with more than two channels, with an explanation: use an audio editor
+to resample/downmix first.
+The validator's missing-file Locate actions also refuse to overwrite a file that
+has appeared at the destination since the scan.
 
 Renaming keeps the original file extension if you omit it, and refuses collisions,
 invalid characters and new names exceeding 47 characters for files (including

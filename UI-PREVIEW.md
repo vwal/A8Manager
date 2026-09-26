@@ -37,14 +37,18 @@ checkout and the JUCE/oolib submodule contents are unchanged.
   labels and colour keys in the zone panel. Always-visible, collision-aware marker
   overlays show grouped frame counts, source timestamps and pitch-adjusted region
   lengths. The active Sample/Loop selection follows marker editing; its surrounding
-  area is dimmed. Option/Alt-drag inside a region or on its handle moves that pair
+  area is dimmed. The Sample End → later Loop Start bridge always has translucent
+  diagonal gray stripes, including when No Loop is saved. With hardware Loop or
+  Loop/Release enabled the striped extent continues to a later Loop End. This hint
+  is independent of audition selection; it does not emulate gate/reverse behavior.
+  Option/Alt-drag inside a region or on its handle moves that pair
   without resizing, with Shift for ten-times-finer travel. In overlapping regions
   the selected pair wins; handles identify their own pair. Outside both regions
   the modifier drag does nothing. This replaces the old movement-mode selector.
   Fractional lengths, both Length/End modes and file-edge clamping are retained.
   The expand arrow overlays the channel controls while leaving zones accessible;
   the same component stays expanded across zone switches until X/Escape closes it.
-  Gear and right-click menus offer Reset/Fit Sample/Fit Loop, Jump to Marker (keys
+  Gear and right-click menus offer top-level Reset/Fit Sample/Fit Loop and Jump to Marker (keys
   1–4 with waveform focus), per-marker left/right zero-crossing nudges, and a
   separate Match Opposite Boundary command. Matching searches within ±50 ms at
   the source rate for a smaller first/last-frame amplitude difference, including
@@ -52,7 +56,9 @@ checkout and the JUCE/oolib submodule contents are unchanged.
   even in Loop Length mode, favours the nearest equally good match, and makes no
   edit when no improvement exists. It does not guarantee matching slopes or a
   click-free stereo join. The
-  context menu additionally offers Set Marker Here. Native-menu callbacks reject
+  context menu additionally offers top-level Set Marker Here. Zoom, Jump and Set
+  sections have headings; zero nudges and boundary matching remain submenus.
+  Native-menu callbacks reject
   stale zone/sample selections. An app-local ruler adds grouped frame counts
   without modifying the pinned oolib submodule.
   File/sample/loop lengths use source rate and zone PITCH OFFSET, excluding preview
@@ -193,3 +199,24 @@ saving any preset or sample files. Listening tests on the module remain open.
 Potential follow-ups, not implemented here: undo/redo for all preset edits,
 search/filtering for large preset libraries, keyboard navigation between zones,
 and multi-zone batch operations.
+
+### End-to-end audit fixes (26 September 2026)
+
+All fifteen reported findings are addressed. Sample import/conversion preserves
+originals and avoids name collisions; unsupported rates above 192 kHz are rejected
+instead of pretending to resample. Preset/MIDI failures retain unsaved state.
+Preset lists validate slot IDs, retain row/slot identity when filtered, safely
+swap files and rebind Save after moving. ZIP import validates and stages contents,
+respects unsaved edits, and refuses conflicting audio instead of overwriting it.
+Sample reload invalidates every borrower before changing buffers and publishes
+missing/corrupt status. Stereo zone copy/continue/insert/paste/flip/explode/clear
+operate on the pair, with replacement confirmations and full-slot protection.
+Loop End dragging and field nudges now share the waveform's boundary semantics;
+automatic folder renaming uses the 31-character limit.
+
+Four new permanent regression groups cover audio-file safety, preset workflows,
+sample-cache/field-edit behavior and paired zone edits. See
+`REVIEW-2026-09-26.md` for the finding-to-test mapping and remaining validation
+limits. The waveform menus now put separators before Jump/Set headings, not
+under them; the first Zoom heading has no separator. WAV-marker import remains
+deferred pending a representative file.

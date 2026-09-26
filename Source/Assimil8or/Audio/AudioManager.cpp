@@ -1,4 +1,5 @@
 #include "AudioManager.h"
+#include <cmath>
 #include "oolib/Debug/DebugLog.h"
 
 constexpr float epsilon { 1e-6f };
@@ -28,7 +29,7 @@ bool AudioManager::isAssimil8orSupportedAudioFile (const juce::File file)
         return reader->usesFloatingPointData == false &&
                (reader->bitsPerSample >= 8 && reader->bitsPerSample <= 32) &&
                (reader->numChannels >= 1 && reader->numChannels <= 2) &&
-               reader->sampleRate <= 192000;
+               std::isfinite (reader->sampleRate) && reader->sampleRate > 0.0 && reader->sampleRate <= 192000 && reader->lengthInSamples > 0;
     }
     return false;
 }

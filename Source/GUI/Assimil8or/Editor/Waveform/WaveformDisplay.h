@@ -39,6 +39,7 @@ public:
 
 private:
     friend struct WaveformTestAccess;
+    friend struct AudioAuditTestAccess;
     // Marker list indices, in the order they are added to the overlay.
     enum MarkerIndex
     {

@@ -23,6 +23,7 @@ public:
 
 private:
     friend struct AudioPlayerTestAccess;
+    friend struct AudioAuditTestAccess;
     AudioSettingsProperties audioSettingsProperties;
     AudioPlayerProperties audioPlayerProperties;
     AppProperties appProperties;

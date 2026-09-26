@@ -1,6 +1,7 @@
 #include "ChannelEditor.h"
 #include "../../../Assimil8or/Preset/ZoneContinuation.h"
 #include "../../../Assimil8or/Preset/ZonePurge.h"
+#include "../../../Assimil8or/Preset/PairedZoneEdits.h"
 #include "../../ModernTheme.h"
 #include "FormatHelpers.h"
 #include "ParameterToolTipData.h"
@@ -197,17 +198,38 @@ void ChannelEditor::visibilityChanged ()
 // TODO - move this to the EditManger
 void ChannelEditor::clearAllZones ()
 {
-    const auto numZones { editManager->getNumUsedZones (channelIndex) };
-    for (auto curZoneIndex { 0 }; curZoneIndex < numZones; ++curZoneIndex)
-        zoneProperties [curZoneIndex].copyFrom (defaultZoneProperties.getValueTree (), false);
+    confirmZoneEdit ("Clear all zones?", "Clear all zone assignments and settings in this channel and its paired right channel, if present? Audio files are not deleted.", [this] ()
+    {
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+        PairedZoneEdits::clearAll (channelProperties.getValueTree (), defaultZoneProperties.getValueTree ());
+        ensureProperZoneIsSelected ();
+        updateAllZoneTabNames ();
+        updateWaveformDisplay ();
+    });
+}
+
+void ChannelEditor::confirmZoneEdit (juce::String title, juce::String message, std::function<void ()> apply)
+{
+    const auto tree { channelProperties.getValueTree () };
+    if (! PairedZoneEdits::editable (tree)) return;
+    const auto before { tree.createCopy () };
+    const auto right { ZonePurge::linkedRightChannel (tree) };
+    const auto rightBefore { right.createCopy () };
+    juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, title, message, "Continue", "Cancel", nullptr,
+        juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<ChannelEditor> (this), tree, before, right, rightBefore, apply] (int choice)
+        {
+            if (choice == 0 || safe == nullptr || safe->channelProperties.getValueTree () != tree || ! tree.isEquivalentTo (before) ||
+                ZonePurge::linkedRightChannel (tree) != right || (right.isValid () && ! right.isEquivalentTo (rightBefore))) return;
+            apply ();
+        }));
 }
 
 // TODO - move this to the EditManger
 void ChannelEditor::copyZone (int zoneIndex, bool settingsOnly)
 {
-    copyBufferZoneProperties.copyFrom (zoneProperties [zoneIndex].getValueTree (), settingsOnly);
-    if (settingsOnly)
-        copyBufferZoneProperties.setSample ("", false);
+    if (zoneIndex < 0 || zoneIndex >= 8) return;
+    PairedZoneEdits::capture (copyBufferZoneProperties.getValueTree (), zoneProperties[zoneIndex].getValueTree (),
+                            PairedZoneEdits::rightZone (channelProperties.getValueTree (), zoneIndex), settingsOnly);
     *zoneCopyBufferHasData = true;
 }
 
@@ -226,36 +248,30 @@ void ChannelEditor::copyToNextZone (int zoneIndex, bool continueSlice)
             "Load a sample and set the current zone's end before the end of the file. At least four samples must remain for the next slice.");
         return;
     }
-    const auto sourceBefore { source.getValueTree ().createCopy () };
-    const auto targetBefore { target.getValueTree ().createCopy () };
-    const auto channelBefore { channelProperties.getValueTree () };
-    auto apply = [safe = juce::Component::SafePointer<ChannelEditor> (this), zoneIndex, next, sourceBefore, targetBefore, channelBefore] ()
+    auto apply = [this, zoneIndex, next, continueSlice, sampleLength = sample.getLengthInSamples ()] ()
     {
-        if (safe == nullptr || safe->channelProperties.getValueTree () != channelBefore) return;
-        auto& from { safe->zoneProperties [zoneIndex] };
-        auto& to { safe->zoneProperties [zoneIndex + 1] };
-        if (! from.getValueTree ().isEquivalentTo (sourceBefore) || ! to.getValueTree ().isEquivalentTo (targetBefore)) return;
-        const auto occupied { to.getSample ().isNotEmpty () };
-        const auto targetVoltage { to.getMinVoltage () };
-        const auto lower { from.getMinVoltage () };
-        const auto upper { zoneIndex == 0 ? 5.0 : safe->zoneProperties [zoneIndex - 1].getMinVoltage () };
-        to.copyFrom (next, false);
-        if (occupied)
-            to.setMinVoltage (targetVoltage, true);
-        else
+        SampleProperties current (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        if (continueSlice && (current.getStatus () != SampleStatus::exists || current.getLengthInSamples () != sampleLength))
         {
-            from.setMinVoltage ((upper + lower) / 2.0, true);
-            to.setMinVoltage (lower, true);
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Sample changed", "The source audio changed while confirming. Please repeat Continue with the updated sample.");
+            return;
         }
-        safe->updateAllZoneTabNames ();
-        safe->ensureProperZoneIsSelected ();
-        safe->zoneTabs.setCurrentTabIndex (zoneIndex + 1);
-        safe->sampleWaveformDisplay.focusZone ();
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+        if (const auto result { PairedZoneEdits::copyNext (channelProperties.getValueTree (), zoneIndex, next) }; result.failed ())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot copy zone", result.getErrorMessage ());
+            return;
+        }
+        updateAllZoneTabNames ();
+        ensureProperZoneIsSelected ();
+        zoneTabs.setCurrentTabIndex (zoneIndex + 1);
+        sampleWaveformDisplay.focusZone ();
     };
-    if (target.getSample ().isNotEmpty ())
-        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Replace zone " + juce::String (zoneIndex + 2) + "?",
-            "The next zone already contains a sample. Its sample and settings will be replaced; its voltage boundary will be preserved.",
-            "Replace", "Cancel", nullptr, juce::ModalCallbackFunction::create ([apply] (int result) { if (result != 0) apply (); }));
+    const auto rightTarget { PairedZoneEdits::rightZone (channelProperties.getValueTree (), zoneIndex + 1) };
+    const auto rightOccupied { rightTarget.isValid () && ZoneProperties (rightTarget, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no).getSample ().isNotEmpty () };
+    if (target.getSample ().isNotEmpty () || rightOccupied)
+        confirmZoneEdit ("Replace zone " + juce::String (zoneIndex + 2) + "?",
+            "The next zone or its paired right zone already contains a sample. Both sides will be replaced together; existing left voltage boundaries are preserved.", apply);
     else
         apply ();
 }
@@ -292,49 +308,59 @@ void ChannelEditor::confirmPurgeZone (int zoneIndex)
 // TODO - move this to the EditManger
 void ChannelEditor::duplicateZone (int zoneIndex)
 {
-    jassert (zoneIndex > 0 && zoneIndex < 7);
-    const auto topBoundary { zoneProperties[zoneIndex - 1].getMinVoltage () };
-    const auto bottomBoundary { zoneProperties [zoneIndex].getMinVoltage () };
-    const auto newZoneVoltage { bottomBoundary + ((topBoundary - bottomBoundary) / 2) };
-    for (auto curZoneIndex { 6 }; curZoneIndex >= zoneIndex; --curZoneIndex)
-    {
-        ZoneProperties destZoneProperties (channelProperties.getZoneVT (curZoneIndex + 1), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-        destZoneProperties.copyFrom (channelProperties.getZoneVT (curZoneIndex), false);
-    }
-    zoneProperties [zoneIndex].setMinVoltage (newZoneVoltage, false);
-    if (editManager->getNumUsedZones (channelIndex) == 8)
-        zoneProperties [7].setMinVoltage (-5.0, false);
+    audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+    if (! PairedZoneEdits::insert (channelProperties.getValueTree (), zoneIndex))
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot insert zone", "Both sides of a stereo pair need an empty final slot. No existing zone was discarded.");
 }
 
 // TODO - move this to the EditManger
 void ChannelEditor::pasteZone (int zoneIndex)
 {
-    zoneProperties [zoneIndex].copyFrom (copyBufferZoneProperties.getValueTree (), copyBufferZoneProperties.getSample ().isEmpty ());
-    // if this is not on the end
-    if (zoneIndex < editManager->getNumUsedZones (channelIndex) - 1)
+    if (zoneIndex < 0 || zoneIndex >= 8 || ! PairedZoneEdits::editable (channelProperties.getValueTree ())) return;
+    const auto clipboard { copyBufferZoneProperties.getValueTree ().createCopy () };
+    auto apply = [this, zoneIndex, clipboard] ()
     {
-        // ensure pasted minVoltage is valid
-        const auto [topBoundary, bottomBoundary] { editManager->getVoltageBoundaries (channelIndex, zoneIndex, 0) };
-        const auto curMinVolatage { zoneProperties [zoneIndex].getMinVoltage () };
-        if (curMinVolatage >= topBoundary || curMinVolatage <= bottomBoundary)
-            zoneProperties [zoneIndex].setMinVoltage (bottomBoundary + ((topBoundary - bottomBoundary) / 2), false);
-    }
-    else
-    {
-        // this handles pasting to the end, and pasting past the end, which cannot discern at this point
-        // so first we ensure that the last zone is -5
-        zoneProperties [zoneIndex].setMinVoltage (-5.0, false);
-
-        // if this isn't the first item, verify the previous item is valid
-        if (zoneIndex > 0)
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+        if (! PairedZoneEdits::pasteContent (channelProperties.getValueTree (), zoneIndex, clipboard))
         {
-            const auto minValue { -5.0 };
-            const auto [topBoundary, _] { editManager->getVoltageBoundaries (channelIndex, zoneIndex, 1) };
-            const auto prevMinVolatage { zoneProperties [zoneIndex - 1].getMinVoltage () };
-            if (prevMinVolatage >= topBoundary || prevMinVolatage <= minValue)
-                zoneProperties [zoneIndex - 1].setMinVoltage (minValue + ((topBoundary - minValue) / 2), false);
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot paste zone", "The copied stereo pair is incomplete. Assign its right-channel sample and copy again.");
+            return;
         }
-    }
+        // if this is not on the end
+        if (zoneIndex < editManager->getNumUsedZones (channelIndex) - 1)
+        {
+            // ensure pasted minVoltage is valid
+            const auto [topBoundary, bottomBoundary] { editManager->getVoltageBoundaries (channelIndex, zoneIndex, 0) };
+            const auto curMinVolatage { zoneProperties [zoneIndex].getMinVoltage () };
+            if (curMinVolatage >= topBoundary || curMinVolatage <= bottomBoundary)
+                zoneProperties [zoneIndex].setMinVoltage (bottomBoundary + ((topBoundary - bottomBoundary) / 2), false);
+        }
+        else
+        {
+            // this handles pasting to the end, and pasting past the end, which cannot discern at this point
+            // so first we ensure that the last zone is -5
+            zoneProperties [zoneIndex].setMinVoltage (-5.0, false);
+
+            // if this isn't the first item, verify the previous item is valid
+            if (zoneIndex > 0)
+            {
+                const auto minValue { -5.0 };
+                const auto [topBoundary, _] { editManager->getVoltageBoundaries (channelIndex, zoneIndex, 1) };
+                const auto prevMinVolatage { zoneProperties [zoneIndex - 1].getMinVoltage () };
+                if (prevMinVolatage >= topBoundary || prevMinVolatage <= minValue)
+                    zoneProperties [zoneIndex - 1].setMinVoltage (minValue + ((topBoundary - minValue) / 2), false);
+            }
+        }
+        PairedZoneEdits::syncVoltages (channelProperties.getValueTree ());
+        updateAllZoneTabNames ();
+        ensureProperZoneIsSelected ();
+        updateWaveformDisplay ();
+    };
+    const auto right { PairedZoneEdits::rightZone (channelProperties.getValueTree (), zoneIndex) };
+    if (copyBufferZoneProperties.getSample ().isNotEmpty () && (zoneProperties[zoneIndex].getSample ().isNotEmpty () ||
+        (right.isValid () && ZoneProperties (right, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no).getSample ().isNotEmpty ())))
+        confirmZoneEdit ("Replace zone sample and settings?", "This replaces the selected zone and its paired right zone, if present. Audio files are unchanged.", apply);
+    else apply ();
 }
 
 // TODO - move this to the EditManger
@@ -422,31 +448,40 @@ void ChannelEditor::ensureProperZoneIsSelected ()
 
 void ChannelEditor::explodeZone (int zoneIndex, int explodeCount)
 {
-    SampleProperties sampleProperties (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
-    juce::int64 sampleSize { sampleProperties.getLengthInSamples () };
-    const auto sliceSize { sampleSize / explodeCount };
-    auto& sourceZoneProperties { zoneProperties [zoneIndex] };
-    auto setSamplePoints = [this, sliceSize] (ZoneProperties& zpToUpdate, int index)
+    if (zoneIndex < 0 || explodeCount < 2 || zoneIndex + explodeCount > 8) return;
+    SampleProperties sampleProperties (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+    const auto sampleSize { sampleProperties.getLengthInSamples () };
+    if (sampleProperties.getStatus () != SampleStatus::exists || sampleSize / explodeCount < 4) return;
+    auto apply = [this, zoneIndex, explodeCount, sampleSize] ()
     {
-        const auto sampleStart { index * sliceSize };
-        const auto sampleEnd { sampleStart + sliceSize };
-        zpToUpdate.setSampleStart (sampleStart, true);
-        zpToUpdate.setSampleEnd (sampleEnd, true);
-        zpToUpdate.setLoopStart (sampleStart, true);
-        zpToUpdate.setLoopLength (static_cast<double> (sliceSize), true);
+        SampleProperties current (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        if (current.getStatus () != SampleStatus::exists || current.getLengthInSamples () != sampleSize)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Sample changed", "The source audio changed while confirming. Please repeat Explode with the updated sample.");
+            return;
+        }
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+        if (! PairedZoneEdits::explode (channelProperties.getValueTree (), zoneIndex, explodeCount, sampleSize))
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot explode sample", "The stereo pair is incomplete. Assign its right-channel sample before creating slices.");
+            return;
+        }
+        zoneProperties [editManager->getNumUsedZones (channelIndex) - 1].setMinVoltage (-5.0, false);
+        balanceVoltages (VoltageBalanceType::distributeAcross10V);
+        ensureProperZoneIsSelected ();
+        updateAllZoneTabNames ();
+        updateWaveformDisplay ();
     };
-    setSamplePoints (sourceZoneProperties, 0);
-
-    for (auto destinationZoneIndex { zoneIndex + 1 }; destinationZoneIndex < zoneIndex + explodeCount; ++destinationZoneIndex)
+    bool replacesZone { false };
+    for (auto index { zoneIndex + 1 }; index < zoneIndex + explodeCount; ++index)
     {
-        auto& destZoneProperties { zoneProperties [destinationZoneIndex] };
-        destZoneProperties.copyFrom (sourceZoneProperties.getValueTree (), false);
-        setSamplePoints (destZoneProperties, destinationZoneIndex - zoneIndex);
+        const auto right { PairedZoneEdits::rightZone (channelProperties.getValueTree (), index) };
+        replacesZone |= zoneProperties[index].getSample ().isNotEmpty () ||
+            (right.isValid () && ZoneProperties (right, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no).getSample ().isNotEmpty ());
     }
-    zoneProperties [editManager->getNumUsedZones (channelIndex) - 1].setMinVoltage (-5.0, false);
-    balanceVoltages (VoltageBalanceType::distributeAcross10V);
-    ensureProperZoneIsSelected ();
-    updateAllZoneTabNames ();
+    if (replacesZone)
+        confirmZoneEdit ("Replace zones with slices?", "Exploding this sample replaces later occupied zones and their paired right zones. Audio files are unchanged.", apply);
+    else apply ();
 }
 
 int ChannelEditor::getEnvelopeValueResolution (double envelopeValue)
@@ -2225,6 +2260,7 @@ void ChannelEditor::balanceVoltages (VoltageBalanceType balanceType)
         break;
         default: jassertfalse; break;
     }
+    PairedZoneEdits::syncVoltages (channelProperties.getValueTree ());
     updateAllZoneTabNames ();
 }
 
@@ -2835,19 +2871,8 @@ void ChannelEditor::updateWaveformDisplay ()
 
 void ChannelEditor::flipZones (int zoneIndex, int flipCount)
 {
-    ZoneProperties tempZoneProperties;
-    for (auto zoneCount { 0 }; zoneCount< flipCount / 2; ++zoneCount)
-    {
-        auto& firstZone { zoneProperties [zoneIndex + zoneCount] };
-        const auto firstZoneMinVoltage { firstZone.getMinVoltage () };
-        auto& secondZone { zoneProperties [zoneIndex + (flipCount - zoneCount - 1)] };
-        const auto secondZoneMinVoltage { secondZone.getMinVoltage () };
-        tempZoneProperties.copyFrom (secondZone.getValueTree (), false);
-        secondZone.copyFrom (firstZone.getValueTree (), false);
-        secondZone.setMinVoltage (secondZoneMinVoltage, true);
-        firstZone.copyFrom (tempZoneProperties.getValueTree (), false);
-        firstZone.setMinVoltage (firstZoneMinVoltage, true);
-    }
+    audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+    PairedZoneEdits::flip (channelProperties.getValueTree (), zoneIndex, flipCount);
 }
 
 void ChannelEditor::updateAllZoneTabNames ()

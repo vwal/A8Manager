@@ -34,6 +34,7 @@ public:
 
 private:
     friend struct ZoneEditorTestAccess;
+    friend struct AudioAuditTestAccess;
     class ClickListener : public juce::MouseListener
     {
     public:
@@ -114,7 +115,9 @@ private:
     juce::PopupMenu createZoneEditMenu (juce::PopupMenu existingPopupMenu, std::function <void (ZoneProperties&, SampleProperties&)> setter, std::function <void ()> resetter, std::function <void ()> reverter,
                                         std::function<bool (ZoneProperties&)> canCloneToZoneCallback, std::function<bool (ZoneProperties&)> canCloneToAllCallback);
     juce::String formatLoopLength (double loopLength);
-    auto getSampleAdjustMenu (std::function<juce::int64 ()> getSampleOffset, std::function<juce::int64 ()> getMinSampleOffset, std::function<juce::int64 ()>getMaxSampleOffset, std::function<void (juce::int64)> setSampleOffset);
+    enum class SampleMarker { sampleStart, sampleEnd, loopStart, loopEnd };
+    juce::PopupMenu getSampleAdjustMenu (SampleMarker marker);
+    bool nudgeSampleMarker (SampleMarker marker, bool right);
     bool handleSamplesInternal (int zoneIndex, juce::StringArray files);
     void setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector samplePointsSelector, bool forceSetup);
     void setupZoneComponents ();

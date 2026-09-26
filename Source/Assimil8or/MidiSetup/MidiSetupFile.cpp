@@ -5,8 +5,10 @@ MidiSetupFile::MidiSetupFile ()
     initParser ();
 }
 
-void MidiSetupFile::write (juce::File midiSetupFile, juce::ValueTree midiSetupPropertiesVT)
+juce::Result MidiSetupFile::write (juce::File midiSetupFile, juce::ValueTree midiSetupPropertiesVT)
 {
+    if (! midiSetupPropertiesVT.isValid () || midiSetupFile.isDirectory ())
+        return juce::Result::fail ("Invalid MIDI setup or destination: " + midiSetupFile.getFullPathName ());
     MidiSetupProperties midiSetupPropertiesToWrite (midiSetupPropertiesVT, MidiSetupProperties::WrapperType::owner, MidiSetupProperties::EnableCallbacks::no);
 
     juce::StringArray lines;
@@ -31,7 +33,8 @@ void MidiSetupFile::write (juce::File midiSetupFile, juce::ValueTree midiSetupPr
     addLine (MidiSetup::IndexBaseKeyId, midiSetupPropertiesToWrite.getIndexBaseKey ());
 
     const auto stringToWrite { lines.joinIntoString ("\r\n") };
-    midiSetupFile.replaceWithText (stringToWrite);
+    return midiSetupFile.replaceWithText (stringToWrite) ? juce::Result::ok ()
+        : juce::Result::fail ("Unable to save '" + midiSetupFile.getFullPathName () + "'. Check the destination and available space.");
 }
 
 juce::ValueTree MidiSetupFile::parse (juce::StringArray presetLines)
@@ -110,4 +113,3 @@ void MidiSetupFile::initParser ()
         }},
     });
 }
-

@@ -23,7 +23,7 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers twelve tests, each with a 60-second timeout. Use `ctest --test-dir
+CTest registers sixteen tests, each with a 60-second timeout. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
@@ -115,14 +115,20 @@ mouse-up/cancellation, disabled editing and marker hit routing during modifier m
 **WaveformWorkflowRegression** uses the real waveform component and in-memory
 stereo samples. It checks pitch-adjusted durations independent of audition speed,
 comma grouping, sample/time labels, directional and bounded zero crossings,
-context versus gear menus, marker placement, all four boundary-matching actions
+context versus gear menus (top-level command order, section headings, shortcut
+column and read-only guards), marker placement, all four boundary-matching actions
 (including fixed fractional loop ends in Length mode and no-op/disabled guards),
 Length/End behaviour, Sample/Loop
 selection callbacks, Option/Alt movement inside regions and on handles, overlap
 selection, outside-region rejection, zoom reset/jumps, right-click versus drag,
 expanded zone switching, inactive-area dimming, disabled editing and collision-free
-label placement in compact/expanded sizes. Optional artifacts are
-`waveform-compact.png` and `waveform-expanded.png`. It does not launch the user's
+label placement in compact/expanded sizes. Menu checks include exact separator
+placement. Loop-extension checks cover the always-visible bridge in No Loop,
+Loop and Loop/Release, fractional ends, the pre-loop bridge, diagonal band pixels,
+uniform off-region dimming, zoom clipping, zone/source changes and audition-selection
+independence. Optional artifacts are `waveform-compact.png`, `waveform-expanded.png`
+and `waveform-loop-extension.png`, plus `waveform-bridge-compact.png` and
+`waveform-bridge-expanded.png` for the bridge with No Loop saved. It does not launch the user's
 application or change their presets/preferences.
 
 **EditorRefinementRegression** checks quieter-side and exact-zero nudges,
@@ -142,4 +148,31 @@ dialogs are not clicked automatically.
 property callbacks without opening an audio device. It covers unpaired L/R,
 paired stereo with different rates/lengths, silent missing-right tails, right
 reloads, unrelated next-channel unloads, mono fallback, channel eight, device-rate
-changes, implicit loop lengths and isolation of SAMPLE versus LOOP edits.
+changes, implicit loop lengths and isolation of SAMPLE versus LOOP edits. Channel
+eight must release its optional partner bindings without invalid-tree assertions;
+changes to the old partner are ignored and switching back restores real bindings.
+
+**AudioAuditRegression** checks real shared-cache reloads, invalidation before
+buffer resizing, shorter stereo-to-mono replacement, missing/corrupt files and
+recovery. Actual AudioPlayer/WaveformDisplay consumers must see the new buffers
+and lengths. It drives the real LOOP END drag callback and parameter-field zero
+nudges, including exclusive end coordinates and Length/End-mode compensation.
+
+**AudioFileSafetyRegression** uses disposable generated WAV/AIFF files and the
+actual EditManager/shared conversion service. It checks original preservation,
+internal float WAV conversion, unique bounded collision names, failed/rejected
+imports, stereo assignment without commandeering occupied independent channels,
+mono assignment to an existing pair, recoverable conversion failure and folder
+versus file auto-name limits. No real samples are used.
+
+**PresetWorkflowAuditRegression** checks failed preset/MIDI saves and dirty-state
+retention, valid filename slots, filtered row/slot mapping, move/save rebinding
+helpers, transactional swaps (including injected installation failure), target
+occupancy for Paste, dirty guards and staged ZIP imports. ZIP fixtures include
+same/different-content collisions, unsafe paths and malformed/ambiguous presets.
+
+**PairedZoneEditRegression** exercises the production pair-edit helper for
+Copy/Continue, Insert, full/settings-only Paste, Flip, Explode and Clear. It checks
+distinct L/R files and selectors, slot IDs, voltage synchronization, refusal to
+drop a full final slot, incomplete pairs and final slice remainders. Confirmation
+dialogs themselves are not automated.

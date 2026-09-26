@@ -39,6 +39,7 @@ private:
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::ValueTree localCopyOfValidatorResultsList;
     juce::File locateFilesInitialDirectory;
+    juce::String locateRootFolder;
     std::vector<juce::File> filesToLocate;
     int totalInfoItems { 0 };
     int totalWarningItems { 0 };
@@ -53,7 +54,7 @@ private:
     void autoLocateAll ();
     void autoRenameAll ();
     void buildQuickLookupList ();
-    void convert (juce::File file);
+    void convert (juce::File file, bool reportSuccess = true);
     void handleLocatedFiles (std::vector<std::tuple <juce::File, juce::File>>& locatedFiles);
     void locate (juce::File file);
     void rename (juce::File file, int maxLength);

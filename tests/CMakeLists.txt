@@ -47,6 +47,14 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     RegionMoveTests.cpp
     WaveformWorkflowTests.cpp
     EditorRefinementTests.cpp
+    AudioAuditTests.cpp
+    AudioFileSafetyTests.cpp
+    PairedZoneEditTests.cpp
+    PresetWorkflowAuditTests.cpp
+    ../Source/Assimil8or/Assimil8orPreset.cpp
+    ../Source/Assimil8or/FileTypeHelpers.cpp
+    ../Source/Assimil8or/MidiSetup/MidiSetupFile.cpp
+    ../Source/Assimil8or/MidiSetup/MidiSetupProperties.cpp
     ../Source/GUI/Assimil8or/Editor/ZoneEditor.cpp
     ../Source/GUI/Assimil8or/Editor/EditManager.cpp
     ../Source/GUI/Assimil8or/Editor/FormatHelpers.cpp
@@ -71,6 +79,7 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../Source/Assimil8or/Preset/ParameterPresetsSingleton.cpp
     ../Source/Assimil8or/Preset/ParameterPresetListProperties.cpp
     ../Source/GUI/Assimil8or/Editor/SampleManager/SampleProperties.cpp
+    ../Source/GUI/Assimil8or/Editor/SampleManager/SampleManager.cpp
     ../Source/GUI/Assimil8or/Editor/SampleManager/SampleManagerProperties.cpp
     ../Source/GUI/CurrentFolderComponent.cpp
     ../Source/AppProperties.cpp
@@ -95,5 +104,10 @@ add_test(NAME RegionMoveRegression COMMAND A8ManagerInteractionTests --region-mo
 add_test(NAME WaveformWorkflowRegression COMMAND A8ManagerInteractionTests --waveform-workflow)
 add_test(NAME EditorRefinementRegression COMMAND A8ManagerInteractionTests --editor-refinements)
 add_test(NAME StereoPreviewRegression COMMAND A8ManagerInteractionTests --stereo-preview)
+add_test(NAME AudioAuditRegression COMMAND A8ManagerInteractionTests --audio-audit)
+add_test(NAME AudioFileSafetyRegression COMMAND A8ManagerInteractionTests --audio-file-safety)
+add_test(NAME PairedZoneEditRegression COMMAND A8ManagerInteractionTests --paired-zone-edit)
+add_test(NAME PresetWorkflowAuditRegression COMMAND A8ManagerInteractionTests --preset-workflow-audit)
+set_tests_properties(AudioAuditRegression AudioFileSafetyRegression PairedZoneEditRegression PresetWorkflowAuditRegression PROPERTIES TIMEOUT 60)
 set_tests_properties(EditorRefinementRegression StereoPreviewRegression PROPERTIES TIMEOUT 60)
 set_tests_properties(ValueDragRegression RootFolderRegression PlaybackRegression LoopPointsRegression ZoneVoltageRegression RegionMoveRegression WaveformWorkflowRegression PROPERTIES TIMEOUT 60)

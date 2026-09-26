@@ -14,7 +14,6 @@
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 
-#define INCLUDE_WAVE_MATCHING_LOOP_POINT_ALIGN 0
 ZoneEditor::ZoneEditor ()
 {
     {
@@ -131,10 +130,7 @@ void ZoneEditor::filesDropped (const juce::StringArray& files, int x, int y)
 {
 
     setDropIndex (files, x, y);
-    if (supportedFile && ! handleSamplesInternal (dropIndex == 0 ? 0 : zoneIndex, files))
-    {
-        // TODO - indicate an error? first thought was a red outline that fades out over a couple of second
-    }
+    if (supportedFile) handleSamplesInternal (dropIndex == 0 ? 0 : zoneIndex, files);
     resetDropInfo ();
     repaint ();
 }
@@ -188,7 +184,13 @@ bool ZoneEditor::handleSamplesInternal (int startingZoneIndex, juce::StringArray
 {
     audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
     files.sort (true);
-    return editManager->assignSamples (parentChannelIndex, startingZoneIndex, files); // will end up calling ZoneProperties::setSample ()
+    // All selection/drop paths share this handler, so a failed import reports
+    // its reason once and leaves the existing zone visible and intact.
+    const auto assigned { editManager->assignSamples (parentChannelIndex, startingZoneIndex, files) };
+    if (! assigned)
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot assign sample",
+            editManager->getLastAssignmentError ().isNotEmpty () ? editManager->getLastAssignmentError () : "The sample could not be assigned.");
+    return assigned;
 }
 
 void ZoneEditor::setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector newSamplePointsSelector, bool forceSetup)
@@ -257,70 +259,89 @@ void ZoneEditor::updateDurations ()
         zoneProperties.getLoopLength ().value_or (static_cast<double> (fileLength - zoneProperties.getLoopStart ().value_or (0))), rate, pitch), juce::dontSendNotification);
 }
 
-auto ZoneEditor::getSampleAdjustMenu (std::function<juce::int64 ()> getSampleOffset, std::function<juce::int64 ()> getMinSampleOffset, std::function<juce::int64 ()>getMaxSampleOffset, std::function<void (juce::int64)> setSampleOffset)
+juce::PopupMenu ZoneEditor::getSampleAdjustMenu (SampleMarker marker)
 {
     juce::PopupMenu adjustMenu;
-    {
-#if INCLUDE_WAVE_MATCHING_LOOP_POINT_ALIGN
-        juce::PopupMenu adjustMenuOptions;
-        {
-            juce::PopupMenu zeroCrossingMenuOptions;
-            zeroCrossingMenuOptions.addItem ("Left  <<", true, false, [this, getSampleOffset, getMinSampleOffset, setSampleOffset] ()
+    juce::PopupMenu zeroCrossingMenu;
+    const auto source { zoneProperties.getValueTree () };
+    const auto before { source.createCopy () };
+    for (const auto right : { false, true })
+        zeroCrossingMenu.addItem (right ? "Right >>" : "Left  <<", true, false,
+            [safe = juce::Component::SafePointer<ZoneEditor> (this), source, before, marker, right] ()
             {
-                auto newSampleStart { audioManager->findPreviousZeroCrossing (getSampleOffset (), getMinSampleOffset (),
-                                                                              *sampleProperties.getAudioBufferPtr (), zoneProperties.getSide ()) };
-                if (newSampleStart != -1)
-                    setSampleOffset (newSampleStart);
+                if (safe != nullptr && safe->zoneProperties.getValueTree () == source && source.isEquivalentTo (before))
+                    safe->nudgeSampleMarker (marker, right);
             });
-            zeroCrossingMenuOptions.addItem ("Right >>", true, false, [this, getSampleOffset, getMaxSampleOffset, setSampleOffset] ()
-            {
-                auto newSampleStart { audioManager->findNextZeroCrossing (getSampleOffset (), getMaxSampleOffset (),
-                                                                          *sampleProperties.getAudioBufferPtr (), zoneProperties.getSide ()) };
-                if (newSampleStart != -1)
-                    setSampleOffset (newSampleStart);
-            });
-            adjustMenuOptions.addSubMenu ("Zero Crossing", zeroCrossingMenuOptions);
-        }
-        {
-            juce::PopupMenu matchOtherMenuOptions;
-            matchOtherMenuOptions.addItem ("Left  <<", true, false, [this, getSampleOffset, getMinSampleOffset, setSampleOffset] ()
-            {
-                auto newSampleStart { audioManager->findPreviousWaveMatching (getSampleOffset (), getMinSampleOffset (),
-                                                                              *sampleProperties.getAudioBufferPtr (), zoneProperties.getSide ()) };
-                if (newSampleStart != -1)
-                    setSampleOffset (newSampleStart);
-            });
-            matchOtherMenuOptions.addItem ("Right >>", true, false, [this, getSampleOffset, getMaxSampleOffset, setSampleOffset] ()
-            {
-                auto newSampleStart { audioManager->findNextZeroWaveMatching (getSampleOffset (), getMaxSampleOffset (),
-                                                                          *sampleProperties.getAudioBufferPtr (), zoneProperties.getSide ()) };
-                if (newSampleStart != -1)
-                    setSampleOffset (newSampleStart);
-            });
-            adjustMenuOptions.addSubMenu ("Match Other", matchOtherMenuOptions);
-        }
-
-        adjustMenu.addSubMenu ("Adjust", adjustMenuOptions);
-#else
-        juce::PopupMenu zeroCrossingMenuOptions;
-        zeroCrossingMenuOptions.addItem ("Left  <<", true, false, [this, getSampleOffset, getMinSampleOffset, setSampleOffset] ()
-                                         {
-                                             auto newSampleStart { audioManager->findPreviousZeroCrossing (getSampleOffset (), getMinSampleOffset (),
-                                                                                                           *sampleProperties.getAudioBufferPtr (), zoneProperties.getSide ()) };
-                                             if (newSampleStart != -1)
-                                                 setSampleOffset (newSampleStart);
-                                         });
-        zeroCrossingMenuOptions.addItem ("Right >>", true, false, [this, getSampleOffset, getMaxSampleOffset, setSampleOffset] ()
-                                         {
-                                             auto newSampleStart { audioManager->findNextZeroCrossing (getSampleOffset (), getMaxSampleOffset (),
-                                                                                                       *sampleProperties.getAudioBufferPtr (), zoneProperties.getSide ()) };
-                                             if (newSampleStart != -1)
-                                                 setSampleOffset (newSampleStart);
-                                         });
-        adjustMenu.addSubMenu ("Zero Crossing", zeroCrossingMenuOptions);
-#endif
-    }
+    adjustMenu.addSubMenu ("Zero Crossing", zeroCrossingMenu);
     return adjustMenu;
+}
+
+bool ZoneEditor::nudgeSampleMarker (SampleMarker marker, bool right)
+{
+    if (isStereoRightChannelMode || sampleProperties.getStatus () != SampleStatus::exists ||
+        sampleProperties.getAudioBufferPtr () == nullptr) return false;
+    const auto fileLength { std::min (sampleProperties.getLengthInSamples (),
+        static_cast<juce::int64> (sampleProperties.getAudioBufferPtr ()->getNumSamples ())) };
+    const auto loop { marker == SampleMarker::loopStart || marker == SampleMarker::loopEnd };
+    if (fileLength <= 0 || (loop && fileLength < 4)) return false;
+    const auto sampleStart { zoneProperties.getSampleStart ().value_or (0) };
+    const auto sampleEnd { zoneProperties.getSampleEnd ().value_or (fileLength) };
+    const auto loopStart { zoneProperties.getLoopStart ().value_or (0) };
+    const auto loopLength { zoneProperties.getLoopLength ().value_or (static_cast<double> (fileLength - loopStart)) };
+    if (! std::isfinite (loopLength)) return false;
+    auto minimum { juce::int64 { 0 } }, maximum { fileLength };
+    double position { 0.0 };
+    const auto endBoundary { marker == SampleMarker::sampleEnd || marker == SampleMarker::loopEnd };
+    switch (marker)
+    {
+        case SampleMarker::sampleStart:
+            position = static_cast<double> (sampleStart);
+            maximum = std::clamp (sampleEnd - 1, juce::int64 { 0 }, fileLength - 1);
+            break;
+        case SampleMarker::sampleEnd:
+            position = static_cast<double> (sampleEnd);
+            minimum = std::clamp (sampleStart + 1, juce::int64 { 1 }, fileLength);
+            break;
+        case SampleMarker::loopStart:
+        {
+            position = static_cast<double> (loopStart);
+            const auto limit { treatLoopLengthAsEndInUi ? loopStart + loopLength - 4.0 : fileLength - loopLength };
+            maximum = static_cast<juce::int64> (std::floor (std::clamp (limit, 0.0, static_cast<double> (fileLength - 4))));
+            break;
+        }
+        case SampleMarker::loopEnd:
+            position = loopStart + loopLength;
+            minimum = std::clamp (loopStart + 4, juce::int64 { 4 }, fileLength);
+            break;
+    }
+    const auto result { WaveformPresentation::zeroCrossing (*sampleProperties.getAudioBufferPtr (), zoneProperties.getSide (),
+        position, minimum, maximum, right, endBoundary) };
+    if (! result) return false;
+    setActiveSamplePoints (loop ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false);
+    switch (marker)
+    {
+        case SampleMarker::sampleStart:
+            zoneProperties.setSampleStart (*result == 0 ? -1 : *result, true);
+            break;
+        case SampleMarker::sampleEnd:
+            zoneProperties.setSampleEnd (*result == fileLength ? -1 : *result, true);
+            break;
+        case SampleMarker::loopStart:
+        {
+            // Match the waveform handle: End mode preserves the opposite end;
+            // Length mode preserves length, including an implicit EOF length.
+            const auto length { treatLoopLengthAsEndInUi ? loopStart + loopLength - *result : loopLength };
+            auto setStart = [&] () { zoneProperties.setLoopStart (*result == 0 ? -1 : *result, true); };
+            auto setLength = [&] () { zoneProperties.setLoopLength (length, true); };
+            if (*result >= loopStart) { setLength (); setStart (); }
+            else { setStart (); setLength (); }
+            break;
+        }
+        case SampleMarker::loopEnd:
+            zoneProperties.setLoopLength (*result == fileLength && loopStart == 0 ? -1.0 : static_cast<double> (*result - loopStart), true);
+            break;
+    }
+    return true;
 }
 
 void ZoneEditor::setupZoneComponents ()
@@ -366,10 +387,7 @@ void ZoneEditor::setupZoneComponents ()
     sampleNameSelectLabel.canMultiSelect (true);
     sampleNameSelectLabel.onFilesSelected = [this] (const juce::StringArray& files)
     {
-        if (! handleSamplesInternal (zoneProperties.getId () - 1, files))
-        {
-            // TODO - indicate an error? first thought was a red outline that fades out over a couple of second
-        }
+        handleSamplesInternal (zoneProperties.getId () - 1, files);
     };
     sampleNameSelectLabel.onPopupMenuCallback = [this] ()
     {
@@ -429,10 +447,7 @@ void ZoneEditor::setupZoneComponents ()
     };
     sampleStartTextEditor.onPopupMenuCallback = [this] ()
     {
-        auto adjustMenu { getSampleAdjustMenu ([this] () { return zoneProperties.getSampleStart ().value_or (0); },
-                                               [this] () { return 0; },
-                                               [this] () { return zoneProperties.getSampleEnd ().value_or (sampleProperties.getLengthInSamples ()); },
-                                               [this] (juce::int64 sampleOffset) { zoneProperties.setSampleStart (sampleOffset, true); }) };
+        auto adjustMenu { getSampleAdjustMenu (SampleMarker::sampleStart) };
         auto editMenu { createZoneEditMenu (adjustMenu, [this] (ZoneProperties& destZoneProperties, SampleProperties& destSampleProperties)
                                             {
                                                 const auto clampedSampleStart { std::clamp (zoneProperties.getSampleStart ().value_or (0),
@@ -476,10 +491,7 @@ void ZoneEditor::setupZoneComponents ()
     };
     sampleEndTextEditor.onPopupMenuCallback = [this] ()
     {
-        auto adjustMenu { getSampleAdjustMenu ([this] () { return zoneProperties.getSampleEnd ().value_or (sampleProperties.getLengthInSamples ()); },
-                                               [this] () { return zoneProperties.getSampleStart ().value_or (0); },
-                                               [this] () { return sampleProperties.getLengthInSamples (); },
-                                               [this] (juce::int64 sampleOffset) { zoneProperties.setSampleEnd (sampleOffset, true); }) };
+        auto adjustMenu { getSampleAdjustMenu (SampleMarker::sampleEnd) };
 
         auto editMenu { createZoneEditMenu (adjustMenu, [this] (ZoneProperties& destZoneProperties, SampleProperties& destSampleProperties)
                                             {
@@ -510,14 +522,13 @@ void ZoneEditor::setupZoneComponents ()
     loopStartTextEditor.updateDataCallback = [this] (juce::int64 value)
     {
         const auto originalLoopStart { zoneProperties.getLoopStart ().value_or (0) };
+        const auto originalLoopLength { zoneProperties.getLoopLength ().value_or (static_cast<double> (sampleProperties.getLengthInSamples () - originalLoopStart)) };
+        const auto newLoopLength { treatLoopLengthAsEndInUi ? originalLoopLength + originalLoopStart - value : originalLoopLength };
+        // Materialise an implicit EOF length before moving the start. Otherwise
+        // its default would change under us instead of preserving the end/length.
+        if (value >= originalLoopStart) loopLengthUiChanged (newLoopLength);
         loopStartUiChanged (value);
-        if (treatLoopLengthAsEndInUi)
-        {
-            // When treating Loop Length as Loop End, we need to adjust the internal storage of Loop Length by the amount Loop Start changed
-            const auto lengthChangeAmount { static_cast<double> (originalLoopStart - value) };
-            const auto newLoopLength { zoneProperties.getLoopLength ().value_or (sampleProperties.getLengthInSamples ()) + lengthChangeAmount };
-            loopLengthUiChanged (newLoopLength);
-        }
+        if (value < originalLoopStart) loopLengthUiChanged (newLoopLength);
     };
     loopStartTextEditor.onDragCallback = [this] (double valueDelta)
     {
@@ -526,10 +537,7 @@ void ZoneEditor::setupZoneComponents ()
     };
     loopStartTextEditor.onPopupMenuCallback = [this] ()
     {
-        auto adjustMenu { getSampleAdjustMenu ([this] () { return zoneProperties.getLoopStart ().value_or (0); },
-                                               [this] () { return minZoneProperties.getLoopStart ().value_or (0); },
-                                               [this] () { return editManager->getMaxLoopStart (parentChannelIndex, zoneIndex); },
-                                               [this] (juce::int64 sampleOffset) { zoneProperties.setLoopStart (sampleOffset, true); }) };
+        auto adjustMenu { getSampleAdjustMenu (SampleMarker::loopStart) };
 
         auto editMenu { createZoneEditMenu (adjustMenu , [this] (ZoneProperties& destZoneProperties, SampleProperties& destSampleProperties)
                                             {
@@ -615,16 +623,15 @@ void ZoneEditor::setupZoneComponents ()
     };
     loopLengthTextEditor.onDragCallback = [this] (double valueDelta)
     {
-        const auto newValue { zoneProperties.getLoopLength ().value_or (sampleProperties.getLengthInSamples ()) + valueDelta };
+        const auto start { zoneProperties.getLoopStart ().value_or (0) };
+        const auto length { zoneProperties.getLoopLength ().value_or (static_cast<double> (sampleProperties.getLengthInSamples () - start)) };
+        const auto newValue { length + (treatLoopLengthAsEndInUi ? static_cast<double> (start) : 0.0) + valueDelta };
         loopLengthTextEditor.setValue (newValue);
     };
 
     loopLengthTextEditor.onPopupMenuCallback = [this] ()
     {
-        auto adjustMenu { getSampleAdjustMenu ([this] () { return zoneProperties.getLoopStart ().value_or (0) + static_cast<juce::int64> (zoneProperties.getLoopLength ().value_or (4.)); },
-                                               [this] () { return zoneProperties.getLoopStart ().value_or (0); },
-                                               [this] () { return sampleProperties.getLengthInSamples (); },
-                                               [this] (juce::int64 sampleOffset) { zoneProperties.setLoopLength (static_cast<double> (sampleOffset - zoneProperties.getLoopStart ().value_or (0.)), true); }) };
+        auto adjustMenu { getSampleAdjustMenu (SampleMarker::loopEnd) };
         auto editMenu { createZoneEditMenu (adjustMenu, [this] (ZoneProperties& destZoneProperties, SampleProperties& destSampleProperties)
                                             {
                                                 const auto clampedLoopLength { std::clamp (zoneProperties.getLoopLength ().value_or (sampleProperties.getLengthInSamples ()),
@@ -886,10 +893,7 @@ void ZoneEditor::setStereoRightChannelMode (bool newStereoRightChannelMode)
 
 void ZoneEditor::receiveSampleLoadRequest (juce::File sampleFile)
 {
-    if (! handleSamplesInternal (zoneProperties.getId () - 1, { sampleFile.getFullPathName () }))
-    {
-        // TODO - indicate an error? first thought was a red outline that fades out over a couple of second
-    }
+    handleSamplesInternal (zoneProperties.getId () - 1, { sampleFile.getFullPathName () });
 }
 
 void ZoneEditor::setupZonePropertiesCallbacks ()

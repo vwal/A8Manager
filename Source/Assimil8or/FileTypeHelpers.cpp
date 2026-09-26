@@ -41,7 +41,9 @@ namespace FileTypeHelpers
         return file.getFileExtension ().toLowerCase () == kYmlFileExtension &&
                file.getFileNameWithoutExtension ().length () == kPresetFileNameLen &&
                file.getFileNameWithoutExtension ().toLowerCase ().startsWith (kPresetFileNamePrefix) &&
-               file.getFileNameWithoutExtension ().substring (kPresetFileNumberOffset).containsOnly ("0123456789");
+               file.getFileNameWithoutExtension ().substring (kPresetFileNumberOffset).containsOnly ("0123456789") &&
+               file.getFileNameWithoutExtension ().substring (kPresetFileNumberOffset).getIntValue () >= 1 &&
+               file.getFileNameWithoutExtension ().substring (kPresetFileNumberOffset).getIntValue () <= kMaxPresets;
     }
 
     bool isAudioFile (juce::File file)

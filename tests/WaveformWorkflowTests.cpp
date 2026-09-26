@@ -100,7 +100,44 @@ struct WaveformTestAccess
         view.focusLoop ();
         view.keyPressed (juce::KeyPress ('1'));
         check (std::abs (view.waveform.xToSample (view.waveform.getWidth () * 0.5f) - 200.0) < 0.01, "Key 1 centres sample start without changing zoom");
-        check (view.buildWaveformMenu ({}).getNumItems () == 4 && view.buildWaveformMenu (200.0).getNumItems () == 5, "Gear and context menus offer separate boundary matching; only context offers Set Marker Here");
+        auto checkMenu = [&] (bool context, bool editable)
+        {
+            const auto menu { view.buildWaveformMenu (context ? std::optional<double> (200.0) : std::nullopt) };
+            juce::Array<int> actions;
+            juce::StringArray headings, submenus;
+            juce::StringArray layout;
+            juce::PopupMenu::MenuItemIterator items (menu);
+            while (items.next ())
+            {
+                const auto& item { items.getItem () };
+                if (item.isSectionHeader) { headings.add (item.text); layout.add (item.text); }
+                else if (item.subMenu != nullptr)
+                {
+                    submenus.add (item.text);
+                    check (item.isEnabled == editable, "Waveform editing submenus respect read-only state");
+                }
+                else if (item.isSeparator) layout.add ("---");
+                else
+                {
+                    layout.add (juce::String (item.itemID));
+                    actions.add (item.itemID);
+                    check (item.isEnabled == (item.itemID < 30 || editable), "Direct actions preserve zoom/jump access and guard marker placement");
+                    if (item.itemID >= 10 && item.itemID < 14)
+                        check (item.shortcutKeyDescription == juce::String (item.itemID - 9), "Jump shortcuts occupy the menu's right-hand shortcut column");
+                }
+            }
+            auto expected { juce::Array<int> { 1, 2, 3, 10, 11, 12, 13 } };
+            if (context) expected.addArray (juce::Array<int> { 30, 31, 32, 33 });
+            check (actions == expected, "Zoom, jump and context placement actions are top-level and in the requested order");
+            check (headings == (context ? juce::StringArray { "ZOOM", "JUMP TO MARKER", "SET MARKER HERE" }
+                                       : juce::StringArray { "ZOOM", "JUMP TO MARKER" }), "Menu headings distinguish frequent actions");
+            check (submenus == juce::StringArray { "Zero Crossing Nudge", "Match Opposite Boundary" }, "Only nudge and matching remain submenus");
+            auto expectedLayout { juce::StringArray { "ZOOM", "1", "2", "3", "---", "JUMP TO MARKER", "10", "11", "12", "13", "---" } };
+            if (context) expectedLayout.addArray ({ "SET MARKER HERE", "30", "31", "32", "33", "---" });
+            check (layout == expectedLayout, "Separators precede Jump/Set headings, never follow headings or the initial Zoom title");
+        };
+        checkMenu (false, true);
+        checkMenu (true, true);
 
         view.resetZoom ();
         auto mouse = [] (juce::Component& component, juce::Point<float> position, juce::Point<float> origin, int flags)
@@ -166,6 +203,8 @@ struct WaveformTestAccess
             }
         }
         view.setEnabled (false);
+        checkMenu (false, false);
+        checkMenu (true, false);
         const auto before { view.zoneProperties.getValueTree ().createCopy () };
         view.applyMenuAction (30, 0.0);
         check (view.zoneProperties.getValueTree ().isEquivalentTo (before) && ! view.beginRegionMove (point (500)), "Disabled stereo-right editing remains guarded");
@@ -207,6 +246,70 @@ struct WaveformTestAccess
         check (view.zoneProperties.getValueTree ().isEquivalentTo (matched), "Disabled channels cannot invoke boundary matching");
         view.setEnabled (true);
 
+        view.zoneProperties.setSampleStart (200, true);
+        view.zoneProperties.setSampleEnd (400, true);
+        view.zoneProperties.setLoopStart (600, true);
+        view.zoneProperties.setLoopLength (250.5, true);
+        view.resetZoom ();
+        channel.setLoopMode (0, true);
+        auto bridge { view.markerOverlay.loopExtensionBounds () };
+        check (std::abs (bridge.getX () - view.waveform.sampleToX (400)) < 0.01f &&
+               std::abs (bridge.getRight () - view.waveform.sampleToX (600)) < 0.01f,
+               "Separated bridge remains visible with hardware No Loop; audition looping is independent");
+        for (const auto height : { 170, 560 })
+        {
+            view.setExpanded (height == 560);
+            view.setSize (760, height);
+            const auto rendered { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
+            const auto x { juce::roundToInt (view.waveform.sampleToX (500)) };
+            const auto middle { rendered.getHeight () / 2 };
+            bool varies { false };
+            for (auto y { middle }; y < middle + 16; ++y)
+                varies |= rendered.getPixelAt (x, y) != rendered.getPixelAt (x, middle);
+            check (varies, "No Loop bridge paints visible bands in compact and expanded views");
+        }
+        view.setExpanded (false);
+        view.setSize (760, 170);
+        channel.setLoopMode (1, true);
+        auto extension { view.markerOverlay.loopExtensionBounds () };
+        check (std::abs (extension.getX () - view.waveform.sampleToX (400)) < 0.01f &&
+               std::abs (extension.getRight () - view.waveform.sampleToX (850.5)) < 0.01f, "Loop stripes span Sample End to exact Loop End, including the gap before Loop Start");
+        view.setLoopSelected (false);
+        const auto sampleSelectedExtension { view.markerOverlay.loopExtensionBounds () };
+        view.setLoopSelected (true);
+        check (view.markerOverlay.loopExtensionBounds () == sampleSelectedExtension, "Hardware loop extension is independent of audition region selection");
+        channel.setLoopMode (2, true);
+        check (view.markerOverlay.loopExtensionBounds () == extension, "Loop/Release also shows the enabled loop extent");
+        const auto hatched { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
+        const auto gapX { juce::roundToInt (view.waveform.sampleToX (500)) };
+        const auto outsideX { juce::roundToInt (view.waveform.sampleToX (950)) };
+        const auto centre { hatched.getHeight () / 2 };
+        auto bandVariation { false };
+        for (auto y { centre - 12 }; y < centre + 12; ++y)
+        {
+            bandVariation = bandVariation || hatched.getPixelAt (gapX, y) != hatched.getPixelAt (gapX, centre);
+            check (hatched.getPixelAt (outsideX, y) == hatched.getPixelAt (outsideX, centre), "Ordinary unused audio stays uniformly dimmed");
+        }
+        check (bandVariation, "Loop extension actually paints contrasting diagonal bands");
+        view.waveform.setVisibleRange (450, 300);
+        extension = view.markerOverlay.loopExtensionBounds ();
+        check (extension.getX () == 0.0f && extension.getWidth () == view.markerOverlay.getWidth (), "Hatching clips correctly when zoomed into the extension");
+        view.waveform.setVisibleRange (900, 100);
+        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Offscreen extension does not shade unrelated audio");
+        view.resetZoom ();
+        view.setZone (2);
+        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Changing zones does not carry the previous extension");
+        view.setZone (1);
+        view.sampleProperties.setStatus (SampleStatus::doesNotExist, true);
+        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Unloading a sample clears its loop extension");
+        view.sampleProperties.setStatus (SampleStatus::exists, true);
+        view.zoneProperties.setLoopStart (300, true);
+        view.zoneProperties.setLoopLength (50, true);
+        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Loops ending before Sample End retain ordinary selection shading");
+        view.zoneProperties.setLoopLength (200, true);
+        check (! view.markerOverlay.loopExtensionBounds ().isEmpty (), "A loop straddling Sample End also identifies its extended portion");
+        channel.setLoopMode (0, true);
+
         const auto artifacts { juce::SystemStats::getEnvironmentVariable ("A8MANAGER_TEST_ARTIFACTS", {}) };
         if (artifacts.isNotEmpty ())
         {
@@ -234,6 +337,30 @@ struct WaveformTestAccess
                 check (stream != nullptr && stream->setPosition (0), "Open waveform render artifact");
                 check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *stream), "Write waveform render artifact");
                 stream->truncate ();
+            }
+            view.zoneProperties.setSampleStart (100, true);
+            view.zoneProperties.setSampleEnd (350, true);
+            view.zoneProperties.setLoopStart (550, true);
+            view.zoneProperties.setLoopLength (250, true);
+            channel.setLoopMode (1, true);
+            view.setLoopSelected (false);
+            view.setExpanded (false);
+            view.setSize (760, 220);
+            view.resetZoom ();
+            auto stream { directory.getChildFile ("waveform-loop-extension.png").createOutputStream () };
+            check (stream != nullptr && stream->setPosition (0), "Open striped loop-extension artifact");
+            check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *stream), "Write striped loop-extension artifact");
+            stream->truncate ();
+            stream.reset ();
+            channel.setLoopMode (0, true);
+            for (const auto height : { 170, 560 })
+            {
+                view.setExpanded (height == 560);
+                view.setSize (760, height);
+                auto bridgeStream { directory.getChildFile (height == 170 ? "waveform-bridge-compact.png" : "waveform-bridge-expanded.png").createOutputStream () };
+                check (bridgeStream != nullptr && bridgeStream->setPosition (0), "Open No Loop bridge artifact");
+                check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *bridgeStream), "Write No Loop bridge artifact");
+                bridgeStream->truncate ();
             }
         }
         view.setLookAndFeel (nullptr);

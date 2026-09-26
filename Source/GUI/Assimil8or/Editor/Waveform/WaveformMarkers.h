@@ -11,6 +11,14 @@ public:
     std::function<juce::String (int)> labelText;
     void attach (RegionMoveWaveform* view) { waveform = view; setWaveformView (view); }
     void setLoopSelected (bool loop) { loopSelected = loop; repaint (); }
+    void setLoopExtension (juce::Range<double> range) { loopExtension = range; repaint (); }
+    juce::Rectangle<float> loopExtensionBounds () const
+    {
+        if (waveform == nullptr || waveform->getNumSamples () <= 0 || loopExtension.isEmpty ()) return {};
+        const auto left { juce::jlimit (0.0f, static_cast<float> (getWidth ()), waveform->sampleToX (loopExtension.getStart ())) };
+        const auto right { juce::jlimit (left, static_cast<float> (getWidth ()), waveform->sampleToX (loopExtension.getEnd ())) };
+        return { left, 0.0f, right - left, static_cast<float> (getHeight ()) };
+    }
     void cancelDrag () { markerGesture = forwarding = false; }
 
     int markerAt (juce::Point<float> point) const
@@ -97,12 +105,33 @@ public:
         if (waveform == nullptr || waveform->getNumSamples () <= 0) return;
         if (getNumMarkers () == 4)
         {
+            const auto extension { loopExtensionBounds () };
             const auto first { loopSelected ? 2 : 0 };
             const auto left { juce::jlimit (0.0f, static_cast<float> (getWidth ()), waveform->sampleToX (getPosition (first))) };
             const auto right { juce::jlimit (left, static_cast<float> (getWidth ()), waveform->sampleToX (getPosition (first + 1))) };
-            g.setColour (juce::Colours::black.withAlpha (0.45f));
-            g.fillRect (0.0f, 0.0f, left, static_cast<float> (getHeight ()));
-            g.fillRect (right, 0.0f, getWidth () - right, static_cast<float> (getHeight ()));
+            {
+                const juce::Graphics::ScopedSaveState saved (g);
+                // The loop may extend beyond SAMPLE END. That source region
+                // is not ordinary unused audio, regardless of which pair is selected.
+                g.excludeClipRegion (extension.getSmallestIntegerContainer ());
+                g.setColour (juce::Colours::black.withAlpha (0.45f));
+                g.fillRect (0.0f, 0.0f, left, static_cast<float> (getHeight ()));
+                g.fillRect (right, 0.0f, getWidth () - right, static_cast<float> (getHeight ()));
+            }
+            if (! extension.isEmpty ())
+            {
+                const juce::Graphics::ScopedSaveState saved (g);
+                juce::Path clip;
+                clip.addRectangle (extension);
+                g.reduceClipRegion (clip);
+                g.setColour (juce::Colour (0xff40444a).withAlpha (0.38f));
+                g.fillRect (extension);
+                g.setColour (juce::Colour (0xffb0b4ba).withAlpha (0.22f));
+                // Screen-space spacing keeps the pattern legible at every zoom.
+                // Translucent bands leave the waveform trace and markers visible.
+                for (auto x { -static_cast<float> (getHeight ()) }; x < getWidth (); x += 16.0f)
+                    g.drawLine (x, static_cast<float> (getHeight ()), x + getHeight (), 0.0f, 6.0f);
+            }
         }
         MarkerOverlay::paint (g);
         const auto labels { labelBounds () };
@@ -119,5 +148,6 @@ public:
     }
 private:
     RegionMoveWaveform* waveform { nullptr };
+    juce::Range<double> loopExtension;
     bool loopSelected { false }, forwarding { false }, markerGesture { false };
 };

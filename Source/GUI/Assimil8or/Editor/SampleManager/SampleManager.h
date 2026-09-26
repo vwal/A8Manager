@@ -19,6 +19,7 @@ public:
     juce::ValueTree getSampleProperties (int channelIndex, int zoneIndex);
 
 private:
+    friend struct AudioAuditTestAccess;
     RuntimeRootProperties runtimeRootProperties;
     AppProperties appProperties;
     DirectoryDataProperties directoryDataProperties;
@@ -51,6 +52,7 @@ private:
     void clear ();
     void update ();
     SampleData& loadSample (juce::String fileName);
+    void invalidateSampleProperties (const juce::String& fileName);
     void updateSampleProperties (juce::String fileName, SampleData& sampleData);
     void updateSample (juce::String fileName, SampleData& sampleData);
 

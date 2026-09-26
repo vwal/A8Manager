@@ -21,11 +21,15 @@ Assimil8orPreset::Assimil8orPreset ()
                               PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
 }
 
-void Assimil8orPreset::write (juce::File presetFile, juce::ValueTree presetPropertiesVT)
+juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree presetPropertiesVT)
 {
-    jassert (presetPropertiesVT.isValid ());
+    if (! presetPropertiesVT.isValid ())
+        return juce::Result::fail ("The preset is not valid.");
+    if (presetFile.isDirectory ())
+        return juce::Result::fail ("The destination is a folder: " + presetFile.getFullPathName ());
 
-    PresetProperties presetPropertiesToWrite (presetPropertiesVT, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+    // Exporting to another slot must not change the live editor's preset identity.
+    PresetProperties presetPropertiesToWrite (presetPropertiesVT.createCopy (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
     if (FileTypeHelpers::isPresetFile (presetFile))
     {
         if (const auto presetNumber { FileTypeHelpers::getPresetNumberFromName (presetFile) }; presetNumber != FileTypeHelpers::kBadPresetNumber)
@@ -139,12 +143,13 @@ void Assimil8orPreset::write (juce::File presetFile, juce::ValueTree presetPrope
 
     // write data out to preset file
     const auto stringToWrite { lines.joinIntoString ("\r\n") };
-    presetFile.replaceWithText (stringToWrite);
+    return presetFile.replaceWithText (stringToWrite) ? juce::Result::ok ()
+        : juce::Result::fail ("Unable to save '" + presetFile.getFullPathName () + "'. Check the destination and available space.");
 }
 
-void Assimil8orPreset::write (juce::File presetFile)
+juce::Result Assimil8orPreset::write (juce::File presetFile)
 {
-    write (presetFile, presetProperties.getValueTree ());
+    return write (presetFile, presetProperties.getValueTree ());
 }
 
 void Assimil8orPreset::parse (juce::StringArray presetLines)

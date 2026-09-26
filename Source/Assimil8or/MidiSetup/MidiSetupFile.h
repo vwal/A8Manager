@@ -26,7 +26,7 @@ class MidiSetupFile
 {
 public:
     MidiSetupFile ();
-    void write (juce::File presetFile, juce::ValueTree presetProperties);
+    juce::Result write (juce::File presetFile, juce::ValueTree presetProperties);
     juce::ValueTree parse (juce::StringArray presetLines);
 
     juce::ValueTree getMidiSetupPropertiesVT () { return midiSetupProperties.getValueTree (); }

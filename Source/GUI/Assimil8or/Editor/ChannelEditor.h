@@ -344,6 +344,7 @@ private:
     void balanceVoltages (VoltageBalanceType balanceType);
     void checkStereoRightOverlay ();
     void clearAllZones ();
+    void confirmZoneEdit (juce::String title, juce::String message, std::function<void ()> apply);
     void configAudioPlayer ();
     void copyZone (int zoneIndex, bool settingsOnly);
     void copyToNextZone (int zoneIndex, bool continueSlice);

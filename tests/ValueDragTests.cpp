@@ -12,6 +12,10 @@ void testLoopPoints ();
 void testZoneVoltages ();
 void testRegionMove ();
 void testWaveformWorkflow ();
+void testAudioAudit ();
+void testAudioFileSafety ();
+void testPairedZoneEdits ();
+int runPresetWorkflowAuditTests ();
 
 namespace
 {
@@ -116,6 +120,25 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI initialise;
     try
     {
+        if (argc == 2 && juce::String (argv [1]) == "--audio-audit")
+        {
+            testAudioAudit ();
+            return 0;
+        }
+        if (argc == 2 && juce::String (argv [1]) == "--audio-file-safety")
+        {
+            testAudioFileSafety ();
+            return 0;
+        }
+        if (argc == 2 && juce::String (argv [1]) == "--paired-zone-edit")
+        {
+            testPairedZoneEdits ();
+            return 0;
+        }
+        if (argc == 2 && juce::String (argv [1]) == "--preset-workflow-audit")
+        {
+            return runPresetWorkflowAuditTests ();
+        }
         if (argc == 2 && juce::String (argv [1]) == "--waveform-workflow")
         {
             testWaveformWorkflow ();

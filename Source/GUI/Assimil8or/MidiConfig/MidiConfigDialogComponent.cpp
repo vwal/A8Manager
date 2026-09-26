@@ -108,7 +108,13 @@ void MidiConfigDialogComponent::saveClicked ()
     {
         auto midiSetupRawFile { currentFolder.getChildFile ("midi" + juce::String (curMidiSetupIndex + 1)).withFileExtension ("yml") };
         MidiSetupFile midiSetupFile;
-        midiSetupFile.write (midiSetupRawFile, midiSetupPropertiesListVT.getChild (curMidiSetupIndex));
+        const auto result { midiSetupFile.write (midiSetupRawFile, midiSetupPropertiesListVT.getChild (curMidiSetupIndex)) };
+        if (result.failed ())
+        {
+            // Keep the dialog and dirty baseline intact so the user can retry.
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "MIDI save failed", result.getErrorMessage ());
+            return;
+        }
     }
     closeDialog ();
 }

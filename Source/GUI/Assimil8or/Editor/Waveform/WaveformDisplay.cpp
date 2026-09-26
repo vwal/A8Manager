@@ -44,7 +44,7 @@ WaveformDisplay::WaveformDisplay ()
     zoomIn.setTooltip ("Zoom in around the centre. Scroll over the waveform to zoom at the pointer.");
     zoomOut.setTooltip ("Zoom out");
     expandButton.setTooltip ("Expand the waveform over the channel controls; click again or Escape to close. Zone switching stays available.");
-    menuButton.setTooltip ("Waveform tools: zoom, jump to a marker (keys 1-4), and zero-crossing nudges. Option/Alt-drag inside a region to move it without resizing.");
+    menuButton.setTooltip ("Waveform tools: direct zoom and marker jumps (keys 1-4), zero-crossing nudges, and boundary matching. Option/Alt-drag inside a region to move it without resizing.");
     expandButton.onClick = [this] () { if (onExpandRequested) onExpandRequested (); };
     menuButton.onClick = [this] () { showWaveformMenu (std::nullopt); };
     zoomIn.onClick = [this] () { waveform.zoomByAroundX (0.5, waveform.getWidth () * 0.5f); publishView (); };
@@ -54,7 +54,9 @@ WaveformDisplay::WaveformDisplay ()
     durationInfo.setFont (juce::FontOptions (11.0f));
     durationInfo.setBorderSize ({ 0, 3, 0, 3 });
     durationInfo.setTooltip ("File, sample region and loop lengths in minutes:seconds at the zone's PITCH OFFSET. "
-                             "Excludes audition speed, Keep pitch time-stretching, channel pitch and CV. Marker timestamps remain source-file positions.");
+                             "Excludes audition speed, Keep pitch time-stretching, channel pitch and CV. Marker timestamps remain source-file positions. "
+                             "Gray stripes always mark a gap from Sample End to a later Loop Start. With hardware looping enabled they extend through Loop End. "
+                             "This hardware loop-extent hint does not change which region the audition buttons play.");
     addAndMakeVisible (durationInfo);
     auditionRateLabel.setText ("Audition speed", juce::dontSendNotification);
     auditionRateLabel.setFont (juce::FontOptions (13.0f));
@@ -241,6 +243,7 @@ void WaveformDisplay::init (juce::ValueTree channelPropertiesVT, juce::ValueTree
 {
     RuntimeRootProperties runtimeRootProperties (rootPropertiesVT, RuntimeRootProperties::WrapperType::client, RuntimeRootProperties::EnableCallbacks::no);
     channelProperties.wrap (channelPropertiesVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
+    channelProperties.onLoopModeChange = [this] (int) { updateMarkerPositions (); };
     sampleManagerProperties.wrap (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::client, AudioPlayerProperties::EnableCallbacks::yes);
     audioPlayerProperties.onAuditionRateChange = [this] (double rate) { auditionRateSlider.setValue (rate, juce::dontSendNotification); };
@@ -343,7 +346,10 @@ void WaveformDisplay::updateDisplayChannel ()
 void WaveformDisplay::updateMarkerPositions ()
 {
     if (! hasSample ())
+    {
+        markerOverlay.setLoopExtension ({});
         return;
+    }
 
     const auto sampleLength { getSampleLength () };
     const auto sampleStart { zoneProperties.getSampleStart ().value_or (0) };
@@ -357,6 +363,18 @@ void WaveformDisplay::updateMarkerPositions ()
     // oolib draws handles at whole frames. Keep the exact fractional endpoint
     // in the model/readouts and round only its handle representation.
     markerOverlay.setPosition (kLoopEnd, static_cast<double> (loopStart) + loopLength);
+    const auto loopMode { channelProperties.getLoopMode () };
+    juce::Range<double> extension;
+    if (sampleLength > 0 && std::isfinite (loopLength))
+    {
+        const auto start { std::clamp (static_cast<double> (sampleEnd), 0.0, static_cast<double> (sampleLength)) };
+        // A separated bridge is useful editing information even when the saved
+        // hardware Loop mode is off (audition looping is a different control).
+        const auto loopEnabled { loopMode == 1 || loopMode == 2 };
+        const auto end { std::clamp (static_cast<double> (loopStart) + (loopEnabled ? loopLength : 0.0), start, static_cast<double> (sampleLength)) };
+        extension = { start, end };
+    }
+    markerOverlay.setLoopExtension (extension);
     updateDurations ();
 }
 
@@ -429,26 +447,37 @@ juce::PopupMenu WaveformDisplay::buildWaveformMenu (std::optional<double> clicke
 {
     const auto available { hasSample () };
     const auto editable { available && isEnabled () };
-    juce::PopupMenu menu, zoomMenu, jumpMenu, nudgeMenu, matchMenu, setMenu;
-    zoomMenu.addItem (1, "Reset Zoom", available);
-    zoomMenu.addItem (2, "Zoom to Sample Markers", available);
-    zoomMenu.addItem (3, "Zoom to Loop Markers", available);
+    juce::PopupMenu menu, nudgeMenu, matchMenu;
+    menu.addSectionHeader ("ZOOM");
+    menu.addItem (1, "Reset Zoom", available);
+    menu.addItem (2, "Zoom to Sample Markers", available);
+    menu.addItem (3, "Zoom to Loop Markers", available);
+    menu.addSeparator ();
+    menu.addSectionHeader ("JUMP TO MARKER");
     for (auto marker { 0 }; marker < 4; ++marker)
     {
         const auto name { WaveformPresentation::markerNames[static_cast<size_t> (marker)] };
-        jumpMenu.addItem (10 + marker, name + " Marker  [" + juce::String (marker + 1) + "]", available);
+        juce::PopupMenu::Item jump { name };
+        jump.itemID = 10 + marker;
+        jump.isEnabled = available;
+        jump.shortcutKeyDescription = juce::String (marker + 1);
+        menu.addItem (std::move (jump));
         juce::PopupMenu direction;
         direction.addItem (20 + marker * 2, "Left <<", editable);
         direction.addItem (21 + marker * 2, "Right >>", editable);
         nudgeMenu.addSubMenu (name, direction, editable);
         matchMenu.addItem (40 + marker, name + " to " + (marker % 2 == 0 ? "End" : "Start"), editable);
-        setMenu.addItem (30 + marker, name, editable);
     }
-    menu.addSubMenu ("Zoom", zoomMenu, available);
-    menu.addSubMenu ("Jump to Marker", jumpMenu, available);
+    if (clickedSample)
+    {
+        menu.addSeparator ();
+        menu.addSectionHeader ("SET MARKER HERE");
+        for (auto marker { 0 }; marker < 4; ++marker)
+            menu.addItem (30 + marker, WaveformPresentation::markerNames[static_cast<size_t> (marker)], editable);
+    }
+    menu.addSeparator ();
     menu.addSubMenu ("Zero Crossing Nudge", nudgeMenu, editable);
     menu.addSubMenu ("Match Opposite Boundary", matchMenu, editable);
-    if (clickedSample) menu.addSubMenu ("Set Marker Here", setMenu, editable);
     return menu;
 }
 

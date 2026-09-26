@@ -1,4 +1,5 @@
 #include "EditManager.h"
+#include "../../../Assimil8or/Audio/SafeAudioImport.h"
 #include "SampleManager/SampleManagerProperties.h"
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
@@ -234,183 +235,93 @@ juce::int64 EditManager::getMaxLoopStart (int channelIndex, int zoneIndex)
 
 bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::StringArray& files)
 {
-    for (auto fileName : files)
-        if (! audioManager->isA8ManagerSupportedAudioFile (fileName))
-            return false;
-
+    lastAssignmentError.clear ();
+    auto fail = [this] (const juce::String& message) { lastAssignmentError = message; return false; };
+    if (! audioManager || channelIndex < 0 || channelIndex >= 8 || zoneIndex < 0 || zoneIndex >= 8 || files.isEmpty ())
+        return fail ("Choose a valid channel, zone and audio file.");
+    if (files.size () > 8 - zoneIndex)
+        return fail ("There are not enough remaining zones for all the selected files.");
     const auto initialNumZones { getNumUsedZones (channelIndex) };
+    if (zoneIndex > initialNumZones)
+        return fail ("Fill the preceding empty zones before assigning this zone.");
+
+    struct ImportedSample { juce::File file; juce::int64 length; unsigned int channels; };
+    std::vector<ImportedSample> importedSamples;
+    std::vector<juce::File> createdFiles;
+    auto abandonImport = [&] (const juce::String& message)
+    {
+        auto explanation { message };
+        for (const auto& file : createdFiles)
+            if (! file.deleteFile ()) explanation += "\nUnused imported file could not be removed: " + file.getFullPathName ();
+        return fail (explanation);
+    };
+    const juce::File folder { appProperties.getMostRecentFolder () };
+    // Complete all filesystem operations before changing any zone assignments.
+    for (const auto& fileName : files)
+    {
+        const juce::File source { fileName };
+        juce::File imported;
+        const auto result { SafeAudioImport::importFile (*audioManager, source, folder, imported) };
+        if (result.failed ()) return abandonImport (result.getErrorMessage ());
+        if (imported != source) createdFiles.push_back (imported);
+        auto reader { audioManager->getReaderFor (imported) };
+        if (! reader) return abandonImport ("The imported audio could not be reopened.");
+        importedSamples.push_back ({ imported, reader->lengthInSamples, reader->numChannels });
+    }
+
     const auto initialEndIndex { initialNumZones - 1 };
     const auto dropZoneStartIndex { zoneIndex };
     const auto dropZoneEndIndex { zoneIndex + files.size () - 1 };
     const auto maxValue { 5.0 };
     const auto minValue { -5.0 };
-//     LogMinVoltageDistribution ("  initialNumZones: " + juce::String (initialNumZones));
-//     LogMinVoltageDistribution ("  initialEndIndex: " + juce::String (initialEndIndex));
-//     LogMinVoltageDistribution ("  numFiles: " + juce::String (files.size ()));
-//     LogMinVoltageDistribution ("  dropZoneStartIndex: " + juce::String (dropZoneStartIndex));
-//     LogMinVoltageDistribution ("  dropZoneEndIndex: " + juce::String (dropZoneEndIndex));
 
-    // assign the samples
-    for (auto filesIndex { 0 }; filesIndex < files.size () && zoneIndex + filesIndex < 8; ++filesIndex)
+    for (auto filesIndex { 0 }; filesIndex < files.size (); ++filesIndex)
     {
-        auto convert = [this] (juce::File audioFile)
-        {
-            const auto fileIsInPresetFolder { appProperties.getMostRecentFolder () != audioFile.getParentDirectory ().getFullPathName () };
-            const auto finalFileName { juce::File (appProperties.getMostRecentFolder ()).getChildFile (audioFile.getFileNameWithoutExtension ()).withFileExtension ("wav") };
-            auto destinationFile = [this, audioFile, fileIsInPresetFolder] ()
-            {
-                if (fileIsInPresetFolder)
-                    return juce::File::createTempFile (".wav");
-                else
-                    return juce::File (appProperties.getMostRecentFolder ()).getChildFile (audioFile.getFileNameWithoutExtension ()).withFileExtension ("wav");
-            } ();
-            // setPosition () and truncate () are FileOutputStream only, so the setup has to happen while the pointer still has that type
-            auto destinationOutputFileStream { std::make_unique<juce::FileOutputStream> (destinationFile) };
-            destinationOutputFileStream->setPosition (0);
-            destinationOutputFileStream->truncate ();
-            // createWriterFor takes a unique_ptr<OutputStream>&, and a unique_ptr<FileOutputStream> cannot bind to a reference to a
-            // different type, so the stream is moved into a base typed pointer to hand over. this is the same stream: destinationOutputFileStream is null from here on
-            std::unique_ptr<juce::OutputStream> destinationFileStream { std::move (destinationOutputFileStream) };
-
-            if (auto reader { audioManager->getReaderFor (audioFile) }; reader != nullptr)
-            {
-                auto sampleRate { reader->sampleRate };
-                auto numChannels { reader->numChannels };
-                auto bitsPerSample { reader->bitsPerSample };
-
-                if (bitsPerSample < 8)
-                    bitsPerSample = 8;
-                else if (bitsPerSample > 24) // the wave writer supports int 8/16/24
-                    bitsPerSample = 24;
-                jassert (numChannels != 0);
-                if (numChannels > 2)
-                    numChannels = 2;
-                if (reader->sampleRate > 192000)
-                {
-                    // we need to do sample rate conversion
-                    jassertfalse;
-                }
-
-                juce::WavAudioFormat wavAudioFormat;
-                // on success, the writer takes ownership of the output stream, and will delete it when done
-                if (auto writer { wavAudioFormat.createWriterFor (destinationFileStream, juce::AudioFormatWriterOptions {}.withSampleRate (sampleRate)
-                                                                                                                         .withNumChannels (static_cast<int> (numChannels))
-                                                                                                                         .withBitsPerSample (bitsPerSample)) }; writer != nullptr)
-                {
-                    // copy the whole thing
-                    // TODO - two things
-                    //   a) this needs to be done in a thread
-                    //   b) we should locally read into a buffer and then write that, so we can display progress if needed
-                    if (writer->writeFromAudioReader (*reader.get (), 0, -1) == true)
-                    {
-                        // close the writer and reader, so that we can manipulate the files
-                        writer.reset ();
-                        reader.reset ();
-
-                        // if file is in preset folder, then we delete the original, and move the temp file to the original name
-                        // otherwise the file was not in the preset folder, and we just converted it directly into the preset folder
-                        if (fileIsInPresetFolder)
-                        {
-                            // TODO - should we rename the original, until we have succeeded in copying of the new file, and only then delete it
-                            if (audioFile.deleteFile () == true)
-                            {
-                                if (destinationFile.moveFileTo (finalFileName) == false)
-                                {
-                                    // failure to move temp file to new file
-                                    jassertfalse;
-                                }
-                                else
-                                {
-                                    return finalFileName;
-                                }
-                            }
-                            else
-                            {
-                                // failure to delete original file
-                                jassertfalse;
-                            }
-                        }
-                        else
-                        {
-                            return finalFileName;
-                        }
-                    }
-                    else
-                    {
-                        // failure to convert
-                        jassertfalse;
-                    }
-                }
-                else
-                {
-                    //failure to create writer
-                    jassertfalse;
-                }
-            }
-            else
-            {
-                // failure to create reader
-                jassertfalse;
-            }
-            return juce::File ();
-        };
-        juce::File file (files [filesIndex]);
-        // if file not in preset folder, then copy
-        if (appProperties.getMostRecentFolder () != file.getParentDirectory ().getFullPathName ())
-        {
-            // TODO handle case where file of same name already exists
-            if (audioManager->isAssimil8orSupportedAudioFile (file))
-            {
-                // TODO should copy be moved to a thread?
-                file.copyFileTo (juce::File (appProperties.getMostRecentFolder ()).getChildFile (file.getFileName ()));
-                // TODO handle failure
-            }
-            else
-            {
-                // convert
-                file = convert (file);
-            }
-        }
-        else // file is in preset folder
-        {
-            if (! audioManager->isAssimil8orSupportedAudioFile (file))
-            {
-                // convert
-                file = convert (file);
-            }
-        }
+        const auto& imported { importedSamples[static_cast<size_t> (filesIndex)] };
+        const auto& file { imported.file };
         //juce::Logger::outputDebugString ("assigning '" + file.getFileName () + "' to Zone " + juce::String (zoneIndex + filesIndex));
         // assign file to zone
         auto& zoneProperties { zoneAndSamplePropertiesList [channelIndex][zoneIndex + filesIndex].zoneProperties };
-        auto& sampleProperties { zoneAndSamplePropertiesList [channelIndex][zoneIndex + filesIndex].sampleProperties };
         zoneProperties.setSample (file.getFileName (), false);
         zoneProperties.setSide (0, false);
-        if (zoneProperties.getSampleStart ().value_or (0) > sampleProperties.getLengthInSamples ())
-            zoneProperties.setSampleStart (sampleProperties.getLengthInSamples () - 1, false);
-        if (zoneProperties.getSampleEnd ().value_or (sampleProperties.getLengthInSamples ()) > sampleProperties.getLengthInSamples ())
-            zoneProperties.setSampleEnd (sampleProperties.getLengthInSamples () - 1, false);
-        if (zoneProperties.getLoopStart ().value_or (0) + 4> sampleProperties.getLengthInSamples ())
-            zoneProperties.setLoopStart (sampleProperties.getLengthInSamples () - 4, false);
-        if (zoneProperties.getLoopStart ().value_or (0) + zoneProperties.getLoopLength ().value_or (4) > sampleProperties.getLengthInSamples ())
-            zoneProperties.setLoopLength (static_cast<double> (sampleProperties.getLengthInSamples () - zoneProperties.getLoopStart ().value_or (0)), false);
+        const auto sampleStart { std::clamp<juce::int64> (zoneProperties.getSampleStart ().value_or (0), 0, imported.length - 1) };
+        if (zoneProperties.getSampleStart ().has_value ()) zoneProperties.setSampleStart (sampleStart, false);
+        if (zoneProperties.getSampleEnd ().has_value ())
+            zoneProperties.setSampleEnd (std::clamp<juce::int64> (*zoneProperties.getSampleEnd (), sampleStart + 1, imported.length), false);
+        const auto minimumLoop { std::min<juce::int64> (4, imported.length) };
+        const auto loopStart { std::clamp<juce::int64> (zoneProperties.getLoopStart ().value_or (0), 0, imported.length - minimumLoop) };
+        if (zoneProperties.getLoopStart ().has_value ()) zoneProperties.setLoopStart (loopStart, false);
+        if (zoneProperties.getLoopLength ().has_value ())
+            zoneProperties.setLoopLength (std::clamp (*zoneProperties.getLoopLength (), static_cast<double> (minimumLoop), static_cast<double> (imported.length - loopStart)), false);
 
-        // check if stereo and set up right channel
-        if (sampleProperties.getStatus () == SampleStatus::exists && sampleProperties.getNumChannels () == 2)
+        // Retain existing pairs for mono imports too, duplicating mono to both
+        // sides rather than leaving unrelated old audio in the right zone.
+        if (imported.channels == 2 || (channelIndex < 7 && channelPropertiesList [channelIndex + 1].getChannelMode () == ChannelProperties::ChannelMode::stereoRight))
         {
             if (auto parentChannelId { channelPropertiesList [channelIndex].getId () }; parentChannelId < 8 && channelPropertiesList [channelIndex].getChannelMode () != ChannelProperties::ChannelMode::stereoRight)
             {
                 // NOTE PresetProperties.getChannelVT takes a 0 based index, but Id's are 1 based. and since we want the NEXT channel, we can use the Id, because it is already +1 to the index
                 ChannelProperties nextChannelProperties (presetProperties.getChannelVT (parentChannelId), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
                 ZoneProperties nextChannelZoneProperties (nextChannelProperties.getZoneVT (zoneProperties.getId () - 1), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-                // if next Channel does not have a sample
-                if (nextChannelZoneProperties.getSample ().isEmpty ())
+                // An empty zone does not make an occupied independent channel available.
+                const auto alreadyPaired { nextChannelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight };
+                const auto availableChannel { alreadyPaired || (nextChannelProperties.getChannelMode () == ChannelProperties::ChannelMode::master
+                                                                && getNumUsedZones (parentChannelId) == 0) };
+                if (availableChannel)
                 {
+                    if (! alreadyPaired)
+                        for (int index { 0 }; index < 8; ++index)
+                        {
+                            auto& left { zoneAndSamplePropertiesList [channelIndex][index].zoneProperties };
+                            if (left.getSample ().isEmpty ()) continue;
+                            ZoneProperties right (nextChannelProperties.getZoneVT (index), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                            auto reader { audioManager->getReaderFor (folder.getChildFile (left.getSample ())) };
+                            right.copyFrom (left.getValueTree (), false);
+                            right.setSide (reader && reader->numChannels == 2 ? 1 : 0, false);
+                        }
                     nextChannelProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, false);
-                    nextChannelZoneProperties.setSide (1, false);
-                    nextChannelZoneProperties.setSampleStart (-1, true); // I think this,and the next 3 lines, could pass false for doSelfCallback
-                    nextChannelZoneProperties.setSampleEnd (-1, true);
-                    nextChannelZoneProperties.setLoopStart (-1, true);
-                    nextChannelZoneProperties.setLoopLength (-1, true);
+                    nextChannelZoneProperties.copyFrom (zoneProperties.getValueTree (), false);
+                    nextChannelZoneProperties.setSide (imported.channels == 2 ? 1 : 0, false);
                     nextChannelZoneProperties.setSample (zoneProperties.getSample (), false); // when the other editor receives this update, it will also update the sample positions, so do it after setting them
                 }
             }
@@ -437,6 +348,11 @@ bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::St
 
     // ensure the last zone is always -5.0
     zoneAndSamplePropertiesList [channelIndex][getNumUsedZones (channelIndex) - 1].zoneProperties.setMinVoltage (minValue, false);
+    if (channelIndex < 7 && channelPropertiesList [channelIndex].getChannelMode () != ChannelProperties::ChannelMode::stereoRight
+        && channelPropertiesList [channelIndex + 1].getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
+        for (int index { 0 }; index < getNumUsedZones (channelIndex); ++index)
+            zoneAndSamplePropertiesList [channelIndex + 1][index].zoneProperties.setMinVoltage (
+                zoneAndSamplePropertiesList [channelIndex][index].zoneProperties.getMinVoltage (), false);
 #if JUCE_DEBUG
     // verifying that all minVoltages are valid
     for (auto curZoneIndex { 0 }; curZoneIndex < getNumUsedZones (channelIndex) - 1; ++curZoneIndex)

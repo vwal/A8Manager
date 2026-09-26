@@ -3,10 +3,9 @@
 #include "RenameDialogComponent.h"
 #include "LocateFileComponent.h"
 #include "../../../SystemServices.h"
+#include "../../../Assimil8or/Audio/SafeAudioImport.h"
 #include "../../../Assimil8or/Validator/ValidatorResultListProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
-
-const auto kValidFileSystemCharacters { juce::String (" !#$%&'()+,-.0123456789;=@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`{}~abcdefghijklmnopqrstuvwxyz") };
 
 Assimil8orValidatorComponent::Assimil8orValidatorComponent ()
 {
@@ -300,26 +299,32 @@ juce::Component* Assimil8orValidatorComponent::refreshComponentForCell (int rowN
 
 void Assimil8orValidatorComponent::handleLocatedFiles (std::vector<std::tuple <juce::File, juce::File>>& locatedFiles)
 {
+    if (directoryDataProperties.getRootFolder () != locateRootFolder) return;
     std::vector<juce::File> copiedFiles;
     for (auto [sourceFile, destinationFile] : locatedFiles)
     {
-        if (sourceFile.copyFileTo (destinationFile) == true)
+        const auto copied { SafeAudioImport::copyNew (sourceFile, destinationFile) };
+        if (copied.wasOk ())
         {
             copiedFiles.emplace_back (destinationFile);
         }
         else
         {
             juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Copy Failed",
-                "Unable to rename '" + sourceFile.getFileName () + "' to '" + destinationFile.getFileName () + "'", {}, nullptr,
-                juce::ModalCallbackFunction::create ([this] (int) {}));
+                copied.getErrorMessage ());
         }
     }
-    std::vector<juce::File> newList;
-    std::set_difference (filesToLocate.begin (), filesToLocate.end (), copiedFiles.begin (), copiedFiles.end (), std::back_inserter (newList));
-    filesToLocate = newList;
-    if (filesToLocate.size () > 0)
+    // Neither input is guaranteed to be sorted; set_difference could keep an
+    // already-copied destination and then try to overwrite it on the next pass.
+    filesToLocate.erase (std::remove_if (filesToLocate.begin (), filesToLocate.end (), [&copiedFiles] (const juce::File& file)
     {
-        locateFilesInitialDirectory = dynamic_cast<LocateFileComponent*> (locateDialog->getContentComponent ())->getCurFolder ();
+        return std::find (copiedFiles.begin (), copiedFiles.end (), file) != copiedFiles.end ();
+    }), filesToLocate.end ());
+    if (! copiedFiles.empty ()) directoryDataProperties.triggerStartScan (false);
+    if (! filesToLocate.empty () && locateDialog != nullptr)
+    {
+        if (auto* content { dynamic_cast<LocateFileComponent*> (locateDialog->getContentComponent ()) }; content != nullptr)
+            locateFilesInitialDirectory = content->getCurFolder ();
         triggerAsyncUpdate ();
     }
 }
@@ -327,15 +332,18 @@ void Assimil8orValidatorComponent::handleLocatedFiles (std::vector<std::tuple <j
 // handleAsyncUpdate handles displaying the locate dialog, and copying any missing files it can locate, and then redisplaying the dialog if there are more to be located
 void Assimil8orValidatorComponent::handleAsyncUpdate ()
 {
+    if (filesToLocate.empty () || directoryDataProperties.getRootFolder () != locateRootFolder) return;
     juce::DialogWindow::LaunchOptions options;
-    auto locateComponent { std::make_unique<LocateFileComponent> (filesToLocate, locateFilesInitialDirectory, [this] (std::vector<std::tuple <juce::File, juce::File>> locatedFiles)
+    const juce::Component::SafePointer<Assimil8orValidatorComponent> safe { this };
+    auto locateComponent { std::make_unique<LocateFileComponent> (filesToLocate, locateFilesInitialDirectory, [safe] (std::vector<std::tuple <juce::File, juce::File>> locatedFiles)
     {
-        handleLocatedFiles (locatedFiles);
-        locateDialog->exitModalState (0);
+        if (safe == nullptr) return;
+        safe->handleLocatedFiles (locatedFiles);
+        if (safe->locateDialog != nullptr) safe->locateDialog->exitModalState (0);
     },
-    [this] ()
+    [safe] ()
     {
-        locateDialog->exitModalState (0);
+        if (safe != nullptr && safe->locateDialog != nullptr) safe->locateDialog->exitModalState (0);
     }) };
     options.content.setOwned (locateComponent.release ());
 
@@ -378,68 +386,18 @@ void Assimil8orValidatorComponent::rename (juce::File file, int maxLength)
 
 void Assimil8orValidatorComponent::autoRename (juce::File fileToRename, bool doRescan)
 {
-    auto getNewFile = [&fileToRename] (juce::String newName)
-    {
-        return fileToRename.getParentDirectory ().getChildFile (newName).withFileExtension (fileToRename.getFileExtension ());
-    };
-    const auto kMaxFileNameLength { 47 };
-    const auto kMaxFileNameWithoutExtension { kMaxFileNameLength - 4 };
-
-    // remove illegal characters
-    auto fileName { fileToRename.getFileNameWithoutExtension ().retainCharacters (kValidFileSystemCharacters) };
-
-    // if name is still too long, try the 'remove vowels' algorithm
-    if (fileName.length () > kMaxFileNameWithoutExtension)
-    {
-        auto removeVowels = [this] (juce::String longString)
-        {
-            const auto lowerCaseVowels { juce::String ("aeiou") };
-            const auto capitolLetter { juce::String ("ABCDEFGHIJKLMNOPQRSTUVWXYZ") };
-            juce::String shortString { longString.substring (0,1) };
-            for (auto stringIndex { 1 }; stringIndex < longString.length () - 2; ++stringIndex)
-            {
-                if (lowerCaseVowels.containsChar (longString [stringIndex]) && ! capitolLetter.containsChar (longString [stringIndex - 1]))
-                    continue;
-                shortString += longString [stringIndex];
-            }
-            shortString += longString.substring (longString.length () - 1, 1);
-            return shortString;
-        };
-        if (const auto noVowelsFileName { removeVowels (fileName) }; noVowelsFileName.length () != 0)
-            fileName = noVowelsFileName;
-    }
-
-    // if name is still too long truncate to max length
-    if (fileName.length () > kMaxFileNameWithoutExtension)
-        fileName = fileName.substring (0, kMaxFileNameWithoutExtension);
-
-    // if name is still too long, or new file name already exists, truncate to max length and start appending an integer value to the name
-    auto suffixValue { 1 };
-    if (fileName.length () > kMaxFileNameWithoutExtension || getNewFile (fileName).exists ())
-    {
-        const auto prefix { fileName.substring (0, kMaxFileNameWithoutExtension) };
-        while (getNewFile (fileName).exists ())
-        {
-            const auto suffixString { juce::String (suffixValue) };
-            const auto trimAmount { juce::jmax (0, prefix.length () + suffixString.length () - kMaxFileNameWithoutExtension) };
-            fileName = prefix.substring (0, prefix.length () - trimAmount) + suffixString;
-            ++suffixValue;
-        }
-    }
-
-    jassert (fileName != fileToRename.getFileNameWithoutExtension ());
-
-    if (fileToRename.moveFileTo (getNewFile (fileName)) != true)
-    {
-        // TODO report error
-    }
-
-    if (doRescan)
+    juce::File destination;
+    auto result { SafeRename::automaticDestination (fileToRename, destination) };
+    if (result.wasOk ()) result = SafeRename::apply (fileToRename, destination.getFileName ());
+    if (result.failed ())
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Rename Failed", result.getErrorMessage ());
+    else if (doRescan)
         directoryDataProperties.triggerStartScan (false);
 }
 
 void Assimil8orValidatorComponent::autoRenameAll ()
 {
+    if (validatorResultsQuickLookupList.empty ()) return;
     ValueTreeHelpers::forEachChildOfType (validatorResultsQuickLookupList [0].getParent (), ValidatorResultProperties::ValidatorResultTypeId, [this] (juce::ValueTree vrpVT)
     {
         ValidatorResultProperties validatorResultProperties (vrpVT, ValidatorResultProperties::WrapperType::client, ValidatorResultProperties::EnableCallbacks::no);
@@ -460,6 +418,7 @@ void Assimil8orValidatorComponent::autoRenameAll ()
 
 void Assimil8orValidatorComponent::autoConvertAll ()
 {
+    if (validatorResultsQuickLookupList.empty ()) return;
     ValueTreeHelpers::forEachChildOfType (validatorResultsQuickLookupList [0].getParent (), ValidatorResultProperties::ValidatorResultTypeId, [this] (juce::ValueTree vrpVT)
     {
         ValidatorResultProperties validatorResultProperties (vrpVT, ValidatorResultProperties::WrapperType::client, ValidatorResultProperties::EnableCallbacks::no);
@@ -469,7 +428,7 @@ void Assimil8orValidatorComponent::autoConvertAll ()
             if (fixerEntryProperties.getType () == FixerEntryProperties::FixerTypeConvert)
             {
                 auto file { juce::File (fixerEntryProperties.getFileName ()) };
-                convert (file);
+                convert (file, false);
             }
             return true;
         });
@@ -480,6 +439,7 @@ void Assimil8orValidatorComponent::autoConvertAll ()
 
 void Assimil8orValidatorComponent::autoLocateAll ()
 {
+    if (validatorResultsQuickLookupList.empty ()) return;
     // build list of files that need to be located
     filesToLocate.clear ();
     ValueTreeHelpers::forEachChildOfType (validatorResultsQuickLookupList [0].getParent (), ValidatorResultProperties::ValidatorResultTypeId, [this] (juce::ValueTree vrpVT)
@@ -498,120 +458,47 @@ void Assimil8orValidatorComponent::autoLocateAll ()
         return true;
     });
     // handleAsyncUpdate handles displaying the locate dialog, and copying any missing files it can locate, and then redisplaying the dialog if there are more to be located
-    locateFilesInitialDirectory = directoryDataProperties.getRootFolder ();
+    locateRootFolder = directoryDataProperties.getRootFolder ();
+    locateFilesInitialDirectory = locateRootFolder;
     triggerAsyncUpdate ();
 }
 
-void Assimil8orValidatorComponent::convert (juce::File file)
+void Assimil8orValidatorComponent::convert (juce::File file, bool reportSuccess)
 {
-    auto errorDialog = [this] (juce::String message)
+    juce::File converted, backup;
+    const auto result { audioManager ? SafeAudioImport::convertInPlace (*audioManager, file, converted, backup)
+                                    : juce::Result::fail ("The audio service is unavailable.") };
+    if (result.failed ())
     {
-        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Conversion Failed", message, {}, nullptr,
-                                                juce::ModalCallbackFunction::create ([this] (int) {}));
-    };
-
-    if (auto reader { audioManager->getReaderFor (file) }; reader != nullptr)
-    {
-        auto tempFile { juce::File::createTempFile (".wav") };
-        // setPosition () and truncate () are FileOutputStream only, so the setup has to happen while the pointer still has that type
-        auto tempOutputFileStream { std::make_unique<juce::FileOutputStream> (tempFile) };
-        tempOutputFileStream->setPosition (0);
-        tempOutputFileStream->truncate ();
-        // createWriterFor takes a unique_ptr<OutputStream>&, and a unique_ptr<FileOutputStream> cannot bind to a reference to a
-        // different type, so the stream is moved into a base typed pointer to hand over. this is the same stream: tempOutputFileStream is null from here on
-        std::unique_ptr<juce::OutputStream> tempFileStream { std::move (tempOutputFileStream) };
-
-        auto sampleRate { reader->sampleRate };
-        auto numChannels { reader->numChannels };
-        auto bitsPerSample { reader->bitsPerSample };
-
-        if (bitsPerSample < 8)
-            bitsPerSample = 8;
-        else if (bitsPerSample > 24) // the wave writer supports int 8/16/24
-            bitsPerSample = 24;
-        jassert (numChannels != 0);
-        if (numChannels > 2)
-            numChannels = 2;
-        if (reader->sampleRate > 192000)
-        {
-            // we need to do sample rate conversion
-            jassertfalse;
-        }
-
-        juce::WavAudioFormat wavAudioFormat;
-        // on success, the writer takes ownership of the output stream, and will delete it when done
-        if (auto writer { wavAudioFormat.createWriterFor (tempFileStream, juce::AudioFormatWriterOptions {}.withSampleRate (sampleRate)
-                                                                                                          .withNumChannels (static_cast<int> (numChannels))
-                                                                                                          .withBitsPerSample (bitsPerSample)) }; writer != nullptr)
-        {
-            // copy the whole thing
-            // TODO - two things
-            //   a) this needs to be done in a thread
-            //   b) we should locally read into a buffer and then write that, so we can display progress if needed
-            if (writer->writeFromAudioReader (*reader.get (), 0, -1) == true)
-            {
-                // close the writer and reader, so that we can manipulate the files
-                writer.reset ();
-                reader.reset ();
-
-                // TODO - should we rename the original, until we have succeeded in copying of the new file, and only then delete it
-                if (file.deleteFile () == true)
-                {
-                    if (tempFile.moveFileTo (file.withFileExtension ("wav")) == false)
-                    {
-                        // failure to move temp file to new file
-                        errorDialog ("Failure to move converted file to original file");
-                        jassertfalse;
-                    }
-                    directoryDataProperties.triggerStartScan (false);
-                }
-                else
-                {
-                    // failure to delete original file
-                    errorDialog ("Failure to delete original file");
-                    jassertfalse;
-                }
-            }
-            else
-            {
-                // failure to convert
-                errorDialog ("Failure to write new file");
-                jassertfalse;
-            }
-        }
-        else
-        {
-            //failure to create writer
-            errorDialog ("Failure to create writer");
-            jassertfalse;
-        }
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Conversion Failed", result.getErrorMessage ());
+        return;
     }
-    else
-    {
-        // failure to create reader
-        errorDialog ("Failure to create reader");
-        jassertfalse;
-    }
+    directoryDataProperties.triggerStartScan (false);
+    if (reportSuccess)
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Conversion Complete",
+            "Converted to " + converted.getFileName () + ". The original is recoverable at:\n" + backup.getFullPathName ());
 }
 
 void Assimil8orValidatorComponent::locate (juce::File file)
 {
     // bring up a file browser to locate
     fileChooser.reset (new juce::FileChooser ("Please locate the missing file...", {}, {}));
-    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this, file] (const juce::FileChooser& fc) mutable
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safe = juce::Component::SafePointer<Assimil8orValidatorComponent> (this), file, root = directoryDataProperties.getRootFolder ()] (const juce::FileChooser& fc)
     {
+        if (safe == nullptr || safe->directoryDataProperties.getRootFolder () != root) return;
         if (fc.getURLResults ().size () == 1 && fc.getURLResults () [0].isLocalFile ())
         {
             // copy selected file to missing file location
             const auto sourceFile { fc.getURLResults () [0].getLocalFile () };
             // TODO - this should probably be in a thread
-            if (sourceFile.copyFileTo (file) == false)
+            const auto copied { SafeAudioImport::copyNew (sourceFile, file) };
+            if (copied.failed ())
             {
                 juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Copy Failed",
-                                                       "Unable to rename '" + sourceFile.getFileName () + "' to '" + file.getFileName () + "'", {}, nullptr,
-                                                       juce::ModalCallbackFunction::create ([this] (int) {}));
+                                                       copied.getErrorMessage ());
             }
-            directoryDataProperties.triggerStartScan (false);
+            else safe->directoryDataProperties.triggerStartScan (false);
         }
     }, nullptr);
 }

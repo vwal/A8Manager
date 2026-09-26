@@ -3,6 +3,8 @@
 #include "../../../../Assimil8or/PresetManagerProperties.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/PersistentRootProperties.h"
+#include <cmath>
+#include <limits>
 
 #define LOG_SAMPLE_POOL 0
 #if LOG_SAMPLE_POOL
@@ -84,8 +86,8 @@ void SampleManager::handleSampleChange (int channelIndex, int zoneIndex, juce::S
     {
         LogSamplePool ("handleSampleChangeclosing sample '" + sampleProperties.getName () + " 'for c" + juce::String (channelIndex) + "/z" + juce::String (zoneIndex));
         sampleProperties.setStatus (SampleStatus::uninitialized, false); // this should inform clients to stop using the sample, before we reset everything else
-        close (sampleProperties.getName ());
         sampleProperties.setAudioBufferPtr (nullptr, false);
+        close (sampleProperties.getName ());
         sampleProperties.setBitsPerSample (0, false);
         sampleProperties.setSampleRate (0.0, false);
         sampleProperties.setLengthInSamples (0, false);
@@ -103,7 +105,7 @@ void SampleManager::handleSampleChange (int channelIndex, int zoneIndex, juce::S
         sampleProperties.setSampleRate (sampleData.sampleRate, false);
         sampleProperties.setLengthInSamples (sampleData.lengthInSamples, false);
         sampleProperties.setNumChannels (sampleData.numChannels, false);
-        sampleProperties.setAudioBufferPtr (&sampleData.audioBuffer, false);
+        sampleProperties.setAudioBufferPtr (sampleData.status == SampleStatus::exists ? &sampleData.audioBuffer : nullptr, false);
         sampleProperties.setStatus (sampleData.status, false);
     }
 }
@@ -146,19 +148,42 @@ void SampleManager::updateSampleProperties (juce::String fileName, SampleData& s
                 sampleProperties.setSampleRate (sampleData.sampleRate, false);
                 sampleProperties.setLengthInSamples (sampleData.lengthInSamples, false);
                 sampleProperties.setNumChannels (sampleData.numChannels, false);
-                sampleProperties.setAudioBufferPtr (&sampleData.audioBuffer, false);
+                sampleProperties.setAudioBufferPtr (sampleData.status == SampleStatus::exists ? &sampleData.audioBuffer : nullptr, false);
                 sampleProperties.setStatus (sampleData.status, false);
             }
         }
 }
 
+void SampleManager::invalidateSampleProperties (const juce::String& fileName)
+{
+    // All borrowers must release the old audio before its allocation changes.
+    // Pointer/status values otherwise remain identical on a same-path reload,
+    // so neither ValueTree notification would invalidate their cached data.
+    for (auto& channel : zoneAndSamplePropertiesList)
+        for (auto& zone : channel)
+            if (zone.sampleProperties.getName () == fileName)
+            {
+                zone.sampleProperties.setStatus (SampleStatus::uninitialized, false);
+                zone.sampleProperties.setAudioBufferPtr (nullptr, false);
+            }
+}
+
 void SampleManager::updateSample (juce::String fileName, SampleData& sampleData)
 {
+    invalidateSampleProperties (fileName);
+    sampleData.bitsPerSample = 0;
+    sampleData.sampleRate = 0.0;
+    sampleData.numChannels = 0;
+    sampleData.lengthInSamples = 0;
+    sampleData.audioBuffer.setSize (0, 0);
     juce::File fullPath { currentFolder.getChildFile (fileName) };
-    if (fullPath.exists ())
+    if (fullPath.existsAsFile ())
     {
         LogSamplePool ("updateSample: file exists");
-        if (auto sampleFileReader { audioManager->getReaderFor (fullPath) }; sampleFileReader != nullptr)
+        if (auto sampleFileReader { audioManager->getReaderFor (fullPath) }; sampleFileReader != nullptr &&
+            sampleFileReader->lengthInSamples > 0 && sampleFileReader->lengthInSamples <= std::numeric_limits<int>::max () &&
+            sampleFileReader->numChannels > 0 && sampleFileReader->numChannels <= static_cast<unsigned int> (std::numeric_limits<int>::max ()) &&
+            std::isfinite (sampleFileReader->sampleRate) && sampleFileReader->sampleRate > 0.0)
         {
             // cache sample attributes
             sampleData.status = SampleStatus::exists;
@@ -179,8 +204,15 @@ void SampleManager::updateSample (juce::String fileName, SampleData& sampleData)
 
             // read in audio data
             sampleData.audioBuffer.setSize (sampleData.numChannels, static_cast<int> (sampleData.lengthInSamples), false, true, false);
-            sampleFileReader->read (&sampleData.audioBuffer, 0, static_cast<int> (sampleData.lengthInSamples), 0, true, true);
-            updateSampleProperties (fileName, sampleData);
+            if (! sampleFileReader->read (&sampleData.audioBuffer, 0, static_cast<int> (sampleData.lengthInSamples), 0, true, true))
+            {
+                sampleData.status = SampleStatus::wrongFormat;
+                sampleData.bitsPerSample = 0;
+                sampleData.sampleRate = 0.0;
+                sampleData.numChannels = 0;
+                sampleData.lengthInSamples = 0;
+                sampleData.audioBuffer.setSize (0, 0);
+            }
         }
         else
         {
@@ -193,6 +225,9 @@ void SampleManager::updateSample (juce::String fileName, SampleData& sampleData)
         LogSamplePool ("updateSample: does not exist");
         sampleData.status = SampleStatus::doesNotExist;
     }
+    // Failures must be published too: stale "exists" metadata could otherwise
+    // leave a deleted or corrupt file apparently playable in every zone.
+    updateSampleProperties (fileName, sampleData);
 }
 
 void SampleManager::clear ()

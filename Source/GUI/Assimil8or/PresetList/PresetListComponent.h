@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "../../../AppProperties.h"
 #include "../../../Assimil8or/Preset/PresetProperties.h"
+#include "../../../Assimil8or/PresetFileOperations.h"
 #include "oolib/Directory/DirectoryDataProperties.h"
 #include "oolib/Directory/DirectoryValueTree.h"
 #include "oolib/Core/LambdaThread.h"
@@ -20,8 +21,8 @@ public:
     std::function<void (std::function<void ()>, std::function<void ()>)> overwritePresetOrCancel;
 
 private:
-    using PresetInfo = std::tuple<int, bool, juce::String>;
-    using PresetInfoList = std::array<PresetInfo, kMaxPresets>;
+    using PresetInfo = PresetFileOperations::PresetInfo;
+    using PresetInfoList = PresetFileOperations::PresetInfoList;
 
     AppProperties appProperties;
     DirectoryDataProperties directoryDataProperties;
@@ -38,6 +39,7 @@ private:
     juce::File currentFolder;
     juce::File previousFolder;
     int lastSelectedPresetIndex { -1 };
+    int selectedPresetNumber { 1 };
     std::atomic<bool> requestedShowAllPresets { true };
     LambdaThread checkPresetsThread { "CheckPresetsThread", 100 };
 
@@ -46,14 +48,15 @@ private:
     void deletePreset (int presetNumber);
     juce::File getPresetFile (int presetNumber);
     void forEachPresetFile (std::function<bool (juce::File presetFile, int index)> presetFileCallback);
-    void loadPresetFile (juce::File presetFile, juce::ValueTree vt);
-    void loadDefault (int row);
+    bool loadPresetFile (juce::File presetFile, juce::ValueTree vt);
+    void loadDefault (int presetNumber);
     void loadFirstPreset ();
-    void loadPreset (juce::File presetFile);
+    bool loadPreset (juce::File presetFile);
     void movePresetUp (int row);
     void movePresetDown (int row);
     void requestPresetCheck ();
-    void swapPresets (int fromRow, int toRow);
+    void swapPresets (int fromSlot, int toSlot);
+    void selectPreset (int presetNumber);
     void pastePreset (int presetNumber);
 
     void resized () override;

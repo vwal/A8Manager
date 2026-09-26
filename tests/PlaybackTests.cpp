@@ -77,12 +77,23 @@ struct AudioPlayerTestAccess
         player.zoneProperties.setSide (1, true);
         player.sampleProperties.setStatus (SampleStatus::exists, true);
         check (std::abs (value (0, 128) - 0.4f) < 0.01f, "Stale R side on replacement mono file falls back safely to channel zero");
+        const auto previousRightTree { player.nextChannelProperties.getValueTree () };
         player.initFromZone ({ 7, 0 });
+        check (! player.nextChannelProperties.isValid () && ! player.nextZoneProperties.isValid () && ! player.nextSampleProperties.isValid (),
+               "Channel eight releases all optional partner bindings, without invalid client wraps");
+        player.playbackPosition.store (42.0);
+        ChannelProperties previousRight (previousRightTree, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        previousRight.setChannelMode (ChannelProperties::ChannelMode::master, false);
+        previousRight.setChannelMode (ChannelProperties::ChannelMode::stereoRight, false);
+        check (player.playbackPosition.load () == 42.0, "Detached previous partner changes cannot rebuild channel-eight audio");
         player.zoneProperties.setSide (1, true);
         check (! player.isStereoPair () && std::abs (value (0, 128) + 0.5f) < 0.01f && std::abs (value (1, 128) + 0.5f) < 0.01f, "Channel eight has no stale right-channel pairing");
         player.sampleRate = 24000.0;
         player.prepareSampleForPlayback ();
         check (player.sampleBuffer->getNumSamples () == 512 && player.sampleStart == 50 && player.sampleLength == 400, "Device rate change updates audio and range together");
+        player.initFromZone ({ 0, 0 });
+        check (player.isStereoPair () && player.nextChannelProperties.getValueTree () == previousRightTree &&
+               player.nextZoneProperties.isValid () && player.nextSampleProperties.isValid (), "Returning from channel eight restores real partner bindings");
         std::cout << "PASS: actual stereo source preparation, sides, rates, missing/reloaded partner, channel eight and SAMPLE/LOOP isolation\n";
     }
 
