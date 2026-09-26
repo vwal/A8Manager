@@ -45,6 +45,18 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     LoopPointsTests.cpp
     ZoneVoltageTests.cpp
     RegionMoveTests.cpp
+    WaveformWorkflowTests.cpp
+    EditorRefinementTests.cpp
+    ../Source/GUI/Assimil8or/Editor/ZoneEditor.cpp
+    ../Source/GUI/Assimil8or/Editor/EditManager.cpp
+    ../Source/GUI/Assimil8or/Editor/FormatHelpers.cpp
+    ../Source/GUI/Assimil8or/Editor/ParameterToolTipData.cpp
+    ../Source/GUI/Assimil8or/Editor/Envelope/AREnvelopeComponent.cpp
+    ../Source/GUI/Assimil8or/Editor/Envelope/AREnvelopeProperties.cpp
+    ../Source/SystemServices.cpp
+    ../Source/Assimil8or/Audio/AudioManager.cpp
+    ../submodules/oolib/oolib/GUI/FileSelectLabel.cpp
+    ../Source/GUI/Assimil8or/Editor/Waveform/WaveformDisplay.cpp
     ../submodules/oolib/oolib/GUI/WaveformView.cpp
     ../Source/GUI/Assimil8or/Editor/LoopPoints/LoopPointsView.cpp
     ../Source/Assimil8or/Audio/AudioPlayer.cpp
@@ -80,4 +92,8 @@ add_test(NAME PlaybackRegression COMMAND A8ManagerInteractionTests --playback)
 add_test(NAME LoopPointsRegression COMMAND A8ManagerInteractionTests --loop-preview)
 add_test(NAME ZoneVoltageRegression COMMAND A8ManagerInteractionTests --zone-voltages)
 add_test(NAME RegionMoveRegression COMMAND A8ManagerInteractionTests --region-move)
-set_tests_properties(ValueDragRegression RootFolderRegression PlaybackRegression LoopPointsRegression ZoneVoltageRegression RegionMoveRegression PROPERTIES TIMEOUT 60)
+add_test(NAME WaveformWorkflowRegression COMMAND A8ManagerInteractionTests --waveform-workflow)
+add_test(NAME EditorRefinementRegression COMMAND A8ManagerInteractionTests --editor-refinements)
+add_test(NAME StereoPreviewRegression COMMAND A8ManagerInteractionTests --stereo-preview)
+set_tests_properties(EditorRefinementRegression StereoPreviewRegression PROPERTIES TIMEOUT 60)
+set_tests_properties(ValueDragRegression RootFolderRegression PlaybackRegression LoopPointsRegression ZoneVoltageRegression RegionMoveRegression WaveformWorkflowRegression PROPERTIES TIMEOUT 60)

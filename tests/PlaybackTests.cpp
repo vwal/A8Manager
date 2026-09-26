@@ -7,6 +7,85 @@
 // Configure the actual audition engine without opening an audio device.
 struct AudioPlayerTestAccess
 {
+    static void runRouting ()
+    {
+        auto check = [] (bool condition, const char* message) { if (! condition) throw std::runtime_error (message); };
+        AudioPlayer player;
+        player.sampleRate = 48000.0;
+        player.sampleRateRatio = 1.0;
+        player.audioPlayerProperties.enableCallbacks (true);
+        player.audioPlayerProperties.onSamplePointsSelectorChanged = [&] (auto) { player.initSamplePoints (); };
+        player.audioPlayerProperties.onPlayStateChange = [&] (auto state) { player.handlePlayState (state); };
+        juce::AudioBuffer<float> left (2, 1024), right (2, 256), mono (1, 1024);
+        for (auto i { 0 }; i < 1024; ++i)
+        {
+            left.setSample (0, i, 0.25f); left.setSample (1, i, -0.5f); mono.setSample (0, i, 0.4f);
+        }
+        for (auto i { 0 }; i < 256; ++i) { right.setSample (0, i, 0.1f); right.setSample (1, i, 0.75f); }
+        for (auto c { 0 }; c < 8; ++c)
+        {
+            auto channel { player.presetProperties.getChannelVT (c) };
+            ChannelProperties channelProperties (channel, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+            for (auto z { 0 }; z < 8; ++z)
+            {
+                auto tree { channelProperties.getZoneVT (z) };
+                ZoneProperties zone (tree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                zone.setSample ("fixture.wav", false);
+                zone.setSampleStart (100, false); zone.setSampleEnd (900, false);
+                zone.setLoopStart (200, false); zone.setLoopLength (100, false);
+            }
+            SampleProperties sample (player.sampleManagerProperties.getSamplePropertiesVT (c, 0), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+            sample.setAudioBufferPtr (c == 1 ? &right : &left, false);
+            sample.setLengthInSamples (c == 1 ? 256 : 1024, false);
+            sample.setSampleRate (c == 1 ? 24000.0 : 48000.0, false);
+            sample.setNumChannels (2, false);
+            sample.setStatus (SampleStatus::exists, false);
+        }
+        player.initFromZone ({ 0, 0 });
+        auto value = [&] (int side, int frame) { return player.sampleBuffer->getSample (side, frame); };
+        check (std::abs (value (0, 128) - 0.25f) < 0.01f && std::abs (value (1, 128) - 0.25f) < 0.01f, "Unpaired L side reaches both preview outputs");
+        player.zoneProperties.setSide (1, true);
+        check (std::abs (value (0, 128) + 0.5f) < 0.01f && std::abs (value (1, 128) + 0.5f) < 0.01f, "Unpaired R side must survive resampling on both outputs");
+        player.nextSampleProperties.setStatus (SampleStatus::uninitialized, true);
+        check (player.sampleBuffer != nullptr && std::abs (value (0, 128) + 0.5f) < 0.01f, "Unrelated next-channel unload must not clear this preview");
+        player.nextSampleProperties.setStatus (SampleStatus::exists, true);
+        player.zoneProperties.setSide (0, true);
+        player.nextZoneProperties.setSide (1, true);
+        player.nextChannelProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, true);
+        check (std::abs (value (0, 128) - 0.25f) < 0.01f && std::abs (value (1, 128) - 0.75f) < 0.01f, "Paired preview routes distinct L/R with differing source rates");
+        check (player.sampleBuffer->getNumSamples () == 1024 && std::abs (value (1, 900)) < 0.001f, "Shorter right file is zero-padded to left duration");
+        player.nextSampleProperties.setStatus (SampleStatus::doesNotExist, true);
+        check (std::abs (value (0, 128) - 0.25f) < 0.01f && player.sampleBuffer->getMagnitude (1, 0, 1024) == 0.0f, "Missing stereo right silences only R");
+        player.nextSampleProperties.setStatus (SampleStatus::exists, true);
+        check (std::abs (value (1, 128) - 0.75f) < 0.01f, "Reloaded stereo right restores routing");
+        using Selector = AudioPlayerProperties::SamplePointsSelector;
+        player.audioPlayerProperties.setSamplePointsSelector (Selector::SamplePoints, true);
+        player.zoneProperties.setLoopStart (400, true); player.zoneProperties.setLoopLength (40, true);
+        check (player.sampleStart == 100 && player.sampleLength == 800, "Loop edits cannot leak into SAMPLE audition");
+        player.audioPlayerProperties.setSamplePointsSelector (Selector::LoopPoints, true);
+        player.zoneProperties.setSampleStart (80, true); player.zoneProperties.setSampleEnd (950, true);
+        check (player.sampleStart == 400 && player.sampleLength == 40, "Sample edits cannot leak into LOOP audition");
+        player.zoneProperties.setLoopLength (-1, true);
+        player.zoneProperties.setLoopStart (500, true);
+        check (player.sampleLength == 524, "Implicit loop length tracks remaining file, not full file length");
+        player.audioPlayerProperties.setSamplePointsSelector (Selector::SamplePoints, true);
+        check (player.sampleStart == 80 && player.sampleLength == 870, "Switching back restores edited sample boundaries");
+        player.sampleProperties.setStatus (SampleStatus::uninitialized, true);
+        check (player.sampleBuffer == nullptr, "Unloading selected sample releases stale preview audio");
+        player.sampleProperties.setAudioBufferPtr (&mono, true);
+        player.sampleProperties.setNumChannels (1, true);
+        player.zoneProperties.setSide (1, true);
+        player.sampleProperties.setStatus (SampleStatus::exists, true);
+        check (std::abs (value (0, 128) - 0.4f) < 0.01f, "Stale R side on replacement mono file falls back safely to channel zero");
+        player.initFromZone ({ 7, 0 });
+        player.zoneProperties.setSide (1, true);
+        check (! player.isStereoPair () && std::abs (value (0, 128) + 0.5f) < 0.01f && std::abs (value (1, 128) + 0.5f) < 0.01f, "Channel eight has no stale right-channel pairing");
+        player.sampleRate = 24000.0;
+        player.prepareSampleForPlayback ();
+        check (player.sampleBuffer->getNumSamples () == 512 && player.sampleStart == 50 && player.sampleLength == 400, "Device rate change updates audio and range together");
+        std::cout << "PASS: actual stereo source preparation, sides, rates, missing/reloaded partner, channel eight and SAMPLE/LOOP isolation\n";
+    }
+
     static void run ()
     {
         auto check = [] (bool ok, const char* message)
@@ -310,3 +389,4 @@ struct AudioPlayerTestAccess
 };
 
 void testPlayback () { AudioPlayerTestAccess::run (); }
+void testStereoPreview () { AudioPlayerTestAccess::runRouting (); }

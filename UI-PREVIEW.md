@@ -30,16 +30,34 @@ checkout and the JUCE/oolib submodule contents are unchanged.
   add Shift for one minimum increment per scroll event, including macOS's
   Shift-scroll horizontal-axis mapping. Ordinary scrolling no longer
   accidentally changes a numeric value.
-- **Waveform editing:** a wider display, visible +/− buttons, Fit, Zone, and Loop
-  framing, a zoom readout, and a horizontal scrollbar. Existing wheel zoom,
-  drag-to-pan, right-drag zoom, and double-click-to-fit gestures remain. Sample
-  markers are white, loop markers amber, and the waveform is teal on dark blue.
-  The Edit edges / Move zone / Move loop selector adds fixed-length region
-  dragging: move a white or orange pair together, clamped at the file edges,
-  with Shift for ten-times-finer travel. Regions remain independent; fractional
-  loop lengths and both Length/End display modes are supported. A narrow window
-  gives the speed controls a second toolbar row. Move mode is temporary, while
-  changed boundaries are ordinary preset edits saved with Save.
+- **Waveform editing:** a wider display, +/− buttons, a clickable zoom percentage
+  (reset horizontal fit and vertical 100%), and a horizontal scrollbar. Wheel
+  zoom, plain drag-to-pan, right-drag zoom, and double-click-to-fit remain.
+  Sample start/end markers are red/blue; loop start/end are amber/pink, matching
+  labels and colour keys in the zone panel. Always-visible, collision-aware marker
+  overlays show grouped frame counts, source timestamps and pitch-adjusted region
+  lengths. The active Sample/Loop selection follows marker editing; its surrounding
+  area is dimmed. Option/Alt-drag inside a region or on its handle moves that pair
+  without resizing, with Shift for ten-times-finer travel. In overlapping regions
+  the selected pair wins; handles identify their own pair. Outside both regions
+  the modifier drag does nothing. This replaces the old movement-mode selector.
+  Fractional lengths, both Length/End modes and file-edge clamping are retained.
+  The expand arrow overlays the channel controls while leaving zones accessible;
+  the same component stays expanded across zone switches until X/Escape closes it.
+  Gear and right-click menus offer Reset/Fit Sample/Fit Loop, Jump to Marker (keys
+  1–4 with waveform focus), per-marker left/right zero-crossing nudges, and a
+  separate Match Opposite Boundary command. Matching searches within ±50 ms at
+  the source rate for a smaller first/last-frame amplitude difference, including
+  nonzero joins, on the displayed stereo side. It keeps the opposite edge fixed
+  even in Loop Length mode, favours the nearest equally good match, and makes no
+  edit when no improvement exists. It does not guarantee matching slopes or a
+  click-free stereo join. The
+  context menu additionally offers Set Marker Here. Native-menu callbacks reject
+  stale zone/sample selections. An app-local ruler adds grouped frame counts
+  without modifying the pinned oolib submodule.
+  File/sample/loop lengths use source rate and zone PITCH OFFSET, excluding preview
+  speed, Keep pitch, channel pitch and CV. Source-position timestamps never shift.
+  Changed boundaries remain normal preset edits saved with Save.
   A yellow playhead with a small triangular cap follows ONCE/LOOP audition at
   30 Hz. It uses original sample-frame positions, including after resampling,
   and stays aligned with zoom/pan. It hides when stopped, when viewing another
@@ -145,6 +163,21 @@ neighbouring boundaries, unchanged data and tab rendering at 100%, 150%, 200%.
 Region-move tests exercise real mouse handling, fine motion, mode routing,
 cancellation, fixed length at file edges, fractional/implicit/tiny loops and
 valid start/end ordering during property notifications.
+Waveform-workflow tests use the actual component to cover its new menus, marker
+commands, duration/position distinction, contextual region moves, selection
+shading, label placement, expanded zone switching and disabled editing.
+
+The subsequent refinement pass adds a confirmed Purge action on zone tabs
+(compacting paired stereo zones together, without deleting audio), time lengths
+in the zone panel, red sample-start keys and a dark/teal envelope graph.
+Zero-crossing nudges choose the quieter adjacent frame and account for exclusive
+end boundaries. File and validator rename dialogs share validated, extension-
+preserving rename handling. Audition start now restores the local Sample/Loop
+choice. Stereo source preparation retains an unpaired R side, ignores unrelated
+next-channel unloads and leaves only R silent if its paired sample is missing.
+Source/device rate changes refresh the playback range after rebuilding audio.
+New tests cover these actual UI/audio paths and temporary-file rename recovery;
+zone/envelope renders are checked offscreen without disturbing the running app.
 
 Live macOS checks use a copied fixture under the ignored `cmake_build/ui-smoke`
 directory: load a 0–4000 slice, Continue to zone 2, verify 4000–8000, zoom, and

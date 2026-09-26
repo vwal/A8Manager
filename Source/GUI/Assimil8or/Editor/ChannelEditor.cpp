@@ -1,5 +1,6 @@
 #include "ChannelEditor.h"
 #include "../../../Assimil8or/Preset/ZoneContinuation.h"
+#include "../../../Assimil8or/Preset/ZonePurge.h"
 #include "../../ModernTheme.h"
 #include "FormatHelpers.h"
 #include "ParameterToolTipData.h"
@@ -66,6 +67,18 @@ ChannelEditor::ChannelEditor ()
         zoneTabs.setTabBackgroundColour (curZoneIndex, zoneTabs.getTabBackgroundColour (curZoneIndex).darker (0.2f));
     }
     zoneTabs.setTabBarDepth (58); // room for the parenthesised access voltage
+    zoneTabs.onTabPopup = [this] (int index)
+    {
+        if (! channelProperties.isValid () || index < 0 || index >= 8) return;
+        const auto channelTree { channelProperties.getValueTree () };
+        const auto before { channelTree.createCopy () };
+        juce::PopupMenu menu;
+        menu.addItem (1, "Purge this zone...", channelProperties.getChannelMode () != ChannelProperties::ChannelMode::stereoRight && zoneProperties[index].getSample ().isNotEmpty ());
+        menu.showMenuAsync ({}, [safe = juce::Component::SafePointer<ChannelEditor> (this), index, channelTree, before] (int choice)
+        {
+            if (choice == 1 && safe != nullptr && safe->channelProperties.getValueTree () == channelTree && channelTree.isEquivalentTo (before)) safe->confirmPurgeZone (index);
+        });
+    };
     zoneTabs.setLookAndFeel (&zonesTabbedLookAndFeel);
     zoneTabs.onSelectedTabChanged = [this] (int)
     {
@@ -133,6 +146,24 @@ ChannelEditor::ChannelEditor ()
 
     // Waveform display
     addAndMakeVisible (sampleWaveformDisplay);
+    sampleWaveformDisplay.onExpandRequested = [this] ()
+    {
+        waveformExpanded = ! waveformExpanded;
+        sampleWaveformDisplay.setExpanded (waveformExpanded);
+        sampleWaveformDisplay.toFront (false);
+        if (stereoRightTransparantOverly.isVisible ()) stereoRightTransparantOverly.toFront (false);
+        resized ();
+    };
+    sampleWaveformDisplay.onRegionSelected = [this] (bool loop)
+    {
+        const auto selected { zoneTabs.getCurrentTabIndex () };
+        if (selected >= 0 && selected < 8) zoneEditors[selected].selectLoop (loop);
+    };
+    for (auto index { 0 }; index < 8; ++index)
+        zoneEditors[index].onRegionSelected = [this, index] (bool loop)
+        {
+            if (zoneTabs.getCurrentTabIndex () == index) sampleWaveformDisplay.setLoopSelected (loop);
+        };
 
     updateAllZoneTabNames ();
     addChildComponent (stereoRightTransparantOverly);
@@ -231,11 +262,31 @@ void ChannelEditor::copyToNextZone (int zoneIndex, bool continueSlice)
 
 void ChannelEditor::deleteZone (int zoneIndex)
 {
-    zoneProperties [zoneIndex].copyFrom (defaultZoneProperties.getValueTree (), false);
-    // if this zone was the last in the list, but not also the first, then set the minVoltage for the new last in list to -5
-    if (zoneIndex == editManager->getNumUsedZones (channelIndex) && zoneIndex != 0)
-        zoneProperties [zoneIndex - 1].setMinVoltage (-5.0, false);
-    removeEmptyZones ();
+    audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+    ZonePurge::apply (channelProperties.getValueTree (), zoneIndex, defaultZoneProperties.getValueTree ());
+    ensureProperZoneIsSelected ();
+    updateAllZoneTabNames ();
+    updateWaveformDisplay ();
+}
+
+void ChannelEditor::confirmPurgeZone (int zoneIndex)
+{
+    if (zoneIndex < 0 || zoneIndex >= 8 || channelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight) return;
+    const auto tree { channelProperties.getValueTree () };
+    const auto before { tree.createCopy () };
+    const auto right { ZonePurge::linkedRightChannel (tree) };
+    const auto rightBefore { right.createCopy () };
+    juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Purge zone " + juce::String (zoneIndex + 1) + "?",
+        "Clear this zone's sample assignment and settings? Later zones shift up to keep the list consecutive. "
+        "The last occupied zone extends to -5 V. Audio files are not deleted." +
+        juce::String (right.isValid () ? " The paired right-channel zone will also be cleared, and its later zones shift together with the left." : ""),
+        "Purge", "Cancel", nullptr, juce::ModalCallbackFunction::create (
+            [safe = juce::Component::SafePointer<ChannelEditor> (this), zoneIndex, tree, before, right, rightBefore] (int choice)
+            {
+                if (choice == 0 || safe == nullptr || safe->channelProperties.getValueTree () != tree || ! tree.isEquivalentTo (before) ||
+                    ZonePurge::linkedRightChannel (tree) != right || (right.isValid () && ! right.isEquivalentTo (rightBefore))) return;
+                safe->deleteZone (zoneIndex);
+            }));
 }
 
 // TODO - move this to the EditManger
@@ -2249,9 +2300,7 @@ void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree u
                     juce::PopupMenu deleteMenu;
                     deleteMenu.addItem ("Zone " + juce::String (zoneProperties [zoneIndex].getId ()), zoneProperties [zoneIndex].getSample ().isNotEmpty (), false, [this, zoneIndex] ()
                     {
-                        deleteZone (zoneIndex);
-                        ensureProperZoneIsSelected ();
-                        updateAllZoneTabNames ();
+                        confirmPurgeZone (zoneIndex);
                     });
                     deleteMenu.addItem ("All", editManager->getNumUsedZones (channelIndex) > 0, false, [this] ()
                     {
@@ -2475,6 +2524,10 @@ void ChannelEditor::checkStereoRightOverlay ()
 void ChannelEditor::configAudioPlayer ()
 {
     audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+    const auto selected { zoneTabs.getCurrentTabIndex () };
+    if (selected >= 0 && selected < 8 && isShowing ())
+        audioPlayerProperties.setSamplePointsSelector (zoneEditors[selected].isLoopSelected ()
+            ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false);
 }
 
 void ChannelEditor::paint ([[maybe_unused]] juce::Graphics& g)
@@ -2768,14 +2821,16 @@ void ChannelEditor::resized ()
     // Waveform Display
     const auto waveformTop { std::max ({ expAMTextEditor.getBottom (), arEnvelopeComponent.getBottom (),
                                         mixModTextEditor.getBottom (), xfadeGroupComboBox.getBottom () }) + 12 };
-    sampleWaveformDisplay.setBounds (15, waveformTop, juce::jmax (0, zoneTabs.getX () - 30),
-                                    juce::jmax (0, getHeight () - waveformTop - 35));
+    const auto waveformY { waveformExpanded ? 3 : waveformTop };
+    sampleWaveformDisplay.setBounds (15, waveformY, juce::jmax (0, zoneTabs.getX () - 30),
+                                    juce::jmax (0, getHeight () - waveformY - 35));
 }
 
 void ChannelEditor::updateWaveformDisplay ()
 {
     const auto currentZoneIndex { zoneTabs.getCurrentTabIndex () };
     sampleWaveformDisplay.setZone (currentZoneIndex);
+    sampleWaveformDisplay.setLoopSelected (zoneEditors[currentZoneIndex].isLoopSelected ());
 }
 
 void ChannelEditor::flipZones (int zoneIndex, int flipCount)

@@ -1,5 +1,6 @@
 #include "ZoneEditor.h"
 #include "../../ModernTheme.h"
+#include "Waveform/WaveformPresentation.h"
 #include "FormatHelpers.h"
 #include "ParameterToolTipData.h"
 #include "SampleManager/SampleManagerProperties.h"
@@ -75,6 +76,8 @@ ZoneEditor::ZoneEditor ()
             }
             else
             {
+                audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+                audioPlayerProperties.setSamplePointsSelector (samplePointsSelector, false);
                 audioPlayerProperties.setSampleSource (parentChannelIndex, zoneIndex, false);
                 // starting
                 audioPlayerProperties.setPlayState (playState, false);
@@ -93,6 +96,18 @@ ZoneEditor::ZoneEditor ()
     oneShotPlayButton.setTooltip ("Plays the currently selected SOURCE in one shot mode");
     setupPlayButton (oneShotPlayButton, "ONCE", "LOOP", AudioPlayerProperties::PlayState::play);
     setupZoneComponents ();
+    for (auto* label : { &sampleDurationLabel, &loopDurationLabel })
+    {
+        label->setFont (juce::FontOptions (11.0f));
+        label->setBorderSize ({ 0, 2, 0, 2 });
+        label->setJustificationType (juce::Justification::centredRight);
+        label->setTooltip ("Region length in minutes:seconds at this zone's PITCH OFFSET; excludes audition speed, Keep pitch and channel pitch/CV.");
+        addAndMakeVisible (label);
+    }
+    sampleDurationLabel.setColour (juce::Label::textColourId, WaveformPresentation::markerColours[1]);
+    loopDurationLabel.setColour (juce::Label::textColourId, WaveformPresentation::markerColours[3]);
+    sampleDurationLabel.addMouseListener (&selectSamplePointsClickListener, false);
+    loopDurationLabel.addMouseListener (&selectLoopPointsClickListener, false);
     setEditComponentsEnabled (false);
 }
 
@@ -184,6 +199,13 @@ void ZoneEditor::setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelec
         activePointBackground = (samplePointsSelector == AudioPlayerProperties::SamplePointsSelector::SamplePoints ? &samplePointsBackground : &loopPointsBackground);
         updateLoopPointsView ();
         repaint ();
+        if (onRegionSelected) onRegionSelected (isLoopSelected ());
+    }
+    // Each zone remembers its choice; only the visible editor may publish it
+    // to the shared player. Re-publish even when its local choice is unchanged.
+    if (isShowing () && (audioPlayerProperties.getSamplePointsSelector () != samplePointsSelector ||
+                         audioPlayerProperties.getSampleSource () != std::make_tuple (parentChannelIndex, zoneIndex)))
+    {
         audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
         audioPlayerProperties.setSamplePointsSelector (samplePointsSelector, false);
     }
@@ -191,6 +213,7 @@ void ZoneEditor::setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelec
 
 void ZoneEditor::updateLoopPointsView ()
 {
+    updateDurations ();
     juce::int64 startSample { 0 };
     juce::int64 numSamples { 0 };
     int side { 0 };
@@ -204,7 +227,7 @@ void ZoneEditor::updateLoopPointsView ()
         else
         {
             startSample = zoneProperties.getLoopStart ().value_or (0);
-            numSamples = static_cast<juce::int64> (zoneProperties.getLoopLength ().value_or (static_cast<double> (sampleProperties.getLengthInSamples ())));
+            numSamples = static_cast<juce::int64> (zoneProperties.getLoopLength ().value_or (static_cast<double> (sampleProperties.getLengthInSamples () - startSample)));
         }
         loopPointsView.setAudioBuffer (sampleProperties.getAudioBufferPtr ());
         side = zoneProperties.getSide ();
@@ -215,6 +238,23 @@ void ZoneEditor::updateLoopPointsView ()
     }
     loopPointsView.setLoopPoints (startSample, numSamples, side);
     loopPointsView.repaint ();
+}
+
+void ZoneEditor::updateDurations ()
+{
+    if (sampleProperties.getStatus () != SampleStatus::exists || ! zoneProperties.isValid ())
+    {
+        sampleDurationLabel.setText ("SAMPLE --:--", juce::dontSendNotification);
+        loopDurationLabel.setText ("LOOP --:--", juce::dontSendNotification);
+        return;
+    }
+    const auto fileLength { sampleProperties.getLengthInSamples () };
+    const auto rate { sampleProperties.getSampleRate () };
+    const auto pitch { zoneProperties.getPitchOffset () };
+    sampleDurationLabel.setText ("SAMPLE " + WaveformPresentation::duration (
+        static_cast<double> (zoneProperties.getSampleEnd ().value_or (fileLength) - zoneProperties.getSampleStart ().value_or (0)), rate, pitch), juce::dontSendNotification);
+    loopDurationLabel.setText ("LOOP " + WaveformPresentation::duration (
+        zoneProperties.getLoopLength ().value_or (static_cast<double> (fileLength - zoneProperties.getLoopStart ().value_or (0))), rate, pitch), juce::dontSendNotification);
 }
 
 auto ZoneEditor::getSampleAdjustMenu (std::function<juce::int64 ()> getSampleOffset, std::function<juce::int64 ()> getMinSampleOffset, std::function<juce::int64 ()>getMaxSampleOffset, std::function<void (juce::int64)> setSampleOffset)
@@ -680,6 +720,9 @@ void ZoneEditor::setupZoneComponents ()
         editMenu.showMenuAsync ({}, [this] (int) {});
     };
     setupTextEditor (levelOffsetTextEditor, juce::Justification::centred, 0, "+-.0123456789", "LevelOffset");
+    const std::array<juce::Label*, 4> markerLabels { &sampleStartLabel, &sampleEndLabel, &loopStartLabel, &loopLengthLabel };
+    for (size_t marker { 0 }; marker < markerLabels.size (); ++marker)
+        markerLabels[marker]->setColour (juce::Label::textColourId, WaveformPresentation::markerColours[marker]);
 }
 
 void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree uneditedZonePropertiesVT, juce::ValueTree rootPropertiesVT)
@@ -736,6 +779,7 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
 
     SampleManagerProperties sampleManagerProperties (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (parentChannelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
+    sampleProperties.onSampleRateChange = [this] (double) { updateDurations (); };
     sampleProperties.onStatusChange = [this] (SampleStatus status)
     {
         if (status == SampleStatus::exists)
@@ -834,16 +878,10 @@ void ZoneEditor::setStereoRightChannelMode (bool newStereoRightChannelMode)
     oneShotPlayButton.setEnabled (! isStereoRightChannelMode && sampleProperties.getStatus () == SampleStatus::exists);
     loopPlayButton.setEnabled (! isStereoRightChannelMode && sampleProperties.getStatus () == SampleStatus::exists);
     toolsButton.setEnabled (! isStereoRightChannelMode);
-    levelOffsetTextEditor.setEnabled (! isStereoRightChannelMode);
-    loopLengthTextEditor.setEnabled (! isStereoRightChannelMode);
-    loopStartTextEditor.setEnabled (! isStereoRightChannelMode);
-    minVoltageTextEditor.setEnabled (! isStereoRightChannelMode);
-    pitchOffsetTextEditor.setEnabled (! isStereoRightChannelMode);
+    setEditComponentsEnabled (sampleProperties.getStatus () == SampleStatus::exists);
     //leftChannelSelectButton.setEnabled (! isStereoRightChannelMode); // can still edit in stereo/right channel mode
     //rightChannelSelectButton.setEnabled (! isStereoRightChannelMode); // can still edit in stereo/right channel mode
     //sampleNameSelectLabel.setEnabled (! isStereoRightChannelMode); // can still edit in stereo/right channel mode
-    sampleEndTextEditor.setEnabled (! isStereoRightChannelMode);
-    sampleStartTextEditor.setEnabled (! isStereoRightChannelMode);
 }
 
 void ZoneEditor::receiveSampleLoadRequest (juce::File sampleFile)
@@ -880,6 +918,14 @@ void ZoneEditor::paintOverChildren (juce::Graphics& g)
     // Keep the active region's outline visible above the opaque waveform view.
     g.setColour (Theme::muted);
     g.drawRoundedRectangle (activePointBackground->toFloat (), 0.5f, 1.f);
+
+    const std::array<juce::Component*, 4> markerFields { &sampleStartTextEditor, &sampleEndTextEditor, &loopStartTextEditor, &loopLengthTextEditor };
+    for (size_t marker { 0 }; marker < markerFields.size (); ++marker)
+    {
+        g.setColour (WaveformPresentation::markerColours[marker]);
+        const auto bounds { markerFields[marker]->getBounds () };
+        g.fillRect (bounds.getX () + 1, bounds.getCentreY () - 5, 3, 10);
+    }
 
     juce::Colour fillColor { juce::Colours::white };
     float activeAlpha { 0.7f };
@@ -954,26 +1000,26 @@ void ZoneEditor::resized ()
     sampleStartTextEditor.setBounds (sampleStartLabel.getRight () + spaceBetweenLabelAndInput, sampleStartLabel.getY (), scaleWidth (samplePointInputScale) - spaceBetweenLabelAndInput, 20);
     sampleEndLabel.setBounds (xOffset, sampleStartLabel.getBottom () + interParameterYOffset, scaleWidth (samplePointLabelScale), 20);
     sampleEndTextEditor.setBounds (sampleEndLabel.getRight () + spaceBetweenLabelAndInput, sampleEndLabel.getY (), scaleWidth (samplePointInputScale) - spaceBetweenLabelAndInput, 20);
-    samplePointsBackground = { sampleStartLabel.getX (), sampleStartLabel.getY () - 1,
-                               sampleEndTextEditor.getRight () - sampleStartLabel.getX () + 1,
-                               sampleStartTextEditor.getHeight () + sampleEndTextEditor.getHeight () + loopPointsViewHeight + (interParameterYOffset * 2) + 1 };
-
-    auto loopPointsViewBounds { juce::Rectangle<int> { xOffset, sampleEndTextEditor.getBottom () + interParameterYOffset, width + 1, loopPointsViewHeight } };
+    sampleDurationLabel.setBounds (xOffset, sampleEndTextEditor.getBottom () + 1, width, 14);
+    auto loopPointsViewBounds { juce::Rectangle<int> { xOffset, sampleDurationLabel.getBottom () + interParameterYOffset, width + 1, loopPointsViewHeight } };
+    samplePointsBackground = juce::Rectangle<int>::leftTopRightBottom (sampleStartLabel.getX (), sampleStartLabel.getY () - 1,
+        sampleEndTextEditor.getRight () + 1, loopPointsViewBounds.getBottom () + 1);
     loopPointsView.setBounds (loopPointsViewBounds.withTrimmedBottom (24));
 
     loopStartLabel.setBounds (xOffset, loopPointsViewBounds.getBottom () + interParameterYOffset, scaleWidth (samplePointLabelScale), 20);
     loopStartTextEditor.setBounds (loopStartLabel.getRight () + spaceBetweenLabelAndInput, loopStartLabel.getY (), scaleWidth (samplePointInputScale) - spaceBetweenLabelAndInput, 20);
     loopLengthLabel.setBounds (xOffset, loopStartLabel.getBottom () + interParameterYOffset, scaleWidth (samplePointLabelScale), 20);
     loopLengthTextEditor.setBounds (loopLengthLabel.getRight () + spaceBetweenLabelAndInput, loopLengthLabel.getY (), scaleWidth (samplePointInputScale) - spaceBetweenLabelAndInput, 20);
+    loopDurationLabel.setBounds (xOffset, loopLengthTextEditor.getBottom () + 1, width, 14);
     loopPointsBackground = juce::Rectangle<int>::leftTopRightBottom (loopStartLabel.getX (), loopPointsView.getY () - 1,
-                                                                   loopLengthTextEditor.getRight () + 1, loopLengthTextEditor.getBottom () + 1);
+                                                                   loopLengthTextEditor.getRight () + 1, loopDurationLabel.getBottom () + 1);
 
     oneShotPlayButton.setBounds (xOffset + 2, loopPointsView.getBottom () + 2, 76, 20);
     loopPlayButton.setBounds (xOffset + 82, loopPointsView.getBottom () + 2, 76, 20);
 
     const auto otherLabelScale { 0.66f };
     const auto otherInputScale { 1.f - otherLabelScale };
-    minVoltageLabel.setBounds (xOffset, loopLengthTextEditor.getBottom () + 5, scaleWidth (otherLabelScale), 20);
+    minVoltageLabel.setBounds (xOffset, loopDurationLabel.getBottom () + 5, scaleWidth (otherLabelScale), 20);
     minVoltageTextEditor.setBounds (minVoltageLabel.getRight () + spaceBetweenLabelAndInput, minVoltageLabel.getY (), scaleWidth (otherInputScale) - spaceBetweenLabelAndInput, 20);
 
     pitchOffsetLabel.setBounds (xOffset, minVoltageTextEditor.getBottom () + 3, scaleWidth (otherLabelScale), 20);
@@ -1178,11 +1224,13 @@ void ZoneEditor::minVoltageUiChanged (double minVoltage)
 void ZoneEditor::pitchOffsetDataChanged (double pitchOffset)
 {
     pitchOffsetTextEditor.setText (FormatHelpers::formatDouble (pitchOffset, 2, true));
+    updateDurations ();
 }
 
 void ZoneEditor::pitchOffsetUiChanged (double pitchOffset)
 {
     zoneProperties.setPitchOffset (pitchOffset, false);
+    updateDurations ();
 }
 
 void ZoneEditor::updateSampleFileInfo (juce::String sample)

@@ -6,9 +6,12 @@ void DebugLog (juce::String, juce::String) {}
 void FlushDebugLog () {}
 void testRootFolderSelection ();
 void testPlayback ();
+void testStereoPreview ();
+void testEditorRefinements ();
 void testLoopPoints ();
 void testZoneVoltages ();
 void testRegionMove ();
+void testWaveformWorkflow ();
 
 namespace
 {
@@ -113,6 +116,11 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI initialise;
     try
     {
+        if (argc == 2 && juce::String (argv [1]) == "--waveform-workflow")
+        {
+            testWaveformWorkflow ();
+            return 0;
+        }
         if (argc == 2 && juce::String (argv [1]) == "--zone-voltages")
         {
             testZoneVoltages ();
@@ -126,6 +134,16 @@ int main (int argc, char* argv[])
         if (argc == 2 && juce::String (argv [1]) == "--loop-preview")
         {
             testLoopPoints ();
+            return 0;
+        }
+        if (argc == 2 && juce::String (argv [1]) == "--editor-refinements")
+        {
+            testEditorRefinements ();
+            return 0;
+        }
+        if (argc == 2 && juce::String (argv [1]) == "--stereo-preview")
+        {
+            testStereoPreview ();
             return 0;
         }
         if (argc == 2 && juce::String (argv [1]) == "--playback")

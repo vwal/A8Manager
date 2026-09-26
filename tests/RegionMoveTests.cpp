@@ -1,5 +1,6 @@
 #include "GUI/Assimil8or/Editor/Waveform/RegionMove.h"
 #include "GUI/Assimil8or/Editor/Waveform/RegionMoveWaveform.h"
+#include "GUI/Assimil8or/Editor/Waveform/WaveformMarkers.h"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -76,7 +77,8 @@ void testRegionMove ()
     waveform.setBounds (0, 0, 100, 80);
     waveform.setAudioBuffer (&audio);
     waveform.zoomToFit ();
-    auto event = [&] (float x, int flags = juce::ModifierKeys::leftButtonModifier)
+    const auto moveModifiers { juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier };
+    auto event = [&] (float x, int flags = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier)
     {
         return juce::MouseEvent (juce::Desktop::getInstance ().getMainMouseSource (), { x, 40.0f }, juce::ModifierKeys (flags),
             1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &waveform, &waveform, juce::Time::getCurrentTime (),
@@ -84,13 +86,12 @@ void testRegionMove ()
     };
     auto begins { 0 }, moves { 0 };
     double delta { 0.0 };
-    waveform.onBeginRegionMove = [&] () { ++begins; return true; };
+    waveform.onBeginRegionMove = [&] (juce::Point<float>) { ++begins; return true; };
     waveform.onMoveRegion = [&] (double amount) { ++moves; delta = amount; };
-    waveform.setMovingRegion (true);
     waveform.mouseDown (event (20));
     waveform.mouseDrag (event (30));
     check (std::abs (delta - 100.0) < 0.001, "Normal move drag follows waveform scale");
-    waveform.mouseDrag (event (40, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::shiftModifier));
+    waveform.mouseDrag (event (40, moveModifiers | juce::ModifierKeys::shiftModifier));
     check (std::abs (delta - 110.0) < 0.001, "Shift makes movement ten times finer without jumping");
     waveform.mouseUp (event (40));
     waveform.mouseDrag (event (80));
@@ -99,11 +100,9 @@ void testRegionMove ()
     waveform.cancelDrag ();
     waveform.mouseDrag (event (50));
     check (moves == 2, "Changing zone or sample can cancel a pending move");
-    waveform.setMovingRegion (false);
-    waveform.mouseDown (event (20));
-    waveform.mouseDrag (event (10));
-    check (begins == 2 && moves == 2, "Edit-edges mode retains navigation rather than editing");
-    waveform.setMovingRegion (true);
+    waveform.mouseDown (event (20, juce::ModifierKeys::leftButtonModifier));
+    waveform.mouseDrag (event (10, juce::ModifierKeys::leftButtonModifier));
+    check (begins == 2 && moves == 2, "Plain drag pans rather than editing");
     waveform.mouseDown (event (20, juce::ModifierKeys::rightButtonModifier));
     waveform.mouseDrag (event (25, juce::ModifierKeys::rightButtonModifier));
     check (begins == 2 && moves == 2, "Right-drag remains zoom in move mode");
@@ -114,7 +113,7 @@ void testRegionMove ()
     waveform.setEnabled (true);
     waveform.zoomToFit ();
     RegionMarkerOverlay markers;
-    markers.setWaveformView (&waveform);
+    markers.attach (&waveform);
     markers.setBounds (waveform.getBounds ());
     MarkerOverlay::Style style;
     style.placement = MarkerOverlay::HandlePlacement::top;

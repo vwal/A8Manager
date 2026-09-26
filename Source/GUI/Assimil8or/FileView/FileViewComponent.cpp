@@ -3,6 +3,7 @@
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Assimil8orPreset.h"
 #include "../../../Assimil8or/FileTypeHelpers.h"
+#include "../../../Assimil8or/SafeRename.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 #include "oolib/ValueTree/ValueTreeHelpers.h"
@@ -56,6 +57,34 @@ FileViewComponent::FileViewComponent ()
         updateFromNewData ();
         return false;
     };
+}
+
+void FileViewComponent::showRenameDialog (juce::File source, juce::String proposedName)
+{
+    const auto title { source.isDirectory () ? "RENAME FOLDER" : "RENAME FILE" };
+    renameAlertWindow = std::make_unique<juce::AlertWindow> (title,
+        "Enter the new name for '" + source.getFileName () + "'", juce::MessageBoxIconType::NoIcon);
+    renameAlertWindow->addTextEditor (kDialogTextEditorName, proposedName.isEmpty () ? source.getFileName () : proposedName);
+    renameAlertWindow->addButton ("RENAME", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    renameAlertWindow->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    renameAlertWindow->enterModalState (true, juce::ModalCallbackFunction::create (
+        [safe = juce::Component::SafePointer<FileViewComponent> (this), source] (int result)
+        {
+            if (safe == nullptr || safe->renameAlertWindow == nullptr) return;
+            const auto name { safe->renameAlertWindow->getTextEditorContents (kDialogTextEditorName) };
+            safe->renameAlertWindow.reset ();
+            if (result == 0) return;
+            const auto renamed { SafeRename::apply (source, name) };
+            if (renamed.failed ())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Rename failed", renamed.getErrorMessage (), {}, nullptr,
+                    juce::ModalCallbackFunction::create ([safe, source, name] (int)
+                    {
+                        if (safe != nullptr) safe->showRenameDialog (source, name);
+                    }));
+            }
+            else safe->directoryDataProperties.triggerStartScan (false);
+        }));
 }
 
 void FileViewComponent::init (juce::ValueTree rootPropertiesVT)
@@ -318,31 +347,9 @@ void FileViewComponent::listBoxItemClicked (int row, [[maybe_unused]] const juce
             pm.setLookAndFeel (popupMenuLnF);
             pm.addSectionHeader (directoryEntry.getFileName ());
             pm.addSeparator ();
-            pm.addItem ("Rename", true, false, [this, directoryEntry] ()
+            pm.addItem ("Rename", true, false, [safe = juce::Component::SafePointer<FileViewComponent> (this), directoryEntry] ()
             {
-                renameAlertWindow = std::make_unique<juce::AlertWindow> ("RENAME FOLDER", "Enter the new name for '" + directoryEntry.getFileName () + "'", juce::MessageBoxIconType::NoIcon);
-                renameAlertWindow->addTextEditor (kDialogTextEditorName, directoryEntry.getFileName (), {});
-                renameAlertWindow->addButton ("RENAME", 1, juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
-                renameAlertWindow->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
-                auto* textEdtitor { renameAlertWindow->getTextEditor (kDialogTextEditorName) };
-                auto* createButton { renameAlertWindow->getButton ("RENAME") };
-                auto* cancelButton { renameAlertWindow->getButton ("CANCEL") };
-                textEdtitor->setExplicitFocusOrder (1);
-                createButton->setExplicitFocusOrder (2);
-                cancelButton->setExplicitFocusOrder (3);
-
-                renameAlertWindow->enterModalState (true, juce::ModalCallbackFunction::create ([this, directoryEntry] (int option)
-                                                                                                {
-                                                                                                    renameAlertWindow->exitModalState (option);
-                                                                                                    renameAlertWindow->setVisible (false);
-                                                                                                    if (option == 1) // ok
-                                                                                                    {
-                                                                                                        auto newFolderName { renameAlertWindow->getTextEditorContents (kDialogTextEditorName) };
-                                                                                                        directoryEntry.moveFileTo (directoryEntry.getParentDirectory ().getChildFile (newFolderName));
-                                                                                                        // TODO handle error
-                                                                                                    }
-                                                                                                    renameAlertWindow.reset ();
-                                                                                                }));
+                if (safe != nullptr) safe->showRenameDialog (directoryEntry);
             });
             pm.addItem ("Delete", true, false, [this, directoryEntry] ()
             {
@@ -369,31 +376,9 @@ void FileViewComponent::listBoxItemClicked (int row, [[maybe_unused]] const juce
             pm.setLookAndFeel (popupMenuLnF);
             pm.addSectionHeader (directoryEntry.getFileName ());
             pm.addSeparator ();
-            pm.addItem ("Rename", true, false, [this, directoryEntry] ()
+            pm.addItem ("Rename", true, false, [safe = juce::Component::SafePointer<FileViewComponent> (this), directoryEntry] ()
             {
-                renameAlertWindow = std::make_unique<juce::AlertWindow> ("RENAME FOLDER", "Enter the new name for '" + directoryEntry.getFileName () + "'", juce::MessageBoxIconType::NoIcon);
-                renameAlertWindow->addTextEditor (kDialogTextEditorName, directoryEntry.getFileName (), {});
-                renameAlertWindow->addButton ("RENAME", 1, juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
-                renameAlertWindow->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
-                auto* textEdtitor { renameAlertWindow->getTextEditor (kDialogTextEditorName) };
-                auto* createButton { renameAlertWindow->getButton ("RENAME") };
-                auto* cancelButton { renameAlertWindow->getButton ("CANCEL") };
-                textEdtitor->setExplicitFocusOrder (1);
-                createButton->setExplicitFocusOrder (2);
-                cancelButton->setExplicitFocusOrder (3);
-
-                renameAlertWindow->enterModalState (true, juce::ModalCallbackFunction::create ([this, directoryEntry] (int option)
-                                                                                                {
-                                                                                                    renameAlertWindow->exitModalState (option);
-                                                                                                    renameAlertWindow->setVisible (false);
-                                                                                                    if (option == 1) // ok
-                                                                                                    {
-                                                                                                        auto newFolderName { renameAlertWindow->getTextEditorContents (kDialogTextEditorName) };
-                                                                                                        directoryEntry.moveFileTo (directoryEntry.getParentDirectory ().getChildFile (newFolderName));
-                                                                                                        // TODO handle error
-                                                                                                    }
-                                                                                                    renameAlertWindow.reset ();
-                                                                                                }));
+                if (safe != nullptr) safe->showRenameDialog (directoryEntry);
             });
             pm.addItem ("Delete", true, false, [this, directoryEntry] ()
             {

@@ -95,12 +95,14 @@ private:
             bufferToFill.buffer->clear ();
             if (leftInput != nullptr)
             {
+                tempBuffer.clear ();
                 leftInput->getNextAudioBlock (tempBufferChannelInfo);
                 bufferToFill.buffer->copyFrom (0, bufferToFill.startSample, tempBufferChannelInfo.buffer->getReadPointer (leftChannelIndex, 0),
                     juce::jmin (tempBufferChannelInfo.buffer->getNumSamples (), bufferToFill.numSamples));
             }
             if (rightInput != nullptr)
             {
+                tempBuffer.clear ();
                 rightInput->getNextAudioBlock (tempBufferChannelInfo);
                 bufferToFill.buffer->copyFrom (1, bufferToFill.startSample, tempBufferChannelInfo.buffer->getReadPointer (rightChannelIndex, 0),
                     juce::jmin (tempBufferChannelInfo.buffer->getNumSamples (), bufferToFill.numSamples));
@@ -124,6 +126,7 @@ private:
     void renderAuditionInput (const juce::AudioSourceChannelInfo& bufferToFill);
     void initFromZone (std::tuple<int, int> channelAndZoneIndecies);
     void initSamplePoints ();
+    bool isStereoPair ();
     void prepareSampleForPlayback ();
     void showConfigDialog ();
 

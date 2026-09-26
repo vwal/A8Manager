@@ -57,6 +57,7 @@ set(ASSIMIL8OR_FILES
     Source/Assimil8or/Assimil8orValidator.h
     Source/Assimil8or/FileTypeHelpers.cpp
     Source/Assimil8or/FileTypeHelpers.h
+    Source/Assimil8or/SafeRename.h
     Source/Assimil8or/PresetManagerProperties.cpp
     Source/Assimil8or/PresetManagerProperties.h)
 
@@ -97,7 +98,8 @@ set(ASSIMIL8OR_PRESET_FILES
     Source/Assimil8or/Preset/PresetProperties.cpp
     Source/Assimil8or/Preset/PresetProperties.h
     Source/Assimil8or/Preset/ZoneProperties.cpp
-    Source/Assimil8or/Preset/ZoneProperties.h)
+    Source/Assimil8or/Preset/ZoneProperties.h
+    Source/Assimil8or/Preset/ZonePurge.h)
 
 set(ASSIMIL8OR_PRESET_DATA_FILES
     Source/Assimil8or/Preset/Data/DefaultPreset.xml
@@ -166,6 +168,9 @@ set(GUI_EDITOR_SAMPLEMANAGER_FILES
     Source/GUI/Assimil8or/Editor/SampleManager/SampleStatus.h)
 
 set(GUI_EDITOR_WAVEFORM_FILES
+    Source/GUI/Assimil8or/Editor/Waveform/WaveformPresentation.h
+    Source/GUI/Assimil8or/Editor/Waveform/WaveformRuler.h
+    Source/GUI/Assimil8or/Editor/Waveform/WaveformMarkers.h
     Source/GUI/Assimil8or/Editor/Waveform/RegionMove.h
     Source/GUI/Assimil8or/Editor/Waveform/RegionMoveWaveform.h
     Source/GUI/Assimil8or/Editor/Waveform/WaveformDisplay.cpp

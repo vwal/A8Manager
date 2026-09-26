@@ -1,7 +1,6 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "../EditManager.h"
 #include "../SampleManager/SampleManagerProperties.h"
 #include "../SampleManager/SampleProperties.h"
 #include "../../../../Assimil8or/Preset/ChannelProperties.h"
@@ -9,18 +8,16 @@
 #include "../../../../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "RegionMove.h"
 #include "RegionMoveWaveform.h"
-#include "oolib/GUI/MarkerOverlay.h"
-#include "oolib/GUI/TimelineComponent.h"
+#include "WaveformMarkers.h"
+#include "WaveformRuler.h"
 
 //==============================================================================
 /**
     WaveformDisplay - the zone's sample, its start/end and its loop points.
 
-    The drawing, the gestures and the marker editing all come from oolib
-    (WaveformView / InteractiveWaveform / MarkerOverlay / TimelineComponent).
-    What lives here is only the part that is A8Manager's: which ValueTree
-    properties the four markers are bound to, and the rules about where they may
-    go relative to each other (including the Loop Length as Loop End mode).
+    The waveform and basic gestures use oolib. App-local layers add grouped
+    ruler values, collision-aware labels, region movement, menus and selection
+    shading. Marker constraints and property bindings remain A8Manager's.
 
     Layout is a timeline strip over the waveform, with the marker overlay on top
     of the waveform sharing its bounds - the overlay maps sample <-> pixel
@@ -32,11 +29,16 @@ class WaveformDisplay : public juce::Component, private juce::ScrollBar::Listene
 public:
     WaveformDisplay ();
     void focusZone ();
+    void setLoopSelected (bool loopSelected);
+    void setExpanded (bool expanded);
+    std::function<void (bool)> onRegionSelected;
+    std::function<void ()> onExpandRequested;
 
     void init (juce::ValueTree channelPropertiesVT, juce::ValueTree rootPropertiesVT);
     void setZone (int zoneIndex);
 
 private:
+    friend struct WaveformTestAccess;
     // Marker list indices, in the order they are added to the overlay.
     enum MarkerIndex
     {
@@ -54,21 +56,59 @@ private:
     SampleProperties sampleProperties;
     AudioPlayerProperties audioPlayerProperties;
     double playheadSample { -1.0 };
-    EditManager* editManager { nullptr };
-
-    TimelineComponent timeline;
+    bool loopSelected { false }, expanded { false };
+    unsigned int sourceGeneration { 0 };
+    WaveformRuler timeline;
     RegionMoveWaveform waveform;
     RegionMarkerOverlay markerOverlay;
-    juce::ComboBox editMode;
     std::optional<RegionMove::Region> movingRegion;
-    juce::TextButton zoomIn { "+" }, zoomOut { "-" }, fit { "Fit" }, zone { "Zone" }, loop { "Loop" };
-    juce::Label zoomInfo;
+    // Draw the expand symbol ourselves: font fallback can replace a Unicode
+    // arrow with an ellipsis in this compact button on some platforms.
+    class ExpandButton : public juce::TextButton
+    {
+    public:
+        ExpandButton () : juce::TextButton ("Expand waveform") {}
+    private:
+        void paintButton (juce::Graphics& g, bool over, bool down) override
+        {
+            getLookAndFeel ().drawButtonBackground (g, *this, findColour (buttonColourId), over, down);
+            g.setColour (findColour (textColourOffId).withMultipliedAlpha (isEnabled () ? 1.0f : 0.4f));
+            const auto icon { getLocalBounds ().toFloat ().withSizeKeepingCentre (12.0f, 12.0f) };
+            const auto left { icon.getX () }, right { icon.getRight () }, top { icon.getY () }, bottom { icon.getBottom () };
+            g.drawLine (left, bottom, right, top, 1.5f);
+            if (getToggleState ()) g.drawLine (left, top, right, bottom, 1.5f);
+            else
+            {
+                g.drawLine (left, bottom, left, bottom - 5.0f, 1.5f);
+                g.drawLine (left, bottom, left + 5.0f, bottom, 1.5f);
+                g.drawLine (right, top, right - 5.0f, top, 1.5f);
+                g.drawLine (right, top, right, top + 5.0f, 1.5f);
+            }
+        }
+    } expandButton;
+    juce::TextButton zoomIn { "+" }, zoomOut { "-" }, menuButton { juce::String::fromUTF8 ("\xe2\x9a\x99") };
+    juce::TextButton zoomInfo;
+    juce::Label durationInfo;
     juce::Label auditionRateLabel;
     juce::Slider auditionRateSlider;
     juce::ToggleButton preservePitchButton { "Keep pitch" };
     juce::ScrollBar scrollbar { false };
     void scrollBarMoved (juce::ScrollBar*, double start) override;
     void focusRange (double start, double end);
+    void focusLoop ();
+    void resetZoom ();
+    void jumpToMarker (int markerIndex);
+    void showWaveformMenu (std::optional<double> clickedSample);
+    void applyMenuAction (int action, std::optional<double> clickedSample);
+    juce::PopupMenu buildWaveformMenu (std::optional<double> clickedSample);
+    void selectRegion (bool loop);
+    bool beginRegionMove (juce::Point<float> point);
+    void setMarker (int marker, double position, bool keepOppositeBoundary = false);
+    void nudgeMarker (int marker, bool right);
+    void matchMarker (int marker);
+    double markerPosition (int marker);
+    juce::String markerLabel (int marker);
+    void updateDurations ();
 
     bool hasSample ();
     juce::int64 getSampleLength ();
@@ -79,13 +119,14 @@ private:
     void updateAudioSource ();
     void updateDisplayChannel ();
     void updateMarkerPositions ();
-    void updateEditMode ();
     void publishView ();
 
-    double constrainMarker (int markerIndex, double proposedPosition);
+    double constrainMarker (int markerIndex, double proposedPosition, bool keepOppositeBoundary = false);
     void markerMoved (int markerIndex);
 
     void enablementChanged () override;
     void resized () override;
     void paintOverChildren (juce::Graphics& g) override;
+    void paint (juce::Graphics& g) override;
+    bool keyPressed (const juce::KeyPress& key) override;
 };

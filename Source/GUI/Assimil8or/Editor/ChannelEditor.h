@@ -45,6 +45,24 @@ public:
     TabbedComponentWithChangeCallback (juce::TabbedButtonBar::Orientation orientation) : juce::TabbedComponent (orientation) {}
 
     std::function<void (int)> onSelectedTabChanged;
+    std::function<void (int)> onTabPopup;
+    juce::TabBarButton* createTabButton (const juce::String& name, int index) override
+    {
+        class ZoneTabButton : public juce::TabBarButton
+        {
+        public:
+            ZoneTabButton (const juce::String& text, juce::TabbedButtonBar& bar, std::function<void ()> callback)
+                : juce::TabBarButton (text, bar), popup (std::move (callback)) {}
+            void mouseDown (const juce::MouseEvent& e) override
+            {
+                if (e.mods.isPopupMenu ()) { if (isEnabled () && popup) popup (); }
+                else juce::TabBarButton::mouseDown (e);
+            }
+        private:
+            std::function<void ()> popup;
+        };
+        return new ZoneTabButton (name, getTabbedButtonBar (), [this, index] () { if (onTabPopup) onTabPopup (index); });
+    }
 
 private:
     void currentTabChanged (int newTabIndex, [[maybe_unused]] const juce::String& tabName)
@@ -318,6 +336,7 @@ private:
     ZonesTabbedLookAndFeel zonesTabbedLookAndFeel;
 
     WaveformDisplay sampleWaveformDisplay;
+    bool waveformExpanded { false };
 
     std::array<ZoneEditor, 8> zoneEditors;
     std::array<ZoneProperties, 8> zoneProperties;
@@ -329,6 +348,7 @@ private:
     void copyZone (int zoneIndex, bool settingsOnly);
     void copyToNextZone (int zoneIndex, bool continueSlice);
     void deleteZone (int zoneIndex);
+    void confirmPurgeZone (int zoneIndex);
     void duplicateZone (int zoneIndex);
     void ensureProperZoneIsSelected ();
     void explodeZone (int zoneIndex, int explodeCount);

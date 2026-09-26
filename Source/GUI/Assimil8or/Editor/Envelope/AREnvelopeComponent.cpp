@@ -1,4 +1,5 @@
 #include "AREnvelopeComponent.h"
+#include "../../../ModernTheme.h"
 
 const auto kAnchorSize { 8.0 };
 const auto kOffset { kAnchorSize / 2.0 };
@@ -31,52 +32,37 @@ void AREnvelopeComponent::releasePercentChanged (double releasePercent)
 
 void AREnvelopeComponent::paint (juce::Graphics& g)
 {
-    g.setColour (juce::Colours::grey.darker (0.3f));
-    g.fillRect (getLocalBounds ());
-
-    g.setColour (juce::Colours::black);
-    auto drawAnchor = [this, &g] (EnvelopeAnchor& anchor)
+    g.fillAll (Theme::field);
+    const auto opacity { isEnabled () ? 1.0f : 0.4f };
+    g.setColour (Theme::border.withAlpha (0.5f));
+    for (auto division { 1 }; division < 4; ++division)
     {
-        juce::Colour color { anchor.getActive () ? juce::Colours::white : juce::Colours::grey };
-        const auto startSize { 1.0 };
-        const auto totalSize { kAnchorSize };
-        const auto lineWidth { 1.0f };
-        const auto endSize { startSize + totalSize };
-        const auto alphaStep { 1.0f / (totalSize / lineWidth) };
-        auto alpha { 1.0f };
-        for (auto curSize { startSize }; curSize < endSize; curSize += lineWidth)
-        {
-            const auto curRadius { curSize / 2.0f };
-            g.setColour (color.withAlpha (alpha));
-            g.drawEllipse (juce::Rectangle<float> (static_cast<float> (kOffset + anchor.getX () - curRadius),
-                                                   static_cast<float> (kOffset + anchor.getY () - curRadius),
-                                                   static_cast<float> (curSize),
-                                                   static_cast<float> (curSize)), lineWidth);
-            alpha -= alphaStep;
-        }
-        g.setColour (juce::Colours::black);
-        g.drawEllipse (juce::Rectangle<float> (static_cast<float> (kOffset + anchor.getX () - endSize / 2.0f),
-                                               static_cast<float> (kOffset + anchor.getY () - endSize / 2.0f),
-                                               static_cast<float> (endSize),
-                                               static_cast<float> (endSize)), lineWidth);
-        };
-
-    g.drawLine (static_cast<float> (kOffset + startAnchor.getX ()),
-                static_cast<float> (kOffset + startAnchor.getY ()),
-                static_cast<float> (kOffset + attackAnchor.getX ()),
-                static_cast<float> (kOffset + attackAnchor.getY ()));
-    g.drawLine (static_cast<float> (kOffset + attackAnchor.getX ()),
-                static_cast<float> (kOffset + attackAnchor.getY ()),
-                static_cast<float> (kOffset + releaseAnchor.getX ()),
-                static_cast<float> (kOffset + releaseAnchor.getY ()));
-    g.fillEllipse (juce::Rectangle<float> (static_cast<float> (kOffset + startAnchor.getX () - (kAnchorSize / 2.0)),
-                                           static_cast<float> (kOffset + startAnchor.getY () - (kAnchorSize / 2.0)),
-                                           static_cast<float> (kAnchorSize),
-                                           static_cast<float> (kAnchorSize)));
-    drawAnchor (attackAnchor);
-    drawAnchor (releaseAnchor);
-
-    g.setColour (juce::Colours::black);
+        g.drawHorizontalLine (getHeight () * division / 4, 1.0f, getWidth () - 1.0f);
+        g.drawVerticalLine (getWidth () * division / 4, 1.0f, getHeight () - 1.0f);
+    }
+    auto point = [] (EnvelopeAnchor& anchor)
+    {
+        return juce::Point<float> { static_cast<float> (kOffset + anchor.getX ()), static_cast<float> (kOffset + anchor.getY ()) };
+    };
+    juce::Path curve;
+    curve.startNewSubPath (point (startAnchor));
+    curve.lineTo (point (attackAnchor));
+    curve.lineTo (point (releaseAnchor));
+    auto fill { curve };
+    fill.closeSubPath ();
+    g.setColour (Theme::accent.withAlpha (0.12f * opacity));
+    g.fillPath (fill);
+    g.setColour (Theme::accent.withMultipliedAlpha (opacity));
+    g.strokePath (curve, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved));
+    for (auto* anchor : { &attackAnchor, &releaseAnchor })
+    {
+        const auto bounds { juce::Rectangle<float> (8.0f, 8.0f).withCentre (point (*anchor)) };
+        g.setColour ((anchor->getActive () ? Theme::text : Theme::accent).withMultipliedAlpha (opacity));
+        g.fillEllipse (bounds);
+        g.setColour (Theme::field);
+        g.drawEllipse (bounds, 1.0f);
+    }
+    g.setColour (Theme::border);
     g.drawRect (getLocalBounds ());
 }
 
@@ -94,8 +80,8 @@ void AREnvelopeComponent::recalcAnchorPositions ()
 
 void AREnvelopeComponent::resized ()
 {
-    editorWidth = getWidth () - kAnchorSize;
-    editorHeight = getHeight () - kAnchorSize;
+    editorWidth = std::max (1.0, getWidth () - kAnchorSize);
+    editorHeight = std::max (1.0, getHeight () - kAnchorSize);
     recalcAnchorPositions ();
 }
 

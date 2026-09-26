@@ -39,7 +39,7 @@ OFFSET, but not all the channel processing you can configure in the editor.
    zone.** This is an assignment, not just a file-browser preview. You can also
    drag a sample file onto the zone editor.
 6. Click **SMPL START** or **SMPL END** to select the sample region, then press
-   **ONCE** to listen. Adjust the white waveform handles or the numeric values
+   **ONCE** to listen. Adjust the sample waveform handles or the numeric values
    to choose a smaller region. See the sections below for loop auditioning.
 7. Click the preset's **SAVE** button when satisfied. Review any warnings or
    errors in the lower validation pane before transferring the files.
@@ -131,14 +131,22 @@ There are two separate pairs of boundaries:
 
 | Waveform indicator | Meaning | Matching zone fields |
 | --- | --- | --- |
-| **White solid lines, handles at the top** | The sample region assigned for playback by this zone | SMPL START and SMPL END |
-| **Orange/amber dashed lines, handles at the bottom** | The region designated for looping | LOOP START and LOOP LENGTH, or LOOP END |
+| **Red solid line, top handle** | Sample-region start | SMPL START |
+| **Blue solid line, top handle** | Sample-region end | SMPL END |
+| **Amber dashed line, bottom handle** | Loop start | LOOP START |
+| **Pink dashed line, bottom handle** | Loop end | LOOP LENGTH, or LOOP END |
 | **Yellow moving line with a small cap** | Current computer-audition position; not an editable boundary | None |
 
-With **Edit edges** selected in the waveform toolbar, drag the small **handles**,
-not the vertical lines, to move individual boundaries. Handles
-point inward toward the region they bound. Their position labels appear while
-dragging. If markers are hard to separate, zoom in or use the numeric fields.
+Drag the small **handles**, not the vertical lines, to move individual boundaries.
+The zone panel's labels and small colour keys match the corresponding handles,
+lines and overlay text. Handles point inward toward their region. Marker labels
+show comma-separated frame positions and source-file timestamps; END labels also
+show the region's pitch-adjusted length. Nearby labels move into separate rows
+to avoid overlap. If handles are hard to separate, zoom in or use the numeric fields.
+
+Editing a marker automatically selects **SAMPLE** or **LOOP** in the zone panel.
+The area outside that selected region is dimmed; the selection also determines
+which join preview and audition region the zone panel uses.
 
 The **sample region** chooses the portion of the recording used by the zone.
 The **loop region** chooses the portion to repeat when looping is used. For
@@ -146,32 +154,37 @@ example, a sample region can include an attack and a tail, while its loop region
 covers a smaller, steady section in between. The two regions can also match,
 which is useful when a zone represents a single repeating slice.
 
-They are independent settings: changing the white markers does not automatically
-make the orange markers match. The editor does not force the loop to stay inside
-the white sample region. Check both pairs when preparing a conventional loop
+They are independent settings: changing the sample markers does not automatically
+make the loop markers match. The editor does not force the loop to stay inside
+the sample region. Check both pairs when preparing a conventional loop
 within a sample.
 
 ### Moving a region without resizing it
 
-Choose **Move zone** or **Move loop** in the waveform toolbar, then left-drag
-horizontally anywhere on the large waveform (including a marker handle):
+Hold **Option on macOS / Alt elsewhere** before left-dragging horizontally
+**inside a region or on one of its handles**:
 
-- **Move zone** shifts the white SMPL START/END pair together.
-- **Move loop** shifts the orange loop pair together, in both Length and End
-  display modes. Even fractional loop lengths are preserved.
-- Hold **Shift** for ten-times-finer movement, or zoom in for greater precision.
+- Dragging a sample handle moves the sample pair; a loop handle moves the loop pair.
+- Inside overlapping regions, the current SAMPLE/LOOP selection chooses the pair.
+  Click the corresponding zone-panel fields first if you need to change it.
+- Inside only one region, that region is selected and moved. Outside both regions,
+  an Option/Alt-drag does nothing; it cannot move a distant selection.
+- Length remains fixed in both Length and End display modes, including fractional
+  loop lengths.
+- Add **Shift** for ten-times-finer movement, or zoom in for greater precision.
 - Movement stops at the source file's beginning/end without shortening the
   region. A region spanning the whole file cannot move.
 
 Only the chosen pair moves: moving the zone does not move its loop, and moving
-the loop does not change the white sample boundaries. “Move zone” here means
+the loop does not change the sample boundaries. Moving a zone here means
 sliding its audio region within the same file, not reordering the zone list or
 changing its voltage range. The audio file itself is not modified.
 
-Choose **Edit edges** again to resize individual boundaries and restore ordinary
-left-drag panning. Scrollbar/horizontal scrolling and right-drag zoom remain
-available in the move modes. These edits update the in-memory preset; click
-**SAVE** to keep them. Moving a region does not switch the audition selection.
+Release Option/Alt before the next drag to return to individual-handle editing
+and ordinary left-drag panning. Scrollbar/horizontal scrolling and right-drag
+zoom remain available. These edits update the in-memory preset; click **SAVE**
+to keep them. The former Edit edges / Move zone / Move loop selector is no longer
+needed.
 
 ### Positions, lengths, and units
 
@@ -196,20 +209,40 @@ In **End** mode, moving LOOP START adjusts the length to keep the end fixed,
 subject to the valid range. Loop length has a four-frame minimum.
 
 Right-click the waveform's timeline ruler to choose **Samples** or
-**Minutes:Seconds**. This changes ruler and marker-drag labels, not the units of
-the zone's numeric boundary fields.
+**Minutes:Seconds**. This changes the ruler, not the units of the zone's numeric
+boundary fields. Marker overlays always show both frame counts and source time.
+
+### Reading durations
+
+The waveform footer shows **File**, **Sample** and **Loop** durations in
+`minutes:seconds`, normally with milliseconds (extra precision for very short
+loops). The selected pair is capitalized. The END-marker labels repeat the
+corresponding region's duration next to its end position.
+The **Zones** panel also shows SAMPLE and LOOP time lengths underneath their
+numeric boundary fields, with the same pitch adjustment described below.
+
+These lengths include the current zone's **PITCH OFFSET**:
+`duration = frames / source sample rate / 2^(PITCH OFFSET / 12)`.
+For example, +12 semitones halves the nominal length and −12 doubles it.
+The `@ … st` footer suffix identifies the pitch offset used.
+
+**Audition speed does not change these length readouts.** Neither does the
+preview's Keep pitch option. They describe nominal sampler-style duration at the
+zone pitch, not necessarily the duration you hear with time stretching enabled.
+Channel PITCH and external CV modulation are excluded. Marker *timestamps* remain
+positions in the original file, so they are unaffected by any playback setting.
 
 ## Zooming and navigating the waveform
 
 | Control or gesture | Result |
 | --- | --- |
 | **+ / −** | Zoom in/out around the centre of the visible waveform. |
-| **Fit** or double-click the waveform | Show the whole source file and reset vertical magnification. |
-| **Zone** | Frame the white sample start/end region. |
-| **Loop** in the waveform toolbar | Frame the orange loop region. This does not start playback. |
+| Click the **zoom percentage**, double-click the waveform, or **Zoom → Reset Zoom** | Show the whole source file and restore 100% waveform height. |
+| **Zoom → Zoom to Sample Markers** | Frame the sample start/end region. |
+| **Zoom → Zoom to Loop Markers** | Frame the loop region; does not start playback. |
 | Vertical wheel/trackpad scrolling over the waveform | Zoom horizontally around the pointer. |
-| Left-drag the waveform away from a handle, in **Edit edges** mode | Pan along the file. |
-| Left-drag in **Move zone / Move loop** mode | Slide the selected marker pair without resizing it; Shift moves more finely. |
+| Plain left-drag away from a handle | Pan along the file. |
+| Option/Alt + left-drag inside a region or on its handle | Move the pair without resizing; add Shift for finer movement. |
 | Bottom scrollbar or horizontal scrolling | Move along the file while zoomed in. |
 | Control + wheel over the waveform | Magnify/reduce waveform height. On macOS this is Control, not Command. |
 | Right-button drag away from a handle | Horizontal movement zooms time; vertical movement zooms waveform height. |
@@ -217,6 +250,48 @@ the zone's numeric boundary fields.
 Zooming changes only the view. It does not alter sample boundaries, playback
 volume, audio files, or audition speed. The yellow playhead follows playback
 but does not automatically scroll the view; it may move off-screen when zoomed.
+
+### Expanded view and marker tools
+
+Click the **expand arrow** at the waveform's top left for a larger view over the
+channel parameter area. The zone tabs and side panel remain accessible. It stays
+expanded when you switch zones. Click **X**, or press **Escape** with the waveform
+focused, to return to the compact layout. The same zoom, editing, menus and
+audition controls work in both views.
+
+The **gear button** and waveform **right-click menu** contain:
+
+- **Zoom:** reset both axes, fit the sample region, or fit the loop region.
+- **Jump to Marker:** centre a chosen marker without changing zoom. With the
+  waveform focused, **1 / 2 / 3 / 4** jump to sample start/end and loop start/end.
+  These shortcuts do not intercept typing in parameter fields.
+- **Zero Crossing Nudge:** move any marker to the nearest crossing strictly to
+  its left or right, on the displayed L/R side, within that marker's valid limits.
+  When the crossing falls between frames, the quieter of those two frames is
+  chosen. An END marker is placed **after** that frame, because ends are exclusive;
+  this makes the last audible frame the one closest to zero. At high zoom, the
+  end handle therefore appears one frame after the chosen zero/near-zero sample.
+  If none exists, the marker stays put and the footer explains why. A zero crossing
+  can help a join but does not guarantee a click-free loop.
+- **Match Opposite Boundary:** move a chosen sample/loop START to match its END,
+  or END to match its START, **even when that amplitude is not zero**. For example,
+  **Loop End to Start** keeps Loop Start fixed and adjusts only Loop End. The
+  search checks up to **50 ms on either side** of the chosen marker, within its
+  valid limits, using the displayed L/R side and the original sample rate. It
+  chooses the smallest amplitude difference between the first and last audible
+  frames; equally good matches favour the nearest position. If the existing join
+  is already matched, or no improvement exists nearby, nothing moves and the
+  footer reports this. Matching Loop Start keeps Loop End fixed **even in Length
+  mode**: the length is adjusted without changing the Length/End setting.
+  This is separate from true zero-crossing nudges. Matching amplitudes does not
+  also match waveform slopes or the other stereo side, so audition the result;
+  a perfectly smooth-looking join is not a guarantee of a click-free loop.
+- **Set Marker Here** (right-click menu only): place a chosen marker at the
+  right-clicked source position, clamped to its valid limits.
+
+A right-click without movement opens the menu; right-button dragging continues
+to zoom. Placing, nudging or matching a marker selects its Sample/Loop pair. A menu opened
+for a previous zone/sample cannot edit a newly selected one.
 
 ## Auditioning a sample or loop
 
@@ -230,17 +305,17 @@ First choose **which region** to hear:
 3. Press **ONCE** to play that region once, or **LOOP** to repeat that same
    region. The active button becomes **STOP**; click it to stop.
 
-**LOOP repeats the selected region.** It can therefore repeat the whole white
-sample region as well as the orange loop region. Conversely, ONCE can play the
-orange loop region just once. Selecting the other pair of fields stops playback;
+**LOOP repeats the selected region.** It can therefore repeat the whole sample
+region as well as the loop region. Conversely, ONCE can play the loop region
+just once. Selecting the other pair of fields or editing the other marker pair stops playback;
 press ONCE or LOOP again to hear the new selection. Dragging a large-waveform
-marker does not itself switch which pair of fields is selected for audition.
+marker now selects its corresponding pair of fields for audition.
 
 Three controls use the word “loop,” but have different jobs:
 
 - **LOOP below the small waveform:** repeat the currently selected audition
   region on the computer; does not enable looping in the saved preset.
-- **Loop above the large waveform:** zoom the view to the orange markers.
+- **Zoom to Loop Markers** in the waveform menu: frame the loop region.
 - **LOOP mode in the channel parameters** (No Loop, Loop, Loop and Release):
   a saved playback setting for the module, not the computer's transport button.
 
@@ -414,6 +489,19 @@ can copy onward from zone 8 or a stereo-right channel.
 These are preset edits, not audio-file slicing operations. Click SAVE to keep
 the resulting zone assignments.
 
+### Purging a zone
+
+Right-click the numbered zone square and choose **Purge this zone…**, then
+confirm **Purge**. This clears its sample assignment and settings, not the audio
+file on disk. Later zones shift up to keep the zone list consecutive, and the
+last occupied zone's lower voltage boundary becomes −5 V. Check your external
+CV targets after deleting a zone. Purging the only occupied zone leaves an empty
+channel. Click SAVE to keep the edit; there is no dedicated purge undo.
+
+For a stereo pair, purge from the left/master channel. The corresponding right
+zone is cleared and its later zones shift in step with the left. The confirmation
+explicitly identifies this. A stereo-right zone cannot be purged independently.
+
 ## Saving and moving your work
 
 **SAVE** writes the current preset to its file in the working folder. It becomes
@@ -435,6 +523,13 @@ they are not deferred until the preset's SAVE button is clicked. Review the
 scope and keep backups before using them. There is no comprehensive undo/redo
 history for all application operations.
 
+Renaming keeps the original file extension if you omit it, and refuses collisions,
+invalid characters and new names exceeding 47 characters for files (including
+the extension) or 31 for folders. An already-overlong name can be shortened.
+The browser reports failures and reopens the rename dialog for another attempt.
+Renaming a file does not automatically rewrite references in saved presets;
+check and repair any affected sample assignments before saving or transferring.
+
 ## Common questions
 
 **Why is there no sound?**  
@@ -445,7 +540,7 @@ if the sample is missing or cannot be loaded.
 
 **Why am I hearing the wrong part of the file?**  
 Check the outlined field group beside the small waveform. Click SMPL START/END
-for the white region or LOOP START/LENGTH/END for the orange region, then restart
+for the sample region or LOOP START/LENGTH/END for the loop region, then restart
 audition. The waveform's Loop zoom button does not select the audition source.
 
 **Why doesn't the channel PITCH control change what I hear?**  
@@ -463,7 +558,7 @@ does not indicate a volume change.
 
 **Why are markers missing?**  
 They may be outside the zoomed view. Press Fit, Zone, or Loop as appropriate.
-Use the top white handles for the sample and bottom orange handles for the loop.
+Use the top red/blue handles for the sample and bottom amber/pink handles for the loop.
 
 **Why is SAVE disabled after changing zoom or audition speed?**  
 Those controls do not modify the preset. No preset save is needed for them.

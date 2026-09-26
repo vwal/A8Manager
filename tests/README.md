@@ -23,7 +23,7 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers nine tests, each with a 60-second timeout. Use `ctest --test-dir
+CTest registers twelve tests, each with a 60-second timeout. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
@@ -110,4 +110,36 @@ unchanged properties and actual tab rendering at 100%, 150% and 200%. The option
 component: fixed lengths at both file edges, moving farther than a region's length,
 safe notification ordering, fractional/default/four-frame loops, unchanged other
 zone settings, invalid ranges, Shift fine movement, navigation versus editing,
-mouse-up/cancellation, disabled editing and marker hit routing in Move mode.
+mouse-up/cancellation, disabled editing and marker hit routing during modifier movement.
+
+**WaveformWorkflowRegression** uses the real waveform component and in-memory
+stereo samples. It checks pitch-adjusted durations independent of audition speed,
+comma grouping, sample/time labels, directional and bounded zero crossings,
+context versus gear menus, marker placement, all four boundary-matching actions
+(including fixed fractional loop ends in Length mode and no-op/disabled guards),
+Length/End behaviour, Sample/Loop
+selection callbacks, Option/Alt movement inside regions and on handles, overlap
+selection, outside-region rejection, zoom reset/jumps, right-click versus drag,
+expanded zone switching, inactive-area dimming, disabled editing and collision-free
+label placement in compact/expanded sizes. Optional artifacts are
+`waveform-compact.png` and `waveform-expanded.png`. It does not launch the user's
+application or change their presets/preferences.
+
+**EditorRefinementRegression** checks quieter-side and exact-zero nudges,
+exclusive end markers, bounds and stereo-side selection. Boundary-matching checks
+cover nonzero joins versus true zeros, both directions and endpoints, source-rate
+search limits, nearest equal-quality matches, imperfect improvements, fractional
+ends, EOF/frame zero, silence, nonfinite samples and invalid inputs. Temporary files exercise
+overlong-name recovery, extension preservation, invalid names, missing sources
+and collision protection. Preset fixtures check middle/last/only-zone purging,
+paired right-zone alignment, default clearing and final −5 V boundaries. The real
+ZoneEditor verifies per-zone audition selection and live pitch-adjusted duration
+labels; the real envelope component is rendered in its new theme. Optional artifacts
+are `zone-refinements.png` and `envelope-refinements.png`. Native confirmation
+dialogs are not clicked automatically.
+
+**StereoPreviewRegression** runs the actual AudioPlayer source preparation and
+property callbacks without opening an audio device. It covers unpaired L/R,
+paired stereo with different rates/lengths, silent missing-right tails, right
+reloads, unrelated next-channel unloads, mono fallback, channel eight, device-rate
+changes, implicit loop lengths and isolation of SAMPLE versus LOOP edits.

@@ -24,12 +24,16 @@ public:
     // TODO - is there a VTW that could manage this setting?
     void setLoopLengthIsEnd (bool loopLengthIsEnd);
     void setStereoRightChannelMode (bool isStereoRightChannelMode);
+    void selectLoop (bool loop) { setActiveSamplePoints (loop ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false); }
+    bool isLoopSelected () const { return samplePointsSelector == AudioPlayerProperties::SamplePointsSelector::LoopPoints; }
+    std::function<void (bool)> onRegionSelected;
 
     // TODO - can we make this local, since we should be able to access the edits through the EditManager
     std::function<void (int zoneIndex)> displayToolsMenu;
     std::function<void (bool continueSlice)> copyToNext;
 
 private:
+    friend struct ZoneEditorTestAccess;
     class ClickListener : public juce::MouseListener
     {
     public:
@@ -97,6 +101,8 @@ private:
     juce::Label sampleEndLabel;
     DragValueEditorInt64 sampleEndTextEditor; // int
     juce::Label sampleStartLabel;
+    juce::Label sampleDurationLabel, loopDurationLabel;
+    void updateDurations ();
     DragValueEditorInt64 sampleStartTextEditor; // int
 
     ClickListener selectSamplePointsClickListener;

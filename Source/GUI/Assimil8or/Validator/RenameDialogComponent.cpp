@@ -1,4 +1,5 @@
 #include "RenameDialogComponent.h"
+#include "../../../Assimil8or/SafeRename.h"
 
 RenameDialogContent::RenameDialogContent (juce::File oldFile, int maxNameLength, std::function<void (bool)> theDoneCallback)
 {
@@ -32,38 +33,17 @@ RenameDialogContent::RenameDialogContent (juce::File oldFile, int maxNameLength,
 
 void RenameDialogContent::doRename (juce::File oldFile)
 {
-    jassert (! newNameEditor.getText ().trim ().isEmpty ());
-    auto newFile { oldFile.getParentDirectory ().getChildFile (newNameEditor.getText ().trim ()) };
-    addExtensionIfNeeded (oldFile, newFile);
-
-    // try to do rename
-    if (oldFile.moveFileTo (newFile) == true)
-    {
-        closeDialog (true);
-    }
-    else
-    {
-        // rename failed
-        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Rename Failed",
-                                                "Unable to rename '" + oldFile.getFileName () + "' to '" + newFile.getFileName () + "'", {}, nullptr,
-                                                juce::ModalCallbackFunction::create ([this] (int) {}));
-    }
-}
-
-void RenameDialogContent::addExtensionIfNeeded (juce::File oldFile, juce::File newFile)
-{
-    // if the filename entered is not a directory, and does not have an extension, then get the extension from the old file name
-    if (! oldFile.isDirectory () && newFile.getFileExtension () == "")
-        newFile = newFile.withFileExtension (oldFile.getFileExtension ());
+    const auto result { SafeRename::apply (oldFile, newNameEditor.getText ()) };
+    if (result.wasOk ()) closeDialog (true);
+    else juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Rename failed", result.getErrorMessage ());
 }
 
 void RenameDialogContent::checkNameAvailable (juce::File oldFile)
 {
-    const auto newFileName { newNameEditor.getText ().trim () };
-    auto newFile { oldFile.getParentDirectory ().getChildFile (newFileName) };
-
-    addExtensionIfNeeded (oldFile, newFile);
-    okButton.setEnabled (newFileName.isNotEmpty () && ! newFile.exists ());
+    juce::File target;
+    const auto result { SafeRename::destination (oldFile, newNameEditor.getText (), target) };
+    okButton.setEnabled (result.wasOk () && target != oldFile);
+    newNameEditor.setTooltip (result.failed () ? result.getErrorMessage () : juce::String {});
 }
 
 void RenameDialogContent::closeDialog (bool renamed)

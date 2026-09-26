@@ -58,6 +58,7 @@ private:
     juce::ValueTree getDirectoryEntryVT (int row);
     void importSamples (const juce::StringArray& files);
     void newFolder ();
+    void showRenameDialog (juce::File source, juce::String proposedName = {});
     void resetDropInfo ();
     void updateDropInfo (const juce::StringArray& files);
     void updateFromNewData ();
