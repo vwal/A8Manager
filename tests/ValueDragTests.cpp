@@ -14,6 +14,8 @@ void testRegionMove ();
 void testWaveformWorkflow ();
 void testAudioAudit ();
 void testAudioFileSafety ();
+void testStereoAssignment ();
+void testStereoChannelUi ();
 void testPairedZoneEdits ();
 int runPresetWorkflowAuditTests ();
 
@@ -120,6 +122,16 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI initialise;
     try
     {
+        if (argc == 2 && juce::String (argv [1]) == "--stereo-channel-ui")
+        {
+            testStereoChannelUi ();
+            return 0;
+        }
+        if (argc == 2 && juce::String (argv [1]) == "--stereo-assignment")
+        {
+            testStereoAssignment ();
+            return 0;
+        }
         if (argc == 2 && juce::String (argv [1]) == "--audio-audit")
         {
             testAudioAudit ();

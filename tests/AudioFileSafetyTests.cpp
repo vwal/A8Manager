@@ -52,6 +52,123 @@ namespace
         check (reader->read (&buffer, 0, 128, 0, true, false), "Read converted channel");
         check (std::abs (buffer.getSample (0, 64) - 0.25f) < 0.00001f, "Converted channel contents preserved");
     }
+
+    // Write RIFF bytes directly: a normal WAV writer would repair the missing
+    // final pad byte, masking the JUCE 9.0.1 compatibility regression.
+    void makePcmWave (const juce::File& file, int bits, const std::vector<juce::uint8>& data,
+                      int declaredDataBytes, bool finalPad, bool cueLabel = false)
+    {
+        juce::MemoryOutputStream body;
+        body.write ("WAVEfmt ", 8);
+        body.writeInt (16);
+        body.writeShort (1); // PCM
+        body.writeShort (1); // mono
+        body.writeInt (48000);
+        body.writeInt (48000 * bits / 8);
+        body.writeShort (static_cast<short> (bits / 8));
+        body.writeShort (static_cast<short> (bits));
+        body.write ("data", 4);
+        body.writeInt (declaredDataBytes);
+        body.write (data.data (), data.size ());
+        if (! cueLabel && finalPad && (data.size () & 1) != 0) body.writeByte (0);
+        if (cueLabel)
+        {
+            check ((data.size () & 1) == 0, "Metadata fixture has an aligned audio chunk");
+            body.write ("cue ", 4);
+            body.writeInt (28);
+            body.writeInt (1); // cue count
+            body.writeInt (7); // cue identifier
+            body.writeInt (2); // play order/position
+            body.write ("data", 4);
+            body.writeInt (0); // chunk start
+            body.writeInt (0); // block start
+            body.writeInt (2); // sample offset
+            body.write ("LIST", 4);
+            body.writeInt (19); // adtl + labl header + cue ID + three text bytes
+            body.write ("adtllabl", 8);
+            body.writeInt (7);
+            body.writeInt (7); // associated cue identifier
+            body.write ("LS\0", 3);
+            if (finalPad) body.writeByte (0);
+        }
+        juce::MemoryOutputStream output;
+        output.write ("RIFF", 4);
+        output.writeInt (static_cast<int> (body.getDataSize ()));
+        output.write (body.getData (), body.getDataSize ());
+        check (file.replaceWithData (output.getData (), output.getDataSize ()), "Write generated RIFF padding fixture");
+    }
+
+    void checkPcmSamples (AudioManager& manager, const juce::File& file, int bits, const std::vector<float>& expected)
+    {
+        auto reader { manager.getReaderFor (file) };
+        check (reader && reader->lengthInSamples == static_cast<juce::int64> (expected.size ())
+               && reader->numChannels == 1 && reader->sampleRate == 48000.0
+               && reader->bitsPerSample == static_cast<unsigned int> (bits), "Unpadded WAV retains exact audio format and sample count");
+        check (manager.isAssimil8orSupportedAudioFile (file), "Production format validation accepts readable unpadded PCM WAV");
+        juce::AudioBuffer<float> buffer (1, static_cast<int> (expected.size ()));
+        check (reader->read (&buffer, 0, buffer.getNumSamples (), 0, true, false), "Read unpadded PCM samples through AudioManager");
+        for (int index { 0 }; index < buffer.getNumSamples (); ++index)
+            check (std::abs (buffer.getSample (0, index) - expected[static_cast<size_t> (index)]) < 0.00001f,
+                   "Unpadded WAV sample values are not truncated or shifted");
+    }
+
+    void testWavPadding (AudioManager& manager, const juce::File& external, const juce::File& preset)
+    {
+        const std::vector<juce::uint8> pcm8 { 0x80, 0xc0, 0x40, 0xa0, 0x60 };
+        const std::vector<float> expected { 0.0f, 0.5f, -0.5f, 0.25f, -0.25f };
+        const auto padded { external.getChildFile ("padded-control.wav") };
+        makePcmWave (padded, 8, pcm8, 5, true);
+        checkPcmSamples (manager, padded, 8, expected);
+
+        const auto unpadded8 { external.getChildFile ("unpadded-8-bit.wav") };
+        makePcmWave (unpadded8, 8, pcm8, 5, false);
+        checkPcmSamples (manager, unpadded8, 8, expected);
+        juce::File imported;
+        check (SafeAudioImport::importFile (manager, unpadded8, preset, imported).wasOk (), "Unpadded PCM8 WAV can be imported");
+        check (bytes (imported) == bytes (unpadded8), "Compatible unpadded WAV import preserves source bytes");
+        checkPcmSamples (manager, imported, 8, expected);
+
+        // Odd-frame mono 24-bit audio also has an odd byte count; this is not
+        // limited to the 8-bit fixture used in JUCE's own regression test.
+        const auto unpadded24 { external.getChildFile ("unpadded-24-bit.wav") };
+        makePcmWave (unpadded24, 24, { 0, 0, 0, 0, 0, 0x40, 0, 0, 0xc0, 0, 0, 0x20, 0, 0, 0xe0 }, 15, false);
+        checkPcmSamples (manager, unpadded24, 24, expected);
+
+        const auto metadata { external.getChildFile ("unpadded-cue-label.wav") };
+        makePcmWave (metadata, 8, { 0x80, 0xc0, 0x40, 0xa0, 0x60, 0x80 }, 6, false, true);
+        const std::vector<float> metadataSamples { 0.0f, 0.5f, -0.5f, 0.25f, -0.25f, 0.0f };
+        checkPcmSamples (manager, metadata, 8, metadataSamples);
+        auto checkCue = [&manager] (const juce::File& file)
+        {
+            auto reader { manager.getReaderFor (file) };
+            check (reader && reader->metadataValues["NumCuePoints"] == "1" && reader->metadataValues["Cue0Identifier"] == "7"
+                   && reader->metadataValues["Cue0Offset"] == "2" && reader->metadataValues["NumCueLabels"] == "1"
+                   && reader->metadataValues["CueLabel0Identifier"] == "7" && reader->metadataValues["CueLabel0Text"] == "LS",
+                   "Final unpadded LIST preserves cue ID, sample offset and associated label");
+        };
+        checkCue (metadata);
+        check (SafeAudioImport::importFile (manager, metadata, preset, imported).wasOk (), "WAV with final unpadded cue-label metadata can be imported");
+        checkCue (imported);
+        check (bytes (imported) == bytes (metadata), "Import preserves cue metadata byte-for-byte");
+
+        // Missing a data byte must not be mistaken for the permitted missing
+        // alignment byte, whether the declared payload length is odd or even.
+        for (const auto declared : { 5, 6, 1000 })
+        {
+            const auto truncated { external.getChildFile ("truncated-" + juce::String (declared) + ".wav") };
+            const std::vector<juce::uint8> actual { declared == 5 ? std::vector<juce::uint8> { 0x80, 0xc0, 0x40, 0xa0 } : pcm8 };
+            makePcmWave (truncated, 8, actual, declared, false);
+            const auto original { bytes (truncated) };
+            auto reader { manager.getReaderFor (truncated) };
+            check (! reader || reader->lengthInSamples == 0, "Genuinely truncated WAV data is not exposed as usable audio");
+            check (! manager.isAssimil8orSupportedAudioFile (truncated), "Production validation rejects genuinely truncated WAV data");
+            const auto fileCount { preset.findChildFiles (juce::File::findFiles, false).size () };
+            check (SafeAudioImport::importFile (manager, truncated, preset, imported).failed () && imported == juce::File ()
+                   && bytes (truncated) == original && preset.findChildFiles (juce::File::findFiles, false).size () == fileCount,
+                   "Truncated WAV import fails without modifying source or publishing output");
+        }
+        std::cout << "PASS: final WAV padding compatibility, PCM8/PCM24 sample contents, cue-label preservation and truncated-data rejection\n";
+    }
 }
 
 struct AudioFileSafetyTestAccess
@@ -193,5 +310,6 @@ void testAudioFileSafety ()
     const auto longFile { root.getChildFile (juce::String::repeatedString ("b", 60) + ".aiff") };
     check (longFile.replaceWithText ("preserve"), "Create overlong file name");
     check (SafeRename::automaticDestination (longFile, renamed).wasOk () && renamed.getFileName ().length () <= 47 && renamed.getFileExtension () == ".aiff", "Auto-rename file limit includes actual extension length");
+    testWavPadding (audio, external, preset);
     std::cout << "PASS: source-preserving imports, conversion staging/backup/recovery, collisions, failed assignment and type-aware name limits\n";
 }

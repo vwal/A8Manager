@@ -22,6 +22,7 @@ target_compile_features(A8ManagerRegressionTests PRIVATE cxx_std_17)
 target_compile_definitions(A8ManagerRegressionTests PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    JUCE_USE_MP3AUDIOFORMAT=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     DONT_SET_USING_JUCE_NAMESPACE=1)
 target_link_libraries(A8ManagerRegressionTests PRIVATE
@@ -49,6 +50,8 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     EditorRefinementTests.cpp
     AudioAuditTests.cpp
     AudioFileSafetyTests.cpp
+    StereoAssignmentTests.cpp
+    StereoChannelUiTests.cpp
     PairedZoneEditTests.cpp
     PresetWorkflowAuditTests.cpp
     ../Source/Assimil8or/Assimil8orPreset.cpp
@@ -56,6 +59,10 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../Source/Assimil8or/MidiSetup/MidiSetupFile.cpp
     ../Source/Assimil8or/MidiSetup/MidiSetupProperties.cpp
     ../Source/GUI/Assimil8or/Editor/ZoneEditor.cpp
+    ../Source/GUI/Assimil8or/Editor/ChannelEditor.cpp
+    ../Source/GUI/Assimil8or/Editor/Assimil8orEditorComponent.cpp
+    ../Source/GUI/Assimil8or/Editor/CvInputComboBox.cpp
+    ../Source/GUI/GuiControlProperties.cpp
     ../Source/GUI/Assimil8or/Editor/EditManager.cpp
     ../Source/GUI/Assimil8or/Editor/FormatHelpers.cpp
     ../Source/GUI/Assimil8or/Editor/ParameterToolTipData.cpp
@@ -64,6 +71,8 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../Source/SystemServices.cpp
     ../Source/Assimil8or/Audio/AudioManager.cpp
     ../submodules/oolib/oolib/GUI/FileSelectLabel.cpp
+    ../submodules/oolib/oolib/GUI/CustomComboBox.cpp
+    ../submodules/oolib/oolib/GUI/CustomTextButton.cpp
     ../Source/GUI/Assimil8or/Editor/Waveform/WaveformDisplay.cpp
     ../submodules/oolib/oolib/GUI/WaveformView.cpp
     ../Source/GUI/Assimil8or/Editor/LoopPoints/LoopPointsView.cpp
@@ -91,7 +100,7 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../submodules/oolib/oolib/GUI/ErrorHelpers.cpp)
 target_include_directories(A8ManagerInteractionTests PRIVATE ../Source ${OOLIB_INCLUDE_DIR})
 target_compile_features(A8ManagerInteractionTests PRIVATE cxx_std_17)
-target_compile_definitions(A8ManagerInteractionTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 DONT_SET_USING_JUCE_NAMESPACE=1)
+target_compile_definitions(A8ManagerInteractionTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_MP3AUDIOFORMAT=0 DONT_SET_USING_JUCE_NAMESPACE=1)
 target_link_libraries(A8ManagerInteractionTests PRIVATE A8ManagerBinaryData signalsmith-stretch juce::juce_audio_utils juce::juce_data_structures juce::juce_recommended_config_flags)
 set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
@@ -106,8 +115,11 @@ add_test(NAME EditorRefinementRegression COMMAND A8ManagerInteractionTests --edi
 add_test(NAME StereoPreviewRegression COMMAND A8ManagerInteractionTests --stereo-preview)
 add_test(NAME AudioAuditRegression COMMAND A8ManagerInteractionTests --audio-audit)
 add_test(NAME AudioFileSafetyRegression COMMAND A8ManagerInteractionTests --audio-file-safety)
+add_test(NAME StereoAssignmentRegression COMMAND A8ManagerInteractionTests --stereo-assignment)
+add_test(NAME StereoChannelUiRegression COMMAND A8ManagerInteractionTests --stereo-channel-ui)
 add_test(NAME PairedZoneEditRegression COMMAND A8ManagerInteractionTests --paired-zone-edit)
 add_test(NAME PresetWorkflowAuditRegression COMMAND A8ManagerInteractionTests --preset-workflow-audit)
-set_tests_properties(AudioAuditRegression AudioFileSafetyRegression PairedZoneEditRegression PresetWorkflowAuditRegression PROPERTIES TIMEOUT 60)
+set_tests_properties(AudioAuditRegression AudioFileSafetyRegression StereoAssignmentRegression StereoChannelUiRegression PairedZoneEditRegression PresetWorkflowAuditRegression PROPERTIES TIMEOUT 60)
+set_tests_properties(StereoChannelUiRegression PROPERTIES FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 set_tests_properties(EditorRefinementRegression StereoPreviewRegression PROPERTIES TIMEOUT 60)
 set_tests_properties(ValueDragRegression RootFolderRegression PlaybackRegression LoopPointsRegression ZoneVoltageRegression RegionMoveRegression WaveformWorkflowRegression PROPERTIES TIMEOUT 60)

@@ -13,7 +13,9 @@ Windows and macOS builds available at: https://cpr2323.github.io/a8manager/index
 
 # Building
 
-The JUCE and oolib submodules must be initialised before the first build:
+The JUCE and oolib submodules must be initialised before the first build (and
+updated after pulling dependency changes). This version pins JUCE **9.0.2**,
+including its WAV final-padding and CoreAudio fixes:
 
 ```
 git submodule update --init --recursive

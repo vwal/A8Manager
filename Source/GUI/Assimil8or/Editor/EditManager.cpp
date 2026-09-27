@@ -239,6 +239,17 @@ bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::St
     auto fail = [this] (const juce::String& message) { lastAssignmentError = message; return false; };
     if (! audioManager || channelIndex < 0 || channelIndex >= 8 || zoneIndex < 0 || zoneIndex >= 8 || files.isEmpty ())
         return fail ("Choose a valid channel, zone and audio file.");
+
+    // A drop on either side replaces the pair from its controlling left channel.
+    // Resolve this before checking zone occupancy or importing files, so the
+    // right editor cannot leave the left sample and range settings behind.
+    if (channelPropertiesList [channelIndex].getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
+    {
+        if (channelIndex == 0 || channelPropertiesList [channelIndex - 1].getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
+            return fail ("This Stereo Right channel has no valid left partner. Correct its channel mode before assigning a sample.");
+        --channelIndex;
+    }
+
     if (files.size () > 8 - zoneIndex)
         return fail ("There are not enough remaining zones for all the selected files.");
     const auto initialNumZones { getNumUsedZones (channelIndex) };

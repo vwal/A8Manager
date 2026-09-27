@@ -34,6 +34,7 @@ public:
 
 private:
     friend struct AudioFileSafetyTestAccess;
+    friend struct StereoAssignmentTestAccess;
     juce::String lastAssignmentError;
     PresetProperties presetProperties;
     AppProperties appProperties;

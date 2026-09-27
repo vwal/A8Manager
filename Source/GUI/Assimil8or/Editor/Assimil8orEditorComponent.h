@@ -36,6 +36,7 @@ public:
     void overwritePresetOrCancel (std::function<void ()> overwriteFunction, std::function<void ()> cancelFunction);
 
 private:
+    friend struct StereoChannelUiTestAccess;
     RuntimeRootProperties runtimeRootProperties;
     AppProperties appProperties;
     AudioPlayerProperties audioPlayerProperties;
@@ -49,6 +50,7 @@ private:
     ChannelProperties copyBufferChannelProperties;
     ZoneProperties copyBufferZoneProperties;
     bool copyBufferHasData { false };
+    bool channelEditorsInitialized { false };
     EditManager* editManager { nullptr };
     std::unique_ptr<juce::FileChooser> fileChooser;
 
@@ -88,6 +90,10 @@ private:
     std::array<ChannelProperties, 8> channelProperties;
 
     void displayToolsMenu ();
+    juce::PopupMenu createChannelToolsMenu (int channelIndex);
+    void addChannelDefaultMenuItem (juce::PopupMenu& menu, int channelIndex);
+    void synchronizeStereoZones (int sourceChannel, int zoneIndex);
+    void synchronizeAllStereoZones ();
     void explodeChannel (int channelIndex, int explodeCount);
     void exportPresetSettings ();
     void exportPresetSettingsAndSamples ();

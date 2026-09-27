@@ -17,6 +17,7 @@ FetchContent_Declare(signalsmith-stretch
     GIT_SUBMODULES "")
 FetchContent_MakeAvailable(signalsmith-linear signalsmith-stretch)
 
+# JUCE is pinned to 9.0.2 (including the missing-final-WAV-padding fix).
 # Submodules must be initialised before building:
 #   git submodule update --init --recursive
 add_subdirectory(submodules/JUCE builds/JUCE)
@@ -97,6 +98,7 @@ set(ASSIMIL8OR_PRESET_FILES
     Source/Assimil8or/Preset/PresetHelpers.h
     Source/Assimil8or/Preset/PresetProperties.cpp
     Source/Assimil8or/Preset/PresetProperties.h
+    Source/Assimil8or/Preset/StereoChannelTools.h
     Source/Assimil8or/Preset/ZoneProperties.cpp
     Source/Assimil8or/Preset/ZoneProperties.h
     Source/Assimil8or/Preset/ZonePurge.h)
@@ -268,10 +270,13 @@ target_include_directories(A8Manager
     PRIVATE
         ${OOLIB_INCLUDE_DIR})
 
+# Keep the pre-9.0.2 software MP3-reader configuration. Native platform readers
+# remain available; this upgrade must not silently change the import formats.
 target_compile_definitions(A8Manager
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+        JUCE_USE_MP3AUDIOFORMAT=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         DONT_SET_USING_JUCE_NAMESPACE=1)
 
@@ -308,7 +313,7 @@ foreach(dependency IN ITEMS signalsmith-stretch signalsmith-linear)
     endif()
 endforeach()
 
-option(A8MANAGER_BUILD_TESTS "Build the parser/CV and stereo split regression probes" OFF)
+option(A8MANAGER_BUILD_TESTS "Build the application regression tests" OFF)
 if(A8MANAGER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

@@ -79,11 +79,19 @@ public:
     {
         setInterceptsMouseClicks (false, false);
     }
+    void setUndimmedAreas (juce::RectangleList<int> areas)
+    {
+        undimmedAreas = std::move (areas);
+        repaint ();
+    }
 private:
+    juce::RectangleList<int> undimmedAreas;
     juce::Colour overlayColor { juce::Colours::black };
     float alphaAmount { 0.3f };
     void paint (juce::Graphics& g) override
     {
+        for (const auto& area : undimmedAreas)
+            g.excludeClipRegion (area);
         g.setColour (overlayColor.withAlpha (alphaAmount));
         g.fillRect (getLocalBounds ());
     }
@@ -204,10 +212,15 @@ public:
     // TODO - can we move this to the EditManager, as it eventually just calls editManager->assignSamples (parentChannelIndex, startingZoneIndex, files); in the ZoneEditor
     void receiveSampleLoadRequest (juce::File sampleFile);
 
+    int getSelectedZoneIndex () const { return zoneTabs.getCurrentTabIndex (); }
+    void setSelectedZoneFromPartner (int zoneIndex);
+    std::function<void (int zoneIndex)> onSelectedZoneChanged;
+
     // TODO - can we make this local, since we should be able to access the edits through the EditManager
     std::function<void (int channelIndex)> displayToolsMenu;
 
 private:
+    friend struct StereoChannelUiTestAccess;
     enum class VoltageBalanceType
     {
         distributeAcross5V,
@@ -228,6 +241,8 @@ private:
     AudioPlayerProperties audioPlayerProperties;
     EditManager* editManager { nullptr };
     int channelIndex { -1 };
+    bool initialized { false };
+    bool synchronizingZoneSelection { false };
 
     juce::Label zonesLabel;
     juce::Label zoneMaxVoltage;

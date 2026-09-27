@@ -23,7 +23,7 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers sixteen tests, each with a 60-second timeout. Use `ctest --test-dir
+CTest registers eighteen tests, each with a 60-second timeout. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
@@ -163,7 +163,30 @@ actual EditManager/shared conversion service. It checks original preservation,
 internal float WAV conversion, unique bounded collision names, failed/rejected
 imports, stereo assignment without commandeering occupied independent channels,
 mono assignment to an existing pair, recoverable conversion failure and folder
-versus file auto-name limits. No real samples are used.
+versus file auto-name limits. Direct RIFF fixtures cover JUCE 9.0.2's missing-final-
+padding fix for 8-bit and 24-bit PCM and cue-label metadata: decoded samples,
+lengths and imported metadata are checked, while genuinely truncated data must
+still be rejected without changing the source or publishing an output. No real
+samples are used.
+
+**StereoAssignmentRegression** exercises actual EditManager assignment from both
+sides of an occupied pair, shorter stereo replacements, mono duplication, batch
+appends, CV boundaries, left-side range/setting preservation and stale right-side
+occupancy. It checks channel seven/eight pairs, Link/Cycle controlling modes,
+independent neighbor protection and no-op failure for invalid pairs, gaps,
+oversized batches and missing files.
+
+**StereoChannelUiRegression** exercises the real channel editors and parent
+callbacks: paired zone selection, independent right-channel pan/CV controls,
+safe right-channel Tools access and pair-aware Default while preserving zone
+trees and channel IDs. It covers collapsing a previously expanded waveform when
+its channel becomes Stereo Right, stale/reset callbacks after edits/destruction,
+and Channel Revert restoring the correct saved channel. Optional visual artifacts
+(`stereo-right-pan-150.png`) are written only when
+`A8MANAGER_TEST_ARTIFACTS` is supplied. The tests use an in-memory preset, not
+the user's preferences or audio device. They render offscreen; native-window
+visibility/focus and actual listening are not automated. Debug assertion output
+fails this regression even if the process returns success.
 
 **PresetWorkflowAuditRegression** checks failed preset/MIDI saves and dirty-state
 retention, valid filename slots, filtered row/slot mapping, move/save rebinding

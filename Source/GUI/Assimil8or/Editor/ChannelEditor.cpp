@@ -81,10 +81,15 @@ ChannelEditor::ChannelEditor ()
         });
     };
     zoneTabs.setLookAndFeel (&zonesTabbedLookAndFeel);
-    zoneTabs.onSelectedTabChanged = [this] (int)
+    zoneTabs.onSelectedTabChanged = [this] (int zoneIndex)
     {
-        configAudioPlayer ();
+        if (! initialized) return;
         updateWaveformDisplay ();
+        // A partner's tab follows silently: it must not stop the current
+        // audition, change SAMPLE/LOOP routing, or bounce a callback back.
+        if (synchronizingZoneSelection) return;
+        configAudioPlayer ();
+        if (onSelectedZoneChanged) onSelectedZoneChanged (zoneIndex);
     };
     addAndMakeVisible (zoneTabs);
 
@@ -193,6 +198,13 @@ void ChannelEditor::visibilityChanged ()
 {
     if (isVisible ())
         configAudioPlayer ();
+}
+
+void ChannelEditor::setSelectedZoneFromPartner (int zoneIndex)
+{
+    if (! initialized || zoneIndex < 0 || zoneIndex >= zoneTabs.getNumTabs ()) return;
+    const juce::ScopedValueSetter<bool> syncing (synchronizingZoneSelection, true);
+    zoneTabs.setCurrentTabIndex (zoneIndex);
 }
 
 // TODO - move this to the EditManger
@@ -2267,6 +2279,7 @@ void ChannelEditor::balanceVoltages (VoltageBalanceType balanceType)
 void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree uneditedChannelPropertiesVT, juce::ValueTree rootPropertiesVT,
                           juce::ValueTree copyBufferZonePropertiesVT, bool* theZoneCopyBufferHasData)
 {
+    initialized = false;
     //DebugLog ("ChannelEditor["+ juce::String (channelProperties.getId ()) + "]", "init");
     jassert (theZoneCopyBufferHasData != nullptr);
     zoneCopyBufferHasData = theZoneCopyBufferHasData;
@@ -2430,6 +2443,8 @@ void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree u
 
     ensureProperZoneIsSelected ();
     updateAllZoneTabNames ();
+    initialized = true;
+    updateWaveformDisplay ();
     checkStereoRightOverlay ();
     if (isVisible ())
         configAudioPlayer ();
@@ -2491,6 +2506,14 @@ void ChannelEditor::setupChannelPropertiesCallbacks ()
 void ChannelEditor::checkStereoRightOverlay ()
 {
     const auto isStereoRightMode { channelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight };
+    if (isStereoRightMode && waveformExpanded)
+    {
+        // A newly paired right channel must not hide its editable Pan behind
+        // an expanded waveform whose close button is about to be disabled.
+        waveformExpanded = false;
+        sampleWaveformDisplay.setExpanded (false);
+        resized ();
+    }
     stereoRightTransparantOverly.setVisible (isStereoRightMode);
 
     aliasingTextEditor.setEnabled (! isStereoRightMode);
@@ -2525,9 +2548,10 @@ void ChannelEditor::checkStereoRightOverlay ()
     mixModComboBox.setEnabled (! isStereoRightMode);
     mixModTextEditor.setEnabled (! isStereoRightMode);
     mixModIsFaderComboBox.setEnabled (! isStereoRightMode);
-    panTextEditor.setEnabled (! isStereoRightMode);
-    panModComboBox.setEnabled (! isStereoRightMode);
-    panModTextEditor.setEnabled (! isStereoRightMode);
+    // Pan and its modulation remain independent on the hardware's right channel.
+    panTextEditor.setEnabled (true);
+    panModComboBox.setEnabled (true);
+    panModTextEditor.setEnabled (true);
     phaseCVComboBox.setEnabled (! isStereoRightMode);
     phaseCVTextEditor.setEnabled (! isStereoRightMode);
     pitchTextEditor.setEnabled (! isStereoRightMode);
@@ -2552,16 +2576,18 @@ void ChannelEditor::checkStereoRightOverlay ()
     zonesRTComboBox.setEnabled (! isStereoRightMode);
     arEnvelopeComponent.setEnabled (! isStereoRightMode);
     sampleWaveformDisplay.setEnabled (! isStereoRightMode);
-    toolsButton.setEnabled (! isStereoRightMode);
+    // The parent offers only the safe pair-aware Default action on the R side.
+    toolsButton.setEnabled (true);
     for (auto zoneIndex { 0 }; zoneIndex < 8; ++zoneIndex)
         dynamic_cast<ZoneEditor*> (zoneTabs.getTabContentComponent (zoneIndex))->setStereoRightChannelMode (isStereoRightMode);
 }
 
 void ChannelEditor::configAudioPlayer ()
 {
+    if (! initialized || ! isShowing ()) return;
     audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
     const auto selected { zoneTabs.getCurrentTabIndex () };
-    if (selected >= 0 && selected < 8 && isShowing ())
+    if (selected >= 0 && selected < 8)
         audioPlayerProperties.setSamplePointsSelector (zoneEditors[selected].isLoopSelected ()
             ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false);
 }
@@ -2860,11 +2886,21 @@ void ChannelEditor::resized ()
     const auto waveformY { waveformExpanded ? 3 : waveformTop };
     sampleWaveformDisplay.setBounds (15, waveformY, juce::jmax (0, zoneTabs.getX () - 30),
                                     juce::jmax (0, getHeight () - waveformY - 35));
+
+    juce::RectangleList<int> activeAreas;
+    if (! waveformExpanded)
+    {
+        activeAreas.add (panMixLabel.getBounds ().getUnion (panModTextEditor.getBounds ()).expanded (2));
+        activeAreas.add (channelModeLabel.getBounds ().getUnion (channelModeComboBox.getBounds ()).expanded (2));
+    }
+    activeAreas.add (toolsButton.getBounds ().expanded (2));
+    stereoRightTransparantOverly.setUndimmedAreas (std::move (activeAreas));
 }
 
 void ChannelEditor::updateWaveformDisplay ()
 {
     const auto currentZoneIndex { zoneTabs.getCurrentTabIndex () };
+    if (! initialized || currentZoneIndex < 0 || currentZoneIndex >= 8) return;
     sampleWaveformDisplay.setZone (currentZoneIndex);
     sampleWaveformDisplay.setLoopSelected (zoneEditors[currentZoneIndex].isLoopSelected ());
 }

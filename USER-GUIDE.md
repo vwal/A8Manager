@@ -419,9 +419,21 @@ buttons.
 A stereo pair uses two channel tabs, for example **CH 1-L** and **CH 2-R**.
 The right companion inherits several controls from the master/left channel,
 so some fields are unavailable there. Edit shared boundaries/settings from the
-left/master channel. Loading a stereo file can set up the following channel as
-its right companion when the corresponding zone there is empty; do not assume
-it will replace an already populated neighbour. Check both channel assignments.
+left/master channel. **PAN and its CV controls remain independently editable
+on the right channel**; these are saved hardware settings, not an audition pan
+effect. Selecting a zone on either channel selects the same zone on its partner.
+
+Dropping a replacement sample onto either side of an existing pair updates both
+assignments together. Stereo files use the left and right sides respectively;
+mono files use the same mono source on both channels. Loading a stereo file into
+an unpaired channel can establish a new pair only when the following channel is
+available; an occupied independent neighbour is not overwritten.
+
+**Channel Tools > Default (both channels)** on a stereo pair resets both channels' channel-level
+settings and returns them to independent default modes. It preserves the samples,
+zone assignments and zone markers on both sides. To clear the assignments, use
+**Clear All Zones** on the left/master channel; this clears both partners but does
+not delete audio files. Individual **Purge this zone** also operates on both sides.
 
 ## Zone selection voltages
 

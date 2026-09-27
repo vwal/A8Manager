@@ -3,12 +3,22 @@
 For day-to-day use, see the [User Guide](USER-GUIDE.md). This document records
 the workspace changes and developer/testing details.
 
-This experimental version starts from upstream `82397b9` (including the accepted
-fixes). Work lives on `codex/ui-improvements` in `my-new-version`; the `main`
-checkout and the JUCE/oolib submodule contents are unchanged.
+This independently developed version started from upstream `82397b9` (including
+the accepted fixes). Work lives on `version-3.0.0` in `my-new-version`; the sibling
+`main` checkout is unchanged. JUCE is now pinned to the 9.0.2 release; oolib is
+unchanged.
 
 ## What's different
 
+- **Consistent stereo-pair editing:** replacing a sample from either channel
+  updates both assignments, while preserving the controlling left zone's settings
+  and clamping its markers to the new file. Zone selection follows across the
+  pair. Right-channel Pan and its CV controls are independently editable and
+  visually undimmed. Channel Tools > Default resets both partners' channel
+  settings and unlinks them without deleting samples or zone data; the right-side
+  Tools menu exposes only that safe reset action.
+  Channel Revert also now restores the matching saved channel's settings rather
+  than mistakenly reading the preset's first channel.
 - **Jump to a new root:** Options > Select Root Folder opens a
   native directory chooser. Browse anywhere, then confirm to scan only that
   destination. Cancel leaves the current root unchanged. On macOS, press
@@ -133,6 +143,11 @@ MIT notices are copied into the app bundle's `Contents/Resources/licenses` on
 macOS, or beside the executable under `licenses` elsewhere. The spectral DSP
 translation unit is optimised even in Clang/GCC Debug builds. Prefer Release for
 listening with MSVC; its Debug runtime checks are retained.
+
+Run `git submodule update --init --recursive` before configuring after a pull.
+JUCE 9.0.2 fixes WAV reading when only a final chunk's padding byte is missing,
+plus CoreAudio device setup issues. The software MP3 decoder remains explicitly
+disabled as before the upgrade; native platform decoders are unchanged.
 
 ```sh
 cmake -S . -B cmake_build -DCMAKE_BUILD_TYPE=Debug -DA8MANAGER_BUILD_TESTS=ON

@@ -8,6 +8,7 @@
 #include "../../../Assimil8or/PresetManagerProperties.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "../../../Assimil8or/Preset/PresetHelpers.h"
+#include "../../../Assimil8or/Preset/StereoChannelTools.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Debug/DumpStack.h"
 #include "oolib/GUI/ErrorHelpers.h"
@@ -359,6 +360,7 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelCloneMenu (int channelIn
 
 void Assimil8orEditorComponent::init (juce::ValueTree rootPropertiesVT)
 {
+    channelEditorsInitialized = false;
     PersistentRootProperties persistentRootProperties (rootPropertiesVT, PersistentRootProperties::WrapperType::client, PersistentRootProperties::EnableCallbacks::no);
     runtimeRootProperties.wrap (rootPropertiesVT, RuntimeRootProperties::WrapperType::client, RuntimeRootProperties::EnableCallbacks::yes);
     runtimeRootProperties.onSystemRequestedQuit = [this] ()
@@ -401,100 +403,24 @@ void Assimil8orEditorComponent::init (juce::ValueTree rootPropertiesVT)
         channelProperties [channelIndex].onChannelModeChange = [this] (int)
         {
             updateAllChannelTabNames ();
+            synchronizeAllStereoZones ();
+        };
+        channelEditors [channelIndex].onSelectedZoneChanged = [this, channelIndex] (int zoneIndex)
+        {
+            synchronizeStereoZones (channelIndex, zoneIndex);
         };
         channelEditors [channelIndex].displayToolsMenu = [this] (int channelIndex)
         {
-            auto* popupMenuLnF { new juce::LookAndFeel_V4 };
+            auto popupMenuLnF { std::make_shared<juce::LookAndFeel_V4> () };
             popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
-            juce::PopupMenu toolsMenu;
-            toolsMenu.setLookAndFeel (popupMenuLnF);
-            toolsMenu.addSectionHeader ("Channel " + juce::String (channelProperties [channelIndex].getId ()));
-            toolsMenu.addSeparator ();
-            {
-                // Clone
-                juce::PopupMenu cloneMenu;
-                cloneMenu.addSubMenu ("Channel Settings", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
-                {
-                    destChannelProperties.copyFrom (channelProperties [channelIndex].getValueTree ());
-                }));
-                cloneMenu.addSubMenu ("Zones", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
-                {
-                    channelProperties [channelIndex].forEachZone ([this, &destChannelProperties] (juce::ValueTree zonePropertiesVT, int zoneIndex)
-                    {
-                        ZoneProperties destZoneProperties (destChannelProperties.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-                        destZoneProperties.copyFrom (zonePropertiesVT, false);
-                        return true;
-                    });
-                }));
-                cloneMenu.addSubMenu ("Settings and Zones", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
-                {
-                    destChannelProperties.copyFrom (channelProperties [channelIndex].getValueTree ());
-
-                    channelProperties [channelIndex].forEachZone ([this, &destChannelProperties] (juce::ValueTree zonePropertiesVT, int zoneIndex)
-                    {
-                        ZoneProperties destZoneProperties (destChannelProperties.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-                        destZoneProperties.copyFrom (zonePropertiesVT, false);
-                        return true;
-                    });
-                }));
-                cloneMenu.addSubMenu ("MinVoltages", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
-                {
-                    if (const auto destNumUsedZones { editManager->getNumUsedZones (destChannelProperties.getId () - 1) };
-                        destNumUsedZones > 1)
-                    {
-                        channelProperties[channelIndex].forEachZone ([this, &destChannelProperties, destNumUsedZones] (juce::ValueTree zonePropertiesVT, int curZoneIndex)
-                        {
-                            if (curZoneIndex == destNumUsedZones - 1)
-                                return false;
-                            ZoneProperties srcZone (zonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-                            ZoneProperties destZone (destChannelProperties.getZoneVT (curZoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-                            destZone.setMinVoltage (srcZone.getMinVoltage (), false);
-                            return true;
-                        });
-                    }
-                }));
-                toolsMenu.addSubMenu ("Clone", cloneMenu);
-            }
-            {
-                juce::PopupMenu editMenu;
-                editMenu.addItem ("Copy", true, false, [this, channelIndex] ()
-                {
-                    copyBufferChannelProperties.copyFrom (channelProperties [channelIndex].getValueTree ());
-                    copyBufferHasData = true;
-                });
-                editMenu.addItem ("Paste", copyBufferHasData, false, [this, channelIndex] ()
-                {
-                    channelProperties [channelIndex].copyFrom (copyBufferChannelProperties.getValueTree ());
-                });
-                toolsMenu.addSubMenu ("Edit", editMenu, true);
-            }
-            {
-                juce::PopupMenu explodeMenu;
-                for (auto explodeCount { 2 }; explodeCount < 9 - channelIndex; ++explodeCount)
-                    explodeMenu.addItem (juce::String (explodeCount) + " channels", true, false, [this, channelIndex, explodeCount] ()
-                    {
-                        explodeChannel (channelIndex, explodeCount);
-                    });
-                toolsMenu.addSubMenu ("Explode", explodeMenu, channelIndex < 7);
-            }
-            toolsMenu.addItem ("Default", true, false, [this, channelIndex] ()
-            {
-                channelProperties [channelIndex].copyFrom (defaultChannelProperties.getValueTree ());
-            });
-            toolsMenu.addItem ("Revert", true, false, [this, channelIndex] ()
-            {
-                channelProperties [channelIndex].copyFrom (unEditedPresetProperties.getValueTree ());
-            });
-            toolsMenu.showMenuAsync ({}, [this, popupMenuLnF] (int) { delete popupMenuLnF; });
-        };
-
-        channelProperties [channelIndex].wrap (channelPropertiesVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
-        channelProperties [channelIndex].onChannelModeChange = [this] (int)
-        {
-            updateAllChannelTabNames ();
+            auto toolsMenu { createChannelToolsMenu (channelIndex) };
+            toolsMenu.setLookAndFeel (popupMenuLnF.get ());
+            toolsMenu.showMenuAsync ({}, [popupMenuLnF] (int) {});
         };
         return true;
     });
+    channelEditorsInitialized = true;
+    synchronizeAllStereoZones ();
 
     idDataChanged (presetProperties.getId ());
     midiSetupDataChanged (presetProperties.getMidiSetup ());
@@ -508,6 +434,129 @@ void Assimil8orEditorComponent::init (juce::ValueTree rootPropertiesVT)
     xfadeWidthDataChanged (1, presetProperties.getXfadeBWidth ());
     xfadeWidthDataChanged (2, presetProperties.getXfadeCWidth ());
     xfadeWidthDataChanged (3, presetProperties.getXfadeDWidth ());
+}
+
+void Assimil8orEditorComponent::synchronizeStereoZones (int sourceChannel, int zoneIndex)
+{
+    if (! channelEditorsInitialized || sourceChannel < 0 || sourceChannel >= 8 || zoneIndex < 0 || zoneIndex >= 8) return;
+    const auto partner { StereoChannelTools::partner (channelProperties[sourceChannel].getValueTree ()) };
+    if (! partner.isValid ()) return;
+    ChannelProperties pairedChannel (partner, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+    channelEditors[pairedChannel.getId () - 1].setSelectedZoneFromPartner (zoneIndex);
+}
+
+void Assimil8orEditorComponent::synchronizeAllStereoZones ()
+{
+    if (! channelEditorsInitialized) return;
+    for (int channel { 0 }; channel < 8; ++channel)
+    {
+        if (channelProperties[channel].getChannelMode () == ChannelProperties::ChannelMode::stereoRight) continue;
+        const auto partner { StereoChannelTools::partner (channelProperties[channel].getValueTree ()) };
+        if (! partner.isValid ()) continue;
+        ChannelProperties pairedChannel (partner, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        const auto source { channelTabs.getCurrentTabIndex () == pairedChannel.getId () - 1 ? pairedChannel.getId () - 1 : channel };
+        synchronizeStereoZones (source, channelEditors[source].getSelectedZoneIndex ());
+    }
+}
+
+void Assimil8orEditorComponent::addChannelDefaultMenuItem (juce::PopupMenu& menu, int channelIndex)
+{
+    const auto channelTree { channelProperties[channelIndex].getValueTree () };
+    const auto partner { StereoChannelTools::partner (channelTree) };
+    const auto before { channelTree.createCopy () };
+    const auto partnerBefore { partner.createCopy () };
+    menu.addItem (partner.isValid () ? "Default (both channels)" : "Default", true, false,
+                  [safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this), channelIndex, channelTree, partner, before, partnerBefore] ()
+    {
+        // A popup can outlive its preset or a stereo-mode change. Never apply
+        // its action to a newly selected/replaced channel or an altered pair.
+        if (safe == nullptr || safe->channelProperties[channelIndex].getValueTree () != channelTree ||
+            ! channelTree.isEquivalentTo (before) || StereoChannelTools::partner (channelTree) != partner ||
+            (partner.isValid () && ! partner.isEquivalentTo (partnerBefore))) return;
+        safe->audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+        StereoChannelTools::resetSettings (channelTree, safe->defaultChannelProperties.getValueTree ());
+    });
+}
+
+juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIndex)
+{
+    juce::PopupMenu toolsMenu;
+    if (channelIndex < 0 || channelIndex >= 8 || ! channelProperties[channelIndex].isValid ()) return toolsMenu;
+    toolsMenu.addSectionHeader ("Channel " + juce::String (channelProperties[channelIndex].getId ()));
+    toolsMenu.addSeparator ();
+    if (channelProperties[channelIndex].getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
+    {
+        // Opening Tools on R must not expose independent zone/clone operations.
+        addChannelDefaultMenuItem (toolsMenu, channelIndex);
+        return toolsMenu;
+    }
+    {
+        juce::PopupMenu cloneMenu;
+        cloneMenu.addSubMenu ("Channel Settings", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
+        {
+            destChannelProperties.copyFrom (channelProperties[channelIndex].getValueTree ());
+        }));
+        cloneMenu.addSubMenu ("Zones", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
+        {
+            channelProperties[channelIndex].forEachZone ([&destChannelProperties] (juce::ValueTree zonePropertiesVT, int zoneIndex)
+            {
+                ZoneProperties destZoneProperties (destChannelProperties.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                destZoneProperties.copyFrom (zonePropertiesVT, false);
+                return true;
+            });
+        }));
+        cloneMenu.addSubMenu ("Settings and Zones", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
+        {
+            destChannelProperties.copyFrom (channelProperties[channelIndex].getValueTree ());
+            channelProperties[channelIndex].forEachZone ([&destChannelProperties] (juce::ValueTree zonePropertiesVT, int zoneIndex)
+            {
+                ZoneProperties destZoneProperties (destChannelProperties.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                destZoneProperties.copyFrom (zonePropertiesVT, false);
+                return true;
+            });
+        }));
+        cloneMenu.addSubMenu ("MinVoltages", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
+        {
+            if (const auto destNumUsedZones { editManager->getNumUsedZones (destChannelProperties.getId () - 1) }; destNumUsedZones > 1)
+                channelProperties[channelIndex].forEachZone ([&destChannelProperties, destNumUsedZones] (juce::ValueTree zonePropertiesVT, int curZoneIndex)
+                {
+                    if (curZoneIndex == destNumUsedZones - 1) return false;
+                    ZoneProperties srcZone (zonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                    ZoneProperties destZone (destChannelProperties.getZoneVT (curZoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                    destZone.setMinVoltage (srcZone.getMinVoltage (), false);
+                    return true;
+                });
+        }));
+        toolsMenu.addSubMenu ("Clone", cloneMenu);
+    }
+    {
+        juce::PopupMenu editMenu;
+        editMenu.addItem ("Copy", true, false, [this, channelIndex] ()
+        {
+            copyBufferChannelProperties.copyFrom (channelProperties[channelIndex].getValueTree ());
+            copyBufferHasData = true;
+        });
+        editMenu.addItem ("Paste", copyBufferHasData, false, [this, channelIndex] ()
+        {
+            channelProperties[channelIndex].copyFrom (copyBufferChannelProperties.getValueTree ());
+        });
+        toolsMenu.addSubMenu ("Edit", editMenu, true);
+    }
+    {
+        juce::PopupMenu explodeMenu;
+        for (auto explodeCount { 2 }; explodeCount < 9 - channelIndex; ++explodeCount)
+            explodeMenu.addItem (juce::String (explodeCount) + " channels", true, false, [this, channelIndex, explodeCount] ()
+            {
+                explodeChannel (channelIndex, explodeCount);
+            });
+        toolsMenu.addSubMenu ("Explode", explodeMenu, channelIndex < 7);
+    }
+    addChannelDefaultMenuItem (toolsMenu, channelIndex);
+    toolsMenu.addItem ("Revert", true, false, [this, channelIndex] ()
+    {
+        channelProperties[channelIndex].copyFrom (unEditedPresetProperties.getChannelVT (channelIndex));
+    });
+    return toolsMenu;
 }
 
 void Assimil8orEditorComponent::setupPresetPropertiesCallbacks ()
