@@ -96,6 +96,16 @@ struct StereoChannelUiTestAccess
         auto& leftProperties { editor->channelProperties[0] };
         auto& rightProperties { editor->channelProperties[1] };
 
+        editor->channelTabs.setCurrentTabIndex (0);
+        check (std::abs (editor->getSelectedDuration (0).value_or (-1.0) - 1024.0 / 48000.0) < 1.0e-9,
+               "Designer gets the loaded file duration through the real editor");
+        check (std::abs (editor->getSelectedDuration (1).value_or (-1.0) - 800.0 / 48000.0) < 1.0e-9,
+               "Designer gets the selected sample region, not the whole file");
+        editor->channelTabs.setCurrentTabIndex (1);
+        check (std::abs (editor->getSelectedDuration (2).value_or (-1.0) - 300.5 / 48000.0) < 1.0e-9,
+               "Designer gets master loop timing when the stereo right channel is selected");
+        editor->channelTabs.setCurrentTabIndex (0);
+
         int leftCallbacks { 0 }, rightCallbacks { 0 };
         const auto leftCallback { left.onSelectedZoneChanged }, rightCallback { right.onSelectedZoneChanged };
         left.onSelectedZoneChanged = [&] (int zone) { ++leftCallbacks; leftCallback (zone); };

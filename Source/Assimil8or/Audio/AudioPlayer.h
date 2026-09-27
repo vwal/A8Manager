@@ -4,6 +4,7 @@
 #include <atomic>
 #include "AudioPlayerProperties.h"
 #include "AuditionStretch.h"
+#include "WaveformAudition.h"
 #include "AudioSettingsProperties.h"
 #include "../Preset/ChannelProperties.h"
 #include "../Preset/PresetProperties.h"
@@ -21,9 +22,19 @@ public:
     void init (juce::ValueTree rootProperties);
     void shutdownAudio ();
 
+    // Designer monitoring shares the existing device and excludes sample playback.
+    void setWaveformAuditionPayload (WaveformAudition::PayloadPtr payload);
+    juce::Result startWaveformAudition ();
+    void stopWaveformAudition ();
+    juce::Result setWaveformMonitor (double decibels, double semitones);
+    bool isWaveformAuditionActive () const;
+    void showAudioSettings () { showConfigDialog (); }
+
 private:
     friend struct AudioPlayerTestAccess;
     friend struct AudioAuditTestAccess;
+    friend struct WaveformAuditionRoutingTestAccess;
+    friend struct CvAuditionTestAccess;
     AudioSettingsProperties audioSettingsProperties;
     AudioPlayerProperties audioPlayerProperties;
     AppProperties appProperties;
@@ -35,6 +46,8 @@ private:
     ChannelProperties nextChannelProperties;
     ZoneProperties nextZoneProperties;
     SampleProperties nextSampleProperties;
+    ChannelProperties previousChannelProperties;
+    SampleProperties previousSampleProperties;
 
     juce::AudioDeviceManager audioDeviceManager;
     juce::AudioSourcePlayer audioSourcePlayer;
@@ -42,6 +55,9 @@ private:
     juce::AudioDeviceSelectorComponent audioSetupComp { audioDeviceManager, 0, 0, 0, 256, false, false, true, false };
 
     juce::CriticalSection dataCS;
+    WaveformAudition waveformAudition;
+    bool waveformSelected { false }, audioDeviceReady { false };
+    bool sampleAuditionBlocked { false }; // Cached off the audio callback, protected by dataCS.
     AudioPlayerProperties::PlayState playState { AudioPlayerProperties::PlayState::stop };
     double curSampleOffset { 0.0 }; // audible cursor, independent of resampler read-ahead
     int sampleStart { 0 };
@@ -128,6 +144,7 @@ private:
     void initFromZone (std::tuple<int, int> channelAndZoneIndecies);
     void initSamplePoints ();
     bool isStereoPair ();
+    bool selectedSampleIsCv ();
     void prepareSampleForPlayback ();
     void showConfigDialog ();
 

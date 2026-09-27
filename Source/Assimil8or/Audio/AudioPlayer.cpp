@@ -85,6 +85,19 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
     handleZonePitch (zoneProperties.getPitchOffset ());
     sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::owner, SampleProperties::EnableCallbacks::yes);
 
+    if (channelIndex > 0)
+    {
+        previousChannelProperties.wrap (presetProperties.getChannelVT (channelIndex - 1), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
+        previousSampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (channelIndex - 1, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
+    }
+    else
+    {
+        previousChannelProperties.enableCallbacks (false);
+        previousSampleProperties.enableCallbacks (false);
+        previousChannelProperties.release ();
+        previousSampleProperties.release ();
+    }
+
     if (channelIndex < 7)
     {
         const auto nextChannelIndex { channelIndex + 1 };
@@ -183,6 +196,16 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
         // missing paired right sample makes only the right output silent.
         if (isStereoPair ()) prepareSampleForPlayback ();
     };
+    sampleProperties.onIsCvChange = [this] (bool) { prepareSampleForPlayback (); };
+    nextSampleProperties.onIsCvChange = [this] (bool) { if (isStereoPair ()) prepareSampleForPlayback (); };
+    previousSampleProperties.onIsCvChange = [this] (bool)
+    {
+        if (channelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight) prepareSampleForPlayback ();
+    };
+    previousChannelProperties.onChannelModeChange = [this] (int)
+    {
+        if (channelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight) prepareSampleForPlayback ();
+    };
 
     // create local copy of audio data, with resampling if needed
     prepareSampleForPlayback ();
@@ -224,12 +247,32 @@ bool AudioPlayer::isStereoPair ()
            nextChannelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight;
 }
 
+bool AudioPlayer::selectedSampleIsCv ()
+{
+    if (sampleProperties.isValid () && sampleProperties.getIsCv ()) return true;
+    if (isStereoPair () && nextSampleProperties.isValid () && nextSampleProperties.getIsCv ()) return true;
+    // Also fail closed for a direct/programmatic selection of the right half
+    // of a valid pair. Never allow CV on either output of a stereo audition.
+    return channelProperties.isValid () && channelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight
+           && previousChannelProperties.isValid () && previousChannelProperties.getChannelMode () != ChannelProperties::ChannelMode::stereoRight
+           && previousSampleProperties.isValid () && previousSampleProperties.getIsCv ();
+}
+
 void AudioPlayer::prepareSampleForPlayback ()
 {
     juce::ScopedLock sl (dataCS);
     resetAuditionResampler = true;
     playbackPosition.store (-1.0);
     sampleBuffer.reset ();
+    sampleAuditionBlocked = selectedSampleIsCv ();
+    if (sampleAuditionBlocked)
+    {
+        playState = AudioPlayerProperties::PlayState::stop;
+        playbackFinished.store (true);
+        sampleStart = sampleLength = 0;
+        curSampleOffset = 0.0;
+        return;
+    }
     if (zoneProperties.isValid () && sampleProperties.isValid () && sampleProperties.getStatus () == SampleStatus::exists &&
         sampleProperties.getAudioBufferPtr () != nullptr && sampleProperties.getAudioBufferPtr ()->getNumChannels () > 0 &&
         std::isfinite (sampleProperties.getSampleRate ()) && sampleProperties.getSampleRate () > 0.0 && std::isfinite (sampleRate) && sampleRate > 0.0)
@@ -324,10 +367,65 @@ void AudioPlayer::prepareSampleForPlayback ()
 void AudioPlayer::shutdownAudio ()
 {
     stopTimer ();
+    {
+        juce::ScopedLock sl (dataCS);
+        audioDeviceReady = false;
+        waveformSelected = false;
+        waveformAudition.stopImmediately ();
+        playState = AudioPlayerProperties::PlayState::stop;
+        playbackFinished.store (false);
+    }
+    audioDeviceManager.removeChangeListener (this);
     audioSourcePlayer.setSource (nullptr);
     audioDeviceManager.removeAudioCallback (&audioSourcePlayer);
     audioDeviceManager.closeAudioDevice ();
     playbackPosition.store (-1.0);
+}
+
+void AudioPlayer::setWaveformAuditionPayload (WaveformAudition::PayloadPtr payload)
+{
+    waveformAudition.setPayload (std::move (payload));
+}
+
+juce::Result AudioPlayer::startWaveformAudition ()
+{
+    {
+        juce::ScopedLock sl (dataCS);
+        if (! audioDeviceReady)
+            return juce::Result::fail ("No audio output is available. Choose an output in Audio settings, then press Audition again.");
+        if (const auto result { waveformAudition.start () }; result.failed ())
+            return result;
+        waveformSelected = true;
+        playState = AudioPlayerProperties::PlayState::stop;
+        resetAuditionResampler = true;
+        playbackFinished.store (false);
+        playbackPosition.store (-1.0);
+    }
+    // Notify sample UI without re-entering its playback handler or touching
+    // the preset, source selection, markers or audition-speed preferences.
+    audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+    audioPlayerProperties.setPlaybackPosition (-1.0, false);
+    return juce::Result::ok ();
+}
+
+void AudioPlayer::stopWaveformAudition ()
+{
+    waveformAudition.setPlaying (false);
+    // Keep the route silent when the fade completes; never resume an old sample.
+}
+
+juce::Result AudioPlayer::setWaveformMonitor (double decibels, double semitones)
+{
+    juce::ScopedLock sl (dataCS);
+    if (! audioDeviceReady)
+        return juce::Result::fail ("No audio output is available. Choose an output in Audio settings, then press Audition again.");
+    waveformAudition.setMonitorGain (juce::Decibels::decibelsToGain (std::isfinite (decibels) ? juce::jlimit (-60.0, 0.0, decibels) : -60.0));
+    return waveformAudition.setTransposeSemitones (semitones);
+}
+
+bool AudioPlayer::isWaveformAuditionActive () const
+{
+    return waveformAudition.isActive ();
 }
 
 void AudioPlayer::configureAudioDevice (juce::String config)
@@ -355,6 +453,20 @@ void AudioPlayer::configureAudioDevice (juce::String config)
 void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState)
 {
     juce::ScopedLock sl (dataCS);
+    if (newPlayState != AudioPlayerProperties::PlayState::stop && sampleAuditionBlocked)
+    {
+        // Block direct and stale UI requests before touching the independent
+        // designer route. Only message-thread classification reads the file.
+        playState = AudioPlayerProperties::PlayState::stop;
+        playbackPosition.store (-1.0);
+        playbackFinished.store (true);
+        return;
+    }
+    if (newPlayState != AudioPlayerProperties::PlayState::stop)
+    {
+        waveformAudition.stopImmediately ();
+        waveformSelected = false;
+    }
     resetAuditionResampler = true;
     if (newPlayState == AudioPlayerProperties::PlayState::stop)
     {
@@ -390,6 +502,9 @@ void AudioPlayer::showConfigDialog ()
 void AudioPlayer::prepareToPlay (int samplesPerBlockExpected, double newSampleRate)
 {
     juce::ScopedLock sl (dataCS);
+    waveformAudition.prepareToPlay (newSampleRate);
+    waveformSelected = false;
+    audioDeviceReady = std::isfinite (newSampleRate) && newSampleRate > 0.0 && samplesPerBlockExpected > 0;
     LogAudioPlayer ("prepareToPlay");
     sampleRate = newSampleRate;
     blockSize = samplesPerBlockExpected;
@@ -400,6 +515,9 @@ void AudioPlayer::prepareToPlay (int samplesPerBlockExpected, double newSampleRa
 void AudioPlayer::releaseResources ()
 {
     juce::ScopedLock sl (dataCS);
+    audioDeviceReady = false;
+    waveformSelected = false;
+    waveformAudition.stopImmediately ();
     auditionResampler.releaseResources ();
 }
 
@@ -463,6 +581,18 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
     // Audition already uses a lock. Keep the buffer, range and playback cursor
     // in the same snapshot, including while the UI reloads/resamples a sample.
     juce::ScopedLock sl (dataCS);
+    if (waveformSelected)
+    {
+        waveformAudition.process (bufferToFill);
+        return;
+    }
+    if (sampleAuditionBlocked)
+    {
+        playState = AudioPlayerProperties::PlayState::stop;
+        playbackPosition.store (-1.0);
+        playbackFinished.store (true);
+        return;
+    }
     if (playState == AudioPlayerProperties::PlayState::stop)
         return;
 

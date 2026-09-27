@@ -17,6 +17,13 @@ void testAudioFileSafety ();
 void testStereoAssignment ();
 void testStereoChannelUi ();
 void testPairedZoneEdits ();
+void testWaveformDesign ();
+void testWaveformDesignExport ();
+void testWaveformWorkspace ();
+void testWaveformDuration ();
+void testWaveformAudition ();
+void testWaveformAuditionRouting ();
+void testCvAudition ();
 int runPresetWorkflowAuditTests ();
 
 namespace
@@ -147,6 +154,13 @@ int main (int argc, char* argv[])
             testPairedZoneEdits ();
             return 0;
         }
+        if (argc == 2 && juce::String (argv [1]) == "--waveform-design") { testWaveformDesign (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--waveform-design-export") { testWaveformDesignExport (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--waveform-workspace") { testWaveformWorkspace (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--waveform-duration") { testWaveformDuration (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--waveform-audition") { testWaveformAudition (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--waveform-audition-routing") { testWaveformAuditionRouting (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--cv-audition") { testCvAudition (); return 0; }
         if (argc == 2 && juce::String (argv [1]) == "--preset-workflow-audit")
         {
             return runPresetWorkflowAuditTests ();

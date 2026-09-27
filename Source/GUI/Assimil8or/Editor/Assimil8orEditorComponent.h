@@ -34,6 +34,7 @@ public:
     void init (juce::ValueTree rootPropertiesVT);
     void receiveSampleLoadRequest (juce::File sampleFile);
     void overwritePresetOrCancel (std::function<void ()> overwriteFunction, std::function<void ()> cancelFunction);
+    std::optional<double> getSelectedDuration (int region);
 
 private:
     friend struct StereoChannelUiTestAccess;

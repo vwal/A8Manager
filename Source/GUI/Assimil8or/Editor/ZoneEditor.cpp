@@ -67,6 +67,7 @@ ZoneEditor::ZoneEditor ()
         playButton.setEnabled (false);
         playButton.onClick = [this, text, &playButton, playState, otherButtonText] ()
         {
+            if (hasCvAuditionSource ()) { updateAuditionControls (); return; }
             if (playButton.getButtonText () == "STOP")
             {
                 // stopping
@@ -94,6 +95,10 @@ ZoneEditor::ZoneEditor ()
 
     oneShotPlayButton.setTooltip ("Plays the currently selected SOURCE in one shot mode");
     setupPlayButton (oneShotPlayButton, "ONCE", "LOOP", AudioPlayerProperties::PlayState::play);
+    setupLabel (cvAuditionNotice, "CV sample\nSpeaker audition disabled", 10.0f, juce::Justification::centred);
+    cvAuditionNotice.setColour (juce::Label::textColourId, juce::Colour (0xffffc472));
+    cvAuditionNotice.setTooltip ("This sample or its stereo partner is marked as control voltage (CV). Speaker/headphone audition is blocked. The waveform and preset remain editable for Assimil8or hardware.");
+    cvAuditionNotice.setVisible (false);
     setupZoneComponents ();
     for (auto* label : { &sampleDurationLabel, &loopDurationLabel })
     {
@@ -747,45 +752,44 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::client, AudioPlayerProperties::EnableCallbacks::yes);
     audioPlayerProperties.onPlayStateChange = [this] (AudioPlayerProperties::PlayState playState)
     {
-        if (playState == AudioPlayerProperties::PlayState::stop)
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ZoneEditor> (this), playState] ()
         {
-            juce::MessageManager::callAsync ([this] ()
-            {
-                oneShotPlayButton.setButtonText ("ONCE");
-                loopPlayButton.setButtonText ("LOOP");
-            });
-        }
-        else if (playState == AudioPlayerProperties::PlayState::play)
-        {
-            juce::MessageManager::callAsync ([this] ()
-            {
-                oneShotPlayButton.setButtonText ("STOP");
-                loopPlayButton.setButtonText ("LOOP");
-            });
-        }
-        else if (playState == AudioPlayerProperties::PlayState::loop)
-        {
-            juce::MessageManager::callAsync ([this] ()
-            {
-                oneShotPlayButton.setButtonText ("ONCE");
-                loopPlayButton.setButtonText ("STOP");
-            });
-        }
-        else
-        {
-            jassertfalse;
-        }
+            if (safe == nullptr) return;
+            if (safe->hasCvAuditionSource ()) { safe->updateAuditionControls (); return; }
+            safe->oneShotPlayButton.setButtonText (playState == AudioPlayerProperties::PlayState::play ? "STOP" : "ONCE");
+            safe->loopPlayButton.setButtonText (playState == AudioPlayerProperties::PlayState::loop ? "STOP" : "LOOP");
+        });
     };
 
     zoneProperties.wrap (zonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::yes);
     uneditedZoneProperties.wrap (uneditedZonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
     zoneIndex = zoneProperties.getId () - 1;
     jassert (ChannelProperties::isChannelPropertiesVT (zoneProperties.getValueTree ().getParent ()));
-    parentChannelProperties.wrap (zoneProperties.getValueTree ().getParent (), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+    parentChannelProperties.wrap (zoneProperties.getValueTree ().getParent (), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     parentChannelIndex = parentChannelProperties.getId () - 1;
+    parentChannelProperties.onChannelModeChange = [this] (int) { updateAuditionControls (); };
 
     SampleManagerProperties sampleManagerProperties (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (parentChannelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
+    sampleProperties.onIsCvChange = [this] (bool) { updateAuditionControls (); };
+    PresetProperties auditionPreset (parentChannelProperties.getValueTree ().getParent (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+    auto bindAdjacent = [&] (int channelIndex, ChannelProperties& channel, SampleProperties& sample)
+    {
+        if (channelIndex >= 0 && channelIndex < 8)
+        {
+            channel.wrap (auditionPreset.getChannelVT (channelIndex), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
+            sample.wrap (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
+            channel.onChannelModeChange = [this] (int) { updateAuditionControls (); };
+            sample.onIsCvChange = [this] (bool) { updateAuditionControls (); };
+        }
+        else
+        {
+            channel.enableCallbacks (false); channel.release ();
+            sample.enableCallbacks (false); sample.release ();
+        }
+    };
+    bindAdjacent (parentChannelIndex - 1, previousChannelProperties, previousSampleProperties);
+    bindAdjacent (parentChannelIndex + 1, nextChannelProperties, nextSampleProperties);
     sampleProperties.onSampleRateChange = [this] (double) { updateDurations (); };
     sampleProperties.onStatusChange = [this] (SampleStatus status)
     {
@@ -794,8 +798,6 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
             //DebugLog ("ZoneEditor", "sample Status exists");
             // when we receive this callback, it means all of the other sample data is updated too
             setEditComponentsEnabled (true);
-            oneShotPlayButton.setEnabled (true && ! isStereoRightChannelMode);
-            loopPlayButton.setEnabled (true && ! isStereoRightChannelMode);
             updateLoopPointsView ();
             updateSamplePositionInfo ();
             updateSampleFileInfo (zoneProperties.getSample ());
@@ -836,6 +838,7 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
             updateSampleFileInfo (zoneProperties.getSample ());
             updateSideSelectButtons (0);
         }
+        updateAuditionControls ();
     };
 
     setupZonePropertiesCallbacks ();
@@ -851,6 +854,33 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
     sideDataChanged (zoneProperties.getSide ());
 
     setLoopLengthIsEnd (parentChannelProperties.getLoopLengthIsEnd ());
+    updateAuditionControls ();
+}
+
+bool ZoneEditor::hasCvAuditionSource ()
+{
+    if (sampleProperties.getIsCv ()) return true;
+    const auto right { parentChannelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight };
+    if (! right && nextChannelProperties.isValid () && nextChannelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
+        return nextSampleProperties.isValid () && nextSampleProperties.getIsCv ();
+    return right && previousChannelProperties.isValid () && previousChannelProperties.getChannelMode () != ChannelProperties::ChannelMode::stereoRight
+           && previousSampleProperties.isValid () && previousSampleProperties.getIsCv ();
+}
+
+void ZoneEditor::updateAuditionControls ()
+{
+    const bool cv { hasCvAuditionSource () };
+    const bool enabled { ! cv && ! isStereoRightChannelMode && sampleProperties.getStatus () == SampleStatus::exists };
+    oneShotPlayButton.setEnabled (enabled);
+    loopPlayButton.setEnabled (enabled);
+    cvAuditionNotice.setVisible (cv);
+    oneShotPlayButton.setTooltip (cv ? cvAuditionNotice.getTooltip () : "Plays the currently selected SOURCE in one shot mode");
+    loopPlayButton.setTooltip (cv ? cvAuditionNotice.getTooltip () : "Plays the currently selected SOURCE in looping mode");
+    if (cv)
+    {
+        oneShotPlayButton.setButtonText ("ONCE");
+        loopPlayButton.setButtonText ("LOOP");
+    }
 }
 
 void ZoneEditor::setLoopLengthIsEnd (bool newLoopLengthIsEnd)
@@ -882,8 +912,7 @@ void ZoneEditor::setStereoRightChannelMode (bool newStereoRightChannelMode)
     isStereoRightChannelMode = newStereoRightChannelMode;
     updateNextButtons ();
 
-    oneShotPlayButton.setEnabled (! isStereoRightChannelMode && sampleProperties.getStatus () == SampleStatus::exists);
-    loopPlayButton.setEnabled (! isStereoRightChannelMode && sampleProperties.getStatus () == SampleStatus::exists);
+    updateAuditionControls ();
     toolsButton.setEnabled (! isStereoRightChannelMode);
     setEditComponentsEnabled (sampleProperties.getStatus () == SampleStatus::exists);
     //leftChannelSelectButton.setEnabled (! isStereoRightChannelMode); // can still edit in stereo/right channel mode
@@ -1031,6 +1060,7 @@ void ZoneEditor::resized ()
 
     levelOffsetLabel.setBounds (xOffset, pitchOffsetLabel.getBottom () + 3, scaleWidth (otherLabelScale), 20);
     levelOffsetTextEditor.setBounds (levelOffsetLabel.getRight () + spaceBetweenLabelAndInput, levelOffsetLabel.getY (), scaleWidth (otherInputScale) - spaceBetweenLabelAndInput, 20);
+    cvAuditionNotice.setBounds (xOffset, levelOffsetTextEditor.getBottom () + 3, width, 28);
 }
 
 void ZoneEditor::setEditComponentsEnabled (bool enabled)

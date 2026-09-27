@@ -5,6 +5,8 @@
 #include "GUI/Assimil8or/Editor/EditManager.h"
 #include "oolib/ValueTree/ValueTreeWrapper.h"
 
+class AudioPlayer;
+
 class SystemServices : public ValueTreeWrapper<SystemServices>
 {
 public:
@@ -20,11 +22,14 @@ public:
     static inline const juce::Identifier SystemServicesTypeId { "SystemServices" };
     static inline const juce::Identifier AudioManagerPropertyId { "audioManager" };
     static inline const juce::Identifier EditManagerPropertyId { "editManager" };
+    static inline const juce::Identifier AudioPlayerPropertyId { "audioPlayer" };
 
     void setAudioManager (AudioManager* audioManager);
     AudioManager* getAudioManager ();
     void setEditManager (EditManager* editManager);
     EditManager* getEditManager ();
+    void setAudioPlayer (AudioPlayer* audioPlayer);
+    AudioPlayer* getAudioPlayer ();
 
     void initValueTree () {}
     void processValueTree () {}

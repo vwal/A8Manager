@@ -63,6 +63,13 @@ set(ASSIMIL8OR_FILES
     Source/Assimil8or/PresetManagerProperties.h)
 
 set(ASSIMIL8OR_AUDIO_FILES
+    Source/Assimil8or/Audio/WaveformAudition.cpp
+    Source/Assimil8or/Audio/WaveformAudition.h
+    Source/Assimil8or/Audio/CvSampleSafety.h
+    Source/Assimil8or/Audio/WaveformDesign.cpp
+    Source/Assimil8or/Audio/WaveformDesign.h
+    Source/Assimil8or/Audio/WaveformDesignExport.cpp
+    Source/Assimil8or/Audio/WaveformDesignExport.h
     Source/Assimil8or/Audio/AudioManager.cpp
     Source/Assimil8or/Audio/AudioManager.h
     Source/Assimil8or/Audio/AudioPlayer.cpp
@@ -117,6 +124,8 @@ set(ASSIMIL8OR_VALIDATOR_FILES
     Source/Assimil8or/Validator/ValidatorResultProperties.h)
 
 set(GUI_FILES
+    Source/GUI/WaveformWorkspace.cpp
+    Source/GUI/WaveformWorkspace.h
     Source/GUI/BottomStatusWindow.cpp
     Source/GUI/BottomStatusWindow.h
     Source/GUI/CurrentFolderComponent.cpp
@@ -133,6 +142,7 @@ set(GUI_ASSIMIL8OR_DATA_FILES
     Source/GUI/Assimil8or/Data/Assimil8orToolTips.xml)
 
 set(GUI_EDITOR_FILES
+    Source/GUI/Assimil8or/Editor/WaveformDuration.h
     Source/GUI/Assimil8or/Editor/Assimil8orEditorComponent.cpp
     Source/GUI/Assimil8or/Editor/Assimil8orEditorComponent.h
     Source/GUI/Assimil8or/Editor/ChannelEditor.cpp

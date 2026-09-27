@@ -20,6 +20,7 @@ public:
 
 private:
     friend struct AudioAuditTestAccess;
+    friend struct CvAuditionTestAccess;
     RuntimeRootProperties runtimeRootProperties;
     AppProperties appProperties;
     DirectoryDataProperties directoryDataProperties;
@@ -38,6 +39,7 @@ private:
     {
         int useCount { 0 };
         SampleStatus status { SampleStatus::uninitialized };
+        bool isCv { false };
         int bitsPerSample { 0 };
         double sampleRate { 0.0 };
         int numChannels { 0 };

@@ -221,6 +221,7 @@ public:
 
         audioManager.init (rootProperties.getValueTree ());
         systemServices.setAudioManager (&audioManager);
+        systemServices.setAudioPlayer (&audioPlayer);
 
         PresetManagerProperties presetManagerProperties (runtimeRootProperties.getValueTree (), PresetManagerProperties::WrapperType::client, PresetManagerProperties::EnableCallbacks::no);
         editManager.init (rootProperties.getValueTree (), presetManagerProperties.getPreset ("edit"));

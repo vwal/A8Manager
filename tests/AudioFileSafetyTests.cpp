@@ -1,4 +1,5 @@
 #include "Assimil8or/Audio/SafeAudioImport.h"
+#include "Assimil8or/Audio/WaveformDesign.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "GUI/Assimil8or/Editor/EditManager.h"
 #include <iostream>
@@ -15,14 +16,16 @@ namespace
         return data;
     }
 
-    void makeAudio (const juce::File& file, bool aiff = false, double rate = 48000.0, int channels = 1)
+    void makeAudio (const juce::File& file, bool aiff = false, double rate = 48000.0, int channels = 1,
+                    const std::unordered_map<juce::String, juce::String>& metadata = {})
     {
         std::unique_ptr<juce::OutputStream> output { file.createOutputStream () };
         check (output != nullptr, "Create generated audio output");
         juce::WavAudioFormat wav;
         juce::AiffAudioFormat aif;
         auto& format { aiff ? static_cast<juce::AudioFormat&> (aif) : static_cast<juce::AudioFormat&> (wav) };
-        auto writer { format.createWriterFor (output, juce::AudioFormatWriterOptions {}.withSampleRate (rate).withNumChannels (channels).withBitsPerSample (24)) };
+        auto writer { format.createWriterFor (output, juce::AudioFormatWriterOptions {}.withSampleRate (rate).withNumChannels (channels)
+                                              .withBitsPerSample (24).withMetadataValues (metadata)) };
         check (writer != nullptr, "Create generated audio writer");
         juce::AudioBuffer<float> buffer (channels, 128);
         for (int side { 0 }; side < channels; ++side)
@@ -51,6 +54,97 @@ namespace
         juce::AudioBuffer<float> buffer (1, 128);
         check (reader->read (&buffer, 0, 128, 0, true, false), "Read converted channel");
         check (std::abs (buffer.getSample (0, 64) - 0.25f) < 0.00001f, "Converted channel contents preserved");
+    }
+
+    void testCvImportSafety (AudioManager& manager, const juce::File& external, const juce::File& preset)
+    {
+        auto tagged = [] (const juce::File& file, int channels, bool floating)
+        {
+            std::unique_ptr<juce::OutputStream> stream { file.createOutputStream () };
+            auto values { CvSampleSafety::exportMetadata (true) };
+            std::unordered_map<juce::String, juce::String> metadata;
+            for (int index { 0 }; index < values.size (); ++index)
+                metadata.emplace (values.getAllKeys ()[index], values.getAllValues ()[index]);
+            juce::WavAudioFormat format;
+            auto writer { format.createWriterFor (stream, juce::AudioFormatWriterOptions {}.withSampleRate (48000)
+                .withNumChannels (channels).withBitsPerSample (floating ? 32 : 24)
+                .withSampleFormat (floating ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
+                                          : juce::AudioFormatWriterOptions::SampleFormat::integral)
+                .withMetadataValues (metadata)) };
+            check (writer != nullptr, "Create tagged CV fixture");
+            juce::AudioBuffer<float> data (channels, 128);
+            for (int side { 0 }; side < channels; ++side)
+                for (int frame { 0 }; frame < 128; ++frame) data.setSample (side, frame, side == 0 ? 0.25f : -0.5f);
+            check (writer->writeFromAudioSampleBuffer (data, 0, 128), "Write tagged CV fixture");
+        };
+        auto verifyTag = [&manager] (const juce::File& file)
+        {
+            auto reader { manager.getReaderFor (file) };
+            check (reader && CvSampleSafety::hasCvMetadata (reader->metadataValues) && CvSampleSafety::isCv (file, *reader),
+                   "CV purpose survives independently of filename and recipe");
+        };
+        const auto marked { external.getChildFile ("control.wav") };
+        tagged (marked, 1, false);
+        const auto original { bytes (marked) };
+        juce::File imported;
+        check (SafeAudioImport::importFile (manager, marked, preset, imported).wasOk (), "Import tagged CV");
+        check (bytes (imported) == original && bytes (marked) == original, "Compatible tagged CV copy remains byte-identical");
+        verifyTag (imported);
+        checkAudio (manager, imported);
+
+        const auto floating { external.getChildFile ("control-float.wav") };
+        tagged (floating, 1, true);
+        const auto floatOriginal { bytes (floating) };
+        check (SafeAudioImport::importFile (manager, floating, preset, imported).wasOk () && bytes (floating) == floatOriginal,
+               "Floating CV conversion preserves the source");
+        verifyTag (imported);
+        checkAudio (manager, imported);
+
+        const auto oldFolder { external.getChildFile ("old-cv-export") };
+        check (oldFolder.createDirectory ().wasOk (), "Create legacy CV export fixture");
+        const auto oldWave { oldFolder.getChildFile ("voice-01.wav") };
+        makeAudio (oldWave);
+        auto recipe { WaveformDesign::startingPoint (WaveformDesign::Mode::modulation, WaveformDesign::Shape::sine) };
+        recipe.durationSeconds = 128.0 / 48000.0;
+        check (oldFolder.getChildFile ("design.json").replaceWithText (juce::JSON::toString (WaveformDesign::toJson (recipe))), "Write legacy CV recipe");
+        const auto legacyOriginal { bytes (oldWave) };
+        auto oldReader { manager.getReaderFor (oldWave) };
+        check (oldReader && ! CvSampleSafety::hasCvMetadata (oldReader->metadataValues) && CvSampleSafety::isCv (oldWave, *oldReader),
+               "Legacy classification comes from the matching recipe, not an embedded tag");
+        oldReader.reset ();
+        check (SafeAudioImport::importFile (manager, oldWave, preset, imported).wasOk () && bytes (oldWave) == legacyOriginal,
+               "Import embeds legacy CV purpose in a new copy without modifying the original");
+        verifyTag (imported);
+        checkAudio (manager, imported);
+
+        const auto stereo { external.getChildFile ("cv-stereo.wav") };
+        tagged (stereo, 2, false);
+        const auto stereoOriginal { bytes (stereo) };
+        manager.splitStereoIntoTwoMono (stereo);
+        verifyTag (external.getChildFile ("cv-stereo-L.wav"));
+        verifyTag (external.getChildFile ("cv-stereo-R.wav"));
+        manager.mixStereoToMono (stereo);
+        verifyTag (external.getChildFile ("cv-stereo-mono.wav"));
+        check (bytes (stereo) == stereoOriginal, "Splitting/mixing preserves original CV WAV bytes");
+
+        const auto aiff { external.getChildFile ("instrument.aiff") };
+        makeAudio (aiff, true, 48000, 2, { { "MidiUnityNote", "60" }, { "Loop0Type", "1" },
+                                         { "Loop0StartIdentifier", "10" }, { "Loop0EndIdentifier", "20" } });
+        const auto aiffOriginal { bytes (aiff) };
+        auto aiffReader { manager.getReaderFor (aiff) };
+        check (aiffReader && aiffReader->metadataValues["NumSampleLoops"] == "2"
+               && aiffReader->metadataValues["Loop0StartIdentifier"] == "10", "AIFF fixture exposes its incompatible instrument-loop metadata");
+        aiffReader.reset ();
+        manager.splitStereoIntoTwoMono (aiff);
+        manager.mixStereoToMono (aiff);
+        for (const auto* suffix : { "-L.wav", "-R.wav", "-mono.wav" })
+        {
+            auto reader { manager.getReaderFor (external.getChildFile (juce::String ("instrument") + suffix)) };
+            check (reader && reader->lengthInSamples == 128 && reader->metadataValues["NumSampleLoops"].getIntValue () == 0,
+                   "AIFF split/mix does not manufacture WAV loops from incompatible metadata");
+        }
+        check (bytes (aiff) == aiffOriginal, "AIFF split/mix preserves original file bytes");
+        std::cout << "PASS: CV provenance survives copy, conversion, legacy import and stereo split/mix\n";
     }
 
     // Write RIFF bytes directly: a normal WAV writer would repair the missing
@@ -311,5 +405,6 @@ void testAudioFileSafety ()
     check (longFile.replaceWithText ("preserve"), "Create overlong file name");
     check (SafeRename::automaticDestination (longFile, renamed).wasOk () && renamed.getFileName ().length () <= 47 && renamed.getFileExtension () == ".aiff", "Auto-rename file limit includes actual extension length");
     testWavPadding (audio, external, preset);
+    testCvImportSafety (audio, external, preset);
     std::cout << "PASS: source-preserving imports, conversion staging/backup/recovery, collisions, failed assignment and type-aware name limits\n";
 }

@@ -1,5 +1,15 @@
 #include "SystemServices.h"
 
+void SystemServices::setAudioPlayer (AudioPlayer* audioPlayer)
+{
+    setValue (audioPlayer, AudioPlayerPropertyId, false);
+}
+
+AudioPlayer* SystemServices::getAudioPlayer ()
+{
+    return getValue<AudioPlayer*> (AudioPlayerPropertyId, data);
+}
+
 void SystemServices::setAudioManager (AudioManager* audioManager)
 {
     setValue (audioManager, AudioManagerPropertyId, false);

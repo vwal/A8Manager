@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioManager.h"
+#include "CvSampleSafety.h"
 #include "../SafeRename.h"
 #include <array>
 #include <cmath>
@@ -79,8 +80,10 @@ namespace SafeAudioImport
         const auto frames { reader->lengthInSamples };
         const auto rate { reader->sampleRate };
         const auto channels { reader->numChannels };
+        const auto cv { CvSampleSafety::isCv (source, *reader) };
+        const auto needsCvTag { cv && ! CvSampleSafety::hasCvMetadata (reader->metadataValues) };
 
-        if (manager.isAssimil8orSupportedAudioFile (source))
+        if (manager.isAssimil8orSupportedAudioFile (source) && ! needsCvTag)
         {
             const auto copied { copyNew (source, stage) };
             if (copied.failed ()) return copied;
@@ -99,7 +102,15 @@ namespace SafeAudioImport
             if (source.hasFileExtension ("wav"))
                 for (int index { 0 }; index < reader->metadataValues.size (); ++index)
                     metadata.emplace (reader->metadataValues.getAllKeys ()[index], reader->metadataValues.getAllValues ()[index]);
-            // Conversions use 24-bit PCM; existing compatible WAVs are copied byte-for-byte.
+            if (cv)
+            {
+                auto tagged { reader->metadataValues };
+                CvSampleSafety::markCv (tagged);
+                metadata[juce::WavAudioFormat::riffInfoComment2] = tagged[juce::WavAudioFormat::riffInfoComment2];
+            }
+            // Conversions use 24-bit PCM. Compatible WAVs stay byte-identical
+            // except legacy CV exports: embed their recipe-derived purpose in
+            // the new copy so it survives import without the original recipe.
             auto writer { format.createWriterFor (stream, juce::AudioFormatWriterOptions {}.withSampleRate (rate)
                                                  .withNumChannels (static_cast<int> (channels)).withBitsPerSample (24)
                                                  .withMetadataValues (metadata)) };
@@ -116,6 +127,8 @@ namespace SafeAudioImport
         if (! verify || verify->lengthInSamples != frames || verify->sampleRate != rate || verify->numChannels != channels
             || verify->usesFloatingPointData || ! manager.isAssimil8orSupportedAudioFile (stage))
             return juce::Result::fail ("The staged WAV did not pass validation. The original has not been changed.");
+        if (cv && ! CvSampleSafety::hasCvMetadata (verify->metadataValues))
+            return juce::Result::fail ("The staged WAV lost its CV safety marking. The original has not been changed.");
         return juce::Result::ok ();
     }
 

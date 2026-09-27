@@ -18,6 +18,18 @@ public:
         viewport.setScrollBarsShown (true, true);
         viewport.setScrollOnDragEnabled (false);
         addAndMakeVisible (viewport);
+        samples.setButtonText ("Samples");
+        designer.setButtonText ("Waveform designer");
+        samples.setToggleState (true, juce::dontSendNotification);
+        samples.onClick = [this] () { editor.showWaveformWorkspace (false); };
+        designer.onClick = [this] () { editor.showWaveformWorkspace (true); };
+        editor.onWorkspaceChanged = [this] (bool show)
+        {
+            samples.setToggleState (! show, juce::dontSendNotification);
+            designer.setToggleState (show, juce::dontSendNotification);
+        };
+        addAndMakeVisible (samples);
+        addAndMakeVisible (designer);
         for (const auto percentage : { 100, 125, 150, 175, 200 })
             scaleSelector.addItem (juce::String (percentage) + "%", percentage);
         scaleSelector.setSelectedId (juce::roundToInt (scale * 100.0), juce::dontSendNotification);
@@ -33,6 +45,7 @@ public:
         help.onClick = [this] ()
         {
             juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Editing shortcuts",
+                "Waveform designer: Audio Cycle, CV/Modulation and Layer Bank generate WAVs and an A8 preset in a new folder. Audition plays audio cycles or the full detuned/panned bank while you shape it. Monitor level and transpose do not change exports. CV speaker audition is disabled. Expand waveform opens a larger preview; Escape/X closes it. Leaving the designer stops its audio. Recipes let you reopen exported designs. The current preset is not changed by designing or exporting.\n\n"
                 "Folders: Options > Select Root Folder jumps to another location without scanning intermediate folders. Confirm the destination to start scanning; Cancel keeps the current folder. On macOS, Command-Shift-G in the chooser lets you enter a path.\n\n"
                 "Values: left-drag vertically to adjust; Shift-drag for slower, unaccelerated fine steps. Focusing a field selects its contents; type to replace. Horizontal dragging selects text. Command-wheel on macOS / Ctrl-wheel elsewhere adjusts values; add Shift to nudge one increment.\n\n"
                 "Waveform: + / - zoom; click the zoom percentage or double-click to reset both axes. The arrow expands the view; X or Escape closes it. The gear/right-click menu offers Zoom, Jump (keys 1-4 with waveform focus) and Zero Crossing Nudge; right-click also offers Set Marker Here.\n\n"
@@ -54,6 +67,7 @@ private:
     juce::Viewport viewport;
     juce::ComboBox scaleSelector;
     juce::TextButton help;
+    juce::TextButton samples, designer;
     double scale { 1.25 };
 
     void resized () override
@@ -63,6 +77,11 @@ private:
         help.setBounds (toolbar.removeFromRight (104));
         toolbar.removeFromRight (12);
         scaleSelector.setBounds (toolbar.removeFromRight (92));
+        toolbar.removeFromRight (78); // Space for the UI size label.
+        auto workspaceButtons { toolbar.withTrimmedLeft (270) };
+        samples.setBounds (workspaceButtons.removeFromLeft (88));
+        workspaceButtons.removeFromLeft (6);
+        designer.setBounds (workspaceButtons.removeFromLeft (154));
         viewport.setBounds (bounds);
         const auto width { juce::jmax (1160, static_cast<int> ((bounds.getWidth () - 16) / scale)) };
         const auto height { juce::jmax (800, static_cast<int> ((bounds.getHeight () - 16) / scale)) };

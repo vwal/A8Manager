@@ -1,8 +1,23 @@
 #include "AudioManager.h"
+#include "CvSampleSafety.h"
 #include <cmath>
 #include "oolib/Debug/DebugLog.h"
 
 constexpr float epsilon { 1e-6f };
+namespace
+{
+    std::unordered_map<juce::String, juce::String> safeOutputMetadata (const juce::File& source, const juce::AudioFormatReader& reader)
+    {
+        // AIFF's similarly named loop fields use different types and marker
+        // identifiers, not WAV frame positions. Do not reinterpret them.
+        auto metadata { source.hasFileExtension ("wav") ? reader.metadataValues : juce::StringPairArray {} };
+        if (CvSampleSafety::isCv (source, reader)) CvSampleSafety::markCv (metadata);
+        std::unordered_map<juce::String, juce::String> result;
+        for (int index { 0 }; index < metadata.size (); ++index)
+            result.emplace (metadata.getAllKeys ()[index], metadata.getAllValues ()[index]);
+        return result;
+    }
+}
 #define INCLUDE_WAVE_MATCHING_LOOP_POINT_ALIGN 0
 AudioManager::AudioManager ()
 {
@@ -180,7 +195,8 @@ void AudioManager::mixStereoToMono (juce::File inputFile)
         // on success, the writer takes ownership of the output stream, and will delete it when done
         if (auto writer { wavAudioFormat.createWriterFor (outputStream, juce::AudioFormatWriterOptions {}.withSampleRate (sampleFileReader->sampleRate)
                                                                                                         .withNumChannels (1)
-                                                                                                        .withBitsPerSample (sampleFileReader->bitsPerSample)) }; writer != nullptr)
+                                                                                                        .withBitsPerSample (sampleFileReader->bitsPerSample)
+                                                                                                        .withMetadataValues (safeOutputMetadata (inputFile, *sampleFileReader))) }; writer != nullptr)
         {
             writer->writeFromAudioSampleBuffer (monoAudioBuffer, 0, static_cast<int> (sampleFileReader->lengthInSamples));
         }
@@ -234,7 +250,8 @@ void AudioManager::splitStereoIntoTwoMono (juce::File inputFile)
             // on success, the writer takes ownership of the output stream, and will delete it when done
             if (auto writer { wavAudioFormat.createWriterFor (outputStream, juce::AudioFormatWriterOptions {}.withSampleRate (sampleFileReader->sampleRate)
                                                                                                             .withNumChannels (1)
-                                                                                                            .withBitsPerSample (sampleFileReader->bitsPerSample)) }; writer != nullptr)
+                                                                                                            .withBitsPerSample (sampleFileReader->bitsPerSample)
+                                                                                                            .withMetadataValues (safeOutputMetadata (inputFile, *sampleFileReader))) }; writer != nullptr)
             {
                 writer->writeFromAudioSampleBuffer (monoAudioBuffer, 0, static_cast<int> (sampleFileReader->lengthInSamples));
             }

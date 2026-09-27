@@ -1,6 +1,9 @@
 #include "MainComponent.h"
 #include "ModernTheme.h"
+#include "../SystemServices.h"
+#include "../Assimil8or/Audio/AudioPlayer.h"
 #include "oolib/Properties/PersistentRootProperties.h"
+#include "oolib/Properties/RuntimeRootProperties.h"
 
 const auto toolWindowHeight { 30 };
 
@@ -32,6 +35,7 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
 
     PersistentRootProperties persistentRootProperties (rootPropertiesVT, PersistentRootProperties::WrapperType::client, PersistentRootProperties::EnableCallbacks::no);
     guiProperties.wrap (persistentRootProperties.getValueTree (), GuiProperties::WrapperType::client, GuiProperties::EnableCallbacks::no);
+    appProperties.wrap (persistentRootProperties.getValueTree (), AppProperties::WrapperType::client, AppProperties::EnableCallbacks::no);
 
     fileViewComponent.overwritePresetOrCancel = [this] (std::function<void ()> overwriteFunction, std::function<void ()> cancelFunction)
     {
@@ -71,8 +75,40 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
     addAndMakeVisible (topAndBottomSplitter);
     addChildComponent (midiConfigComponent);
     addAndMakeVisible (bottomStatusWindow);
+    addChildComponent (waveformWorkspace);
+    waveformWorkspace.onClose = [this] () { showWaveformWorkspace (false); };
+    waveformWorkspace.onMatchDuration = [this] (int region) { return assimil8orEditorComponent.getSelectedDuration (region); };
+    waveformWorkspace.onOpenExportedFolder = [this] (juce::File folder)
+    {
+        showWaveformWorkspace (false);
+        currentFolderComponent.requestRootFolder (folder);
+    };
+    RuntimeRootProperties runtime (rootPropertiesVT, RuntimeRootProperties::WrapperType::client, RuntimeRootProperties::EnableCallbacks::no);
+    SystemServices services (runtime.getValueTree (), SystemServices::WrapperType::client, SystemServices::EnableCallbacks::no);
+    if (auto* player { services.getAudioPlayer () }; player != nullptr)
+    {
+        // AudioPlayer belongs to the application and outlives this workspace.
+        waveformWorkspace.onAuditionPayload = [player] (WaveformAudition::PayloadPtr payload) { player->setWaveformAuditionPayload (std::move (payload)); };
+        waveformWorkspace.onStartAudition = [player] () { return player->startWaveformAudition (); };
+        waveformWorkspace.onStopAudition = [player] () { player->stopWaveformAudition (); };
+        waveformWorkspace.onAuditionMonitorChange = [player] (double decibels, double semitones) { return player->setWaveformMonitor (decibels, semitones); };
+        waveformWorkspace.isAuditionActive = [player] () { return player->isWaveformAuditionActive (); };
+        waveformWorkspace.onAudioSettings = [player] () { player->showAudioSettings (); };
+    }
 
     fileViewComponent.onAudioFileSelected = [this] (juce::File audioFile) { assimil8orEditorComponent.receiveSampleLoadRequest (audioFile); };
+}
+
+void MainComponent::showWaveformWorkspace (bool show)
+{
+    if (show)
+        waveformWorkspace.setInitialFolder (juce::File (appProperties.getMostRecentFolder ()));
+    currentFolderComponent.setVisible (! show);
+    topAndBottomSplitter.setVisible (! show);
+    bottomStatusWindow.setVisible (! show);
+    waveformWorkspace.setVisible (show);
+    if (onWorkspaceChanged != nullptr)
+        onWorkspaceChanged (show);
 }
 
 void MainComponent::restoreLayout ()
@@ -108,6 +144,7 @@ void MainComponent::paint ([[maybe_unused]] juce::Graphics& g)
 
 void MainComponent::resized ()
 {
+    waveformWorkspace.setBounds (getLocalBounds ());
     auto localBounds { getLocalBounds () };
     currentFolderComponent.setBounds (localBounds.removeFromTop (30));
     bottomStatusWindow.setBounds (localBounds.removeFromBottom (toolWindowHeight));

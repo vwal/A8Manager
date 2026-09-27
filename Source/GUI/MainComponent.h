@@ -11,6 +11,7 @@
 #include "Assimil8or/Validator/Assimil8orValidatorComponent.h"
 #include "oolib/GUI/SplitWindowComponent.h"
 #include "ModernTheme.h"
+#include "WaveformWorkspace.h"
 
 class WorkspaceSplitter : public SplitWindowComponent
 {
@@ -31,6 +32,9 @@ public:
     MainComponent (juce::ValueTree rootPropertiesVT);
     ~MainComponent () = default;
 
+    void showWaveformWorkspace (bool show);
+    std::function<void (bool)> onWorkspaceChanged;
+
 private:
     Assimil8orEditorComponent assimil8orEditorComponent;
     Assimil8orValidatorComponent assimil8orValidatorComponent;
@@ -43,6 +47,8 @@ private:
     WorkspaceSplitter presetListEditorSplitter;
     WorkspaceSplitter folderBrowserEditorSplitter;
     BottomStatusWindow bottomStatusWindow;
+    WaveformWorkspace waveformWorkspace;
+    AppProperties appProperties;
 
     juce::TooltipWindow tooltipWindow;
 

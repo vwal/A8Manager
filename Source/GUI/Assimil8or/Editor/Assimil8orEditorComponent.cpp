@@ -1,4 +1,5 @@
 #include "Assimil8orEditorComponent.h"
+#include "WaveformDuration.h"
 #include "../../ModernTheme.h"
 #include "ParameterToolTipData.h"
 #include "../../../SystemServices.h"
@@ -15,6 +16,26 @@
 #include "oolib/Properties/PersistentRootProperties.h"
 #include <algorithm>
 
+std::optional<double> Assimil8orEditorComponent::getSelectedDuration (int region)
+{
+    auto channel { channelTabs.getCurrentTabIndex () };
+    if (! channelEditorsInitialized || editManager == nullptr || channel < 0 || channel >= 8)
+        return std::nullopt;
+    // Right-side stereo controls follow the left/master zone's markers and pitch.
+    if (channel > 0 && channelProperties [channel].getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
+        --channel;
+    const auto zone { channelEditors [channel].getSelectedZoneIndex () };
+    if (zone < 0 || zone >= 8)
+        return std::nullopt;
+    std::optional<double> result;
+    editManager->forZones (channel, { zone }, [&] (juce::ValueTree zoneTree, juce::ValueTree sampleTree)
+    {
+        ZoneProperties zoneProperties (zoneTree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        SampleProperties sampleProperties (sampleTree, SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        result = WaveformDuration::selected (zoneProperties, sampleProperties, region);
+    });
+    return result;
+}
 Assimil8orEditorComponent::Assimil8orEditorComponent ()
 {
     setOpaque (true);

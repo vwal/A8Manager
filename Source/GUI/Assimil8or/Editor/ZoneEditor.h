@@ -35,6 +35,7 @@ public:
 private:
     friend struct ZoneEditorTestAccess;
     friend struct AudioAuditTestAccess;
+    friend struct CvAuditionTestAccess;
     class ClickListener : public juce::MouseListener
     {
     public:
@@ -54,6 +55,8 @@ private:
     ZoneProperties minZoneProperties;
     ZoneProperties maxZoneProperties;
     SampleProperties sampleProperties;
+    SampleProperties previousSampleProperties, nextSampleProperties;
+    ChannelProperties previousChannelProperties, nextChannelProperties;
     // TODO - I want to remove ChannelProperties!
     ChannelProperties parentChannelProperties;
     // TODO - I think we might be able to get rid of currentSampleFileName too, but I am not sure yet
@@ -77,6 +80,9 @@ private:
     LoopPointsView loopPointsView;
     juce::TextButton oneShotPlayButton;
     juce::TextButton loopPlayButton;
+    juce::Label cvAuditionNotice;
+    bool hasCvAuditionSource ();
+    void updateAuditionControls ();
     juce::TextButton toolsButton;
     juce::TextButton copyNextButton { "Copy > next" };
     juce::TextButton continueNextButton { "Continue > next" };

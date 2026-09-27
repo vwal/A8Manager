@@ -8,6 +8,7 @@ void SampleProperties::initValueTree ()
     setName ("", false);
     setNumChannels (0, false);
     setStatus (SampleStatus::uninitialized, false);
+    setIsCv (false, false);
 }
 
 void SampleProperties::setName (juce::String name, bool includeSelfCallback)
@@ -38,6 +39,16 @@ void SampleProperties::setLengthInSamples (juce::int64 lengthInSamples, bool inc
 void SampleProperties::setStatus (SampleStatus status, bool includeSelfCallback)
 {
     setValue (static_cast<int> (status), StatusPropertyId, includeSelfCallback);
+}
+
+void SampleProperties::setIsCv (bool isCv, bool includeSelfCallback)
+{
+    setValue (isCv, IsCvPropertyId, includeSelfCallback);
+}
+
+bool SampleProperties::getIsCv ()
+{
+    return getValue<bool> (IsCvPropertyId);
 }
 
 void SampleProperties::setAudioBufferPtr (AudioBufferType* audioBufferPtr, bool includeSelfCallback)
@@ -118,6 +129,11 @@ void SampleProperties::valueTreePropertyChanged (juce::ValueTree& vt, const juce
         {
             if (onStatusChange != nullptr)
                 onStatusChange (getStatus ());
+        }
+        else if (property == IsCvPropertyId)
+        {
+            if (onIsCvChange != nullptr)
+                onIsCvChange (getIsCv ());
         }
     }
 }

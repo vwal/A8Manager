@@ -1,6 +1,7 @@
 #include "SampleManager.h"
 #include "../../../../SystemServices.h"
 #include "../../../../Assimil8or/PresetManagerProperties.h"
+#include "../../../../Assimil8or/Audio/CvSampleSafety.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include <cmath>
@@ -94,12 +95,14 @@ void SampleManager::handleSampleChange (int channelIndex, int zoneIndex, juce::S
         sampleProperties.setName ("", false);
         sampleProperties.setNumChannels (0, false);
     }
+    sampleProperties.setIsCv (false, false);
 
     // if there is a new sample coming in (vs sample being reset) we want to open it
     if (sampleName.isNotEmpty ())
     {
         LogSamplePool ("handleSampleChange: opening sample '" + sampleName + " 'for c" + juce::String (channelIndex) + "/z" + juce::String (zoneIndex));
         auto& sampleData { open (sampleName) };
+        sampleProperties.setIsCv (sampleData.isCv, false);
         sampleProperties.setName (sampleName, false);
         sampleProperties.setBitsPerSample (sampleData.bitsPerSample, false);
         sampleProperties.setSampleRate (sampleData.sampleRate, false);
@@ -144,6 +147,9 @@ void SampleManager::updateSampleProperties (juce::String fileName, SampleData& s
             auto& sampleProperties { zoneAndSamplePropertiesList [channelIndex][zoneIndex].sampleProperties };
             if (sampleProperties.getName () == fileName)
             {
+                // Publish safety classification before any usable buffer or
+                // exists notification, including same-path cache reloads.
+                sampleProperties.setIsCv (sampleData.isCv, false);
                 sampleProperties.setBitsPerSample (sampleData.bitsPerSample, false);
                 sampleProperties.setSampleRate (sampleData.sampleRate, false);
                 sampleProperties.setLengthInSamples (sampleData.lengthInSamples, false);
@@ -175,6 +181,7 @@ void SampleManager::updateSample (juce::String fileName, SampleData& sampleData)
     sampleData.sampleRate = 0.0;
     sampleData.numChannels = 0;
     sampleData.lengthInSamples = 0;
+    sampleData.isCv = false;
     sampleData.audioBuffer.setSize (0, 0);
     juce::File fullPath { currentFolder.getChildFile (fileName) };
     if (fullPath.existsAsFile ())
@@ -187,6 +194,7 @@ void SampleManager::updateSample (juce::String fileName, SampleData& sampleData)
         {
             // cache sample attributes
             sampleData.status = SampleStatus::exists;
+            sampleData.isCv = CvSampleSafety::isCv (fullPath, *sampleFileReader);
             sampleData.bitsPerSample = sampleFileReader->bitsPerSample;
             sampleData.sampleRate = sampleFileReader->sampleRate;
             sampleData.numChannels = sampleFileReader->numChannels;

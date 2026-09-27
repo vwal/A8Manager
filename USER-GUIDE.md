@@ -20,6 +20,7 @@ OFFSET, but not all the channel processing you can configure in the editor.
 - [Stereo samples](#stereo-samples)
 - [Zone selection voltages](#zone-selection-voltages)
 - [Making consecutive slices](#making-consecutive-slices)
+- [Creating waveforms and CV](#creating-waveforms-and-cv)
 - [Saving and moving your work](#saving-and-moving-your-work)
 - [Common questions](#common-questions)
 
@@ -585,6 +586,42 @@ The browser reports failures and reopens the rename dialog for another attempt.
 Renaming a file does not automatically rewrite references in saved presets;
 check and repair any affected sample assignments before saving or transferring.
 
+## Creating waveforms and CV
+
+Choose **Waveform designer** in the top toolbar. This is a separate design
+surface: switching to it does not replace the sample or preset you are editing.
+It has Audio Cycle, CV/Modulation, and Layer Bank modes, with starting shapes,
+shaping controls, an interactive curve editor and a visual preview.
+
+**Create A8 files** writes a new folder containing WAV files, preset 001,
+`design.json` and loading instructions. An existing folder is never overwritten.
+Use **Open in Sample workspace** to inspect the result; any unsaved preset is
+protected by the usual confirmation. Or copy the entire generated folder onto
+your Assimil8or SD card and load preset 001 on the module.
+
+The [Waveform Designer guide](WAVEFORM-DESIGNER.md) explains the controls,
+supersaw layering, sample-length matching, DC safety, and voltage calibration.
+Use **Start audition** to hear an Audio Cycle or the complete Layer Bank while
+shaping it. Bank audition includes each voice's detune, phase, pan and level.
+Monitor level and transpose affect listening only, not exported WAVs or presets;
+the monitor repeats continuously regardless of the export playback mode.
+CV/Modulation is deliberately excluded from speaker audition. New CV WAVs also
+carry a purpose tag that blocks their playback in **Samples**, with disabled
+ONCE/LOOP buttons and a **CV sample / Speaker audition disabled** notice. Either
+side of a stereo pair being CV blocks the pair. You can still edit its markers
+and preset. New CV presets default to Mix Off for individual-output use; verify
+the module displays Off before connecting a mix output to speakers.
+
+Older CV exports are recognised beside their original matching recipe; arbitrary
+unmarked files or files with stripped metadata cannot reliably be detected.
+See the designer guide for the protection's limits and safe monitoring advice.
+
+The compact preview keeps a single cycle easy to recognise. **Expand waveform**
+opens a larger, live-updating view; closing it does not stop audition. Leaving the
+designer does stop audition. The Sample workspace still previews individual
+samples rather than a whole linked bank. Before using generated audio or CV on
+the module, work through the [hardware test checklist](HARDWARE-TEST-CHECKLIST.md).
+
 ## Common questions
 
 **Why is there no sound?**  
@@ -592,6 +629,9 @@ Check that the zone has a successfully loaded sample, the selected region has
 nonzero length, and ONCE or LOOP is running. Open SETTINGS to check the computer's
 audio output device and routing, and check its volume. Review validation errors
 if the sample is missing or cannot be loaded.
+If the zone displays **CV sample / Speaker audition disabled**, silence is
+intentional: inspect that file visually and use a suitable meter/scope on the
+Assimil8or individual output instead of computer speakers.
 
 **Why am I hearing the wrong part of the file?**  
 Check the outlined field group beside the small waveform. Click SMPL START/END

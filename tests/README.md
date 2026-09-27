@@ -23,7 +23,7 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers eighteen tests, each with a 60-second timeout. Use `ctest --test-dir
+CTest registers twenty-five tests, with 60- or 90-second timeouts. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
@@ -167,7 +167,11 @@ versus file auto-name limits. Direct RIFF fixtures cover JUCE 9.0.2's missing-fi
 padding fix for 8-bit and 24-bit PCM and cue-label metadata: decoded samples,
 lengths and imported metadata are checked, while genuinely truncated data must
 still be rejected without changing the source or publishing an output. No real
-samples are used.
+samples are used. CV fixtures also verify purpose-tag preservation through
+PCM copying, float conversion, stereo split/mix and legacy-recipe imports,
+including unchanged original files and decoded sample contents.
+AIFF instrument-loop fields must not be reinterpreted as WAV loop metadata
+when splitting or mixing channels.
 
 **StereoAssignmentRegression** exercises actual EditManager assignment from both
 sides of an occupied pair, shorter stereo replacements, mono duplication, batch
@@ -199,3 +203,53 @@ Copy/Continue, Insert, full/settings-only Paste, Flip, Explode and Clear. It che
 distinct L/R files and selectors, slot IDs, voltage synchronization, refusal to
 drop a full final slot, incomplete pairs and final slice remainders. Confirmation
 dialogs themselves are not automated.
+
+## Waveform workspace
+
+The waveform-design checks compile the production renderer, exporter and GUI.
+They use generated data and disposable directories; no real samples, preferences,
+audio devices or hardware are used.
+
+- **WaveformDesignRegression** checks all audio shapes, harmonic filtering after
+  drive/fold, phase/gain, layer metadata separation, deterministic CV/random
+  curves, preserved DC/unipolar offsets, clipping and boundary statistics,
+  envelope timing, drawn interpolation, validation and recipe round-trips.
+- **WaveformDesignExportRegression** exports real PCM24 WAVs and parses the
+  generated preset. It verifies every decoded sample against the renderer,
+  frame counts/rates, Master/Link voice assignments, pan/detune, mix headroom,
+  playback choices, full default trees, safe names, file/folder collisions,
+  invalid inputs, cleanup and preservation of shared defaults. CV/audio purpose
+  tags survive read-back, copies and renames; bounded legacy-recipe checks reject
+  malformed/mismatched inputs, invalid UTF-8 and excessively nested/trailing JSON,
+  and avoid filename/DC-content guesses. CV presets
+  round-trip numeric MixLevel -90 while audio/bank mix headroom is unchanged;
+  hardware Off interpretation remains a separate module check.
+- **CvAuditionRegression** drives the actual sample cache, audio callback and
+  ZoneEditor without an audio device. Tagged/legacy CV is silent, direct and
+  stale requests are refused, same-path reloads update classification, and CV on
+  either stereo side blocks the pair. Ordinary audio remains audible and the
+  independent designer route is preserved. Optional offscreen UI rendering uses
+  `A8MANAGER_TEST_ARTIFACTS` (`cv-zone-audition-disabled.png`).
+- **WaveformWorkspaceRegression** drives the designer's real controls and
+  background preview, including CV matching, curve editing and layer settings.
+  A fake audio host checks explicit start/stop, monitor-only controls, live
+  updates during continuous dragging, bank payloads, CV exclusion and workspace
+  lifecycle. Compact and expanded previews are rendered without native windows;
+  optional offscreen screenshots use `A8MANAGER_TEST_ARTIFACTS`.
+- **WaveformAuditionRegression** checks the production monitor's generated audio
+  blocks, including tuning, layered voice mixing, rate conversion, DC removal,
+  fades, live updates, bounded output and invalid/CV rejection. No device opens.
+- **WaveformAuditionRoutingRegression** exercises the real AudioPlayer callback
+  with in-memory sources: exclusive sample/designer routing, cleared stale
+  completion state, explicit restart after device changes, stopped-source
+  silence, and unchanged sample audition settings.
+- **WaveformDurationRegression** checks source/sample/loop duration matching,
+  zone pitch, fractional loop ends and invalid/unloaded data. The existing
+  StereoChannelUiRegression also checks the real selected-editor binding,
+  including the stereo right channel following its master.
+
+Native file-chooser interactions, analog voltage calibration, actual linked
+hardware playback and listening quality remain manual tests. A rendered screenshot
+or a passing preset-parser test is not a claim of hardware verification. Use the
+[hardware checklist](../HARDWARE-TEST-CHECKLIST.md) to record module and listening
+tests separately.

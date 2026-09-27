@@ -41,6 +41,17 @@ set_tests_properties(ParserCvRegression StereoSplitRegression PROPERTIES TIMEOUT
 juce_add_console_app(A8ManagerInteractionTests PRODUCT_NAME "A8Manager Interaction Tests")
 juce_generate_juce_header(A8ManagerInteractionTests)
 target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
+    CvAuditionTests.cpp
+    WaveformAuditionTests.cpp
+    WaveformAuditionRoutingTests.cpp
+    ../Source/Assimil8or/Audio/WaveformAudition.cpp
+    WaveformDesignTests.cpp
+    WaveformDesignExportTests.cpp
+    WaveformWorkspaceTests.cpp
+    WaveformDurationTests.cpp
+    ../Source/Assimil8or/Audio/WaveformDesign.cpp
+    ../Source/Assimil8or/Audio/WaveformDesignExport.cpp
+    ../Source/GUI/WaveformWorkspace.cpp
     RootFolderTests.cpp
     PlaybackTests.cpp
     LoopPointsTests.cpp
@@ -101,10 +112,22 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
 target_include_directories(A8ManagerInteractionTests PRIVATE ../Source ${OOLIB_INCLUDE_DIR})
 target_compile_features(A8ManagerInteractionTests PRIVATE cxx_std_17)
 target_compile_definitions(A8ManagerInteractionTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_MP3AUDIOFORMAT=0 DONT_SET_USING_JUCE_NAMESPACE=1)
-target_link_libraries(A8ManagerInteractionTests PRIVATE A8ManagerBinaryData signalsmith-stretch juce::juce_audio_utils juce::juce_data_structures juce::juce_recommended_config_flags)
+target_link_libraries(A8ManagerInteractionTests PRIVATE A8ManagerBinaryData signalsmith-stretch juce::juce_audio_utils juce::juce_data_structures juce::juce_dsp juce::juce_recommended_config_flags)
 set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
 add_test(NAME ValueDragRegression COMMAND A8ManagerInteractionTests)
+add_test(NAME WaveformDesignRegression COMMAND A8ManagerInteractionTests --waveform-design)
+add_test(NAME WaveformDesignExportRegression COMMAND A8ManagerInteractionTests --waveform-design-export)
+add_test(NAME WaveformWorkspaceRegression COMMAND A8ManagerInteractionTests --waveform-workspace)
+add_test(NAME WaveformDurationRegression COMMAND A8ManagerInteractionTests --waveform-duration)
+add_test(NAME WaveformAuditionRegression COMMAND A8ManagerInteractionTests --waveform-audition)
+add_test(NAME WaveformAuditionRoutingRegression COMMAND A8ManagerInteractionTests --waveform-audition-routing)
+add_test(NAME CvAuditionRegression COMMAND A8ManagerInteractionTests --cv-audition)
+set_tests_properties(CvAuditionRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
+set_tests_properties(WaveformAuditionRegression WaveformAuditionRoutingRegression
+    PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
+set_tests_properties(WaveformDesignRegression WaveformDesignExportRegression WaveformWorkspaceRegression WaveformDurationRegression
+    PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME RootFolderRegression COMMAND A8ManagerInteractionTests --root-folder)
 add_test(NAME PlaybackRegression COMMAND A8ManagerInteractionTests --playback)
 add_test(NAME LoopPointsRegression COMMAND A8ManagerInteractionTests --loop-preview)

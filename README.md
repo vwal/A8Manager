@@ -4,12 +4,24 @@ A tool to manage Presets and Sample files for the Rossum-Electro Assimil8or
 
 This branch contains the [3.0.0 workspace update](UI-PREVIEW.md) with scalable
 controls, direct value dragging, waveform controls, and sequential zone editing.
+It also includes a separate **Waveform designer** for single-cycle audio,
+CV/modulation and linked layer banks such as supersaws. Designs export to new,
+self-contained A8 folders with 24-bit PCM WAVs, a preset, and an editable recipe.
+Audio cycles and complete layer banks can be auditioned live while shaping;
+the compact waveform preview also has an expanded view.
+Generated CV files are marked to prevent Samples-workspace speaker audition,
+and new CV presets default to Mix Off for individual-output use (verify on hardware).
+See the [waveform workspace guide](WAVEFORM-DESIGNER.md) and
+[hardware test checklist](HARDWARE-TEST-CHECKLIST.md).
+The [CV-generation review](CV-GENERATION-REVIEW.md) compares the supplied discussion
+with current capabilities and records the remaining companion-channel design work.
 
 New to the app? Start with the [User Guide](USER-GUIDE.md) for a first-preset
 walkthrough, mouse gestures, sample/loop markers, audition speed and pitch,
 stereo assignments, and saving your work.
 
-Windows and macOS builds available at: https://cpr2323.github.io/a8manager/index.html
+Historical upstream Windows and macOS builds (not this independent fork):
+https://cpr2323.github.io/a8manager/index.html
 
 # Building
 

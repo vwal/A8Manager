@@ -24,6 +24,7 @@ public:
     void setLengthInSamples (juce::int64, bool includeSelfCallback);
     void setAudioBufferPtr (AudioBufferType* audioBufferPtr, bool includeSelfCallback);
     void setStatus (SampleStatus status, bool includeSelfCallback);
+    void setIsCv (bool isCv, bool includeSelfCallback);
 
     juce::String getName ();
     int getBitsPerSample ();
@@ -32,6 +33,7 @@ public:
     juce::int64 getLengthInSamples ();
     AudioBufferType* getAudioBufferPtr ();
     SampleStatus getStatus ();
+    bool getIsCv ();
 
     std::function<void (juce::String name)> onNameChange;
     std::function<void (int bitsPerSample)> onBitsPerSampleChange;
@@ -40,6 +42,7 @@ public:
     std::function<void (juce::int64 lengthInSamples)> onLengthInSamplesChange;
     std::function<void (AudioBufferType* audioBufferPtr)> onAudioBufferPtrChange;
     std::function<void (SampleStatus status)> onStatusChange;
+    std::function<void (bool isCv)> onIsCvChange;
 
     static inline const juce::Identifier SamplePropertiesTypeId { "Sample" };
     static inline const juce::Identifier NamePropertyId            { "name" };
@@ -49,6 +52,7 @@ public:
     static inline const juce::Identifier LengthInSamplesPropertyId { "lengthInSamples" };
     static inline const juce::Identifier AudioBufferPtrPropertyId  { "audioBufferPtr" };
     static inline const juce::Identifier StatusPropertyId          { "status" };
+    static inline const juce::Identifier IsCvPropertyId            { "isCv" };
 
     void initValueTree ();
     void processValueTree () {}
