@@ -106,7 +106,7 @@ namespace
         check (matchBoundary (data, 0, 20, 200.5, 0, 196, 1000, false, true) == 31, "Fractional fixed END uses the same final frame as the join preview");
         check (! matchBoundary (data, 0, 162, 20, 24, 400, 1000, true, false), "An already matched boundary stays put");
         check (! matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false), "Do not move outside legal marker limits");
-        check (! matchBoundary (data, 0, 200, 20, 24, 400, 500, true, false), "Search radius follows source rate, not a whole-file scan");
+        check (matchBoundary (data, 0, 200, 20, 24, 400, 500, true, false) == 162, "Matches beyond 50 ms are no longer excluded");
         data.setSample (0, 198, -0.24f);
         check (matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false) == 199, "Choose a closer amplitude even when no exact match exists");
         data.setSample (0, 204, -0.25f);
@@ -145,7 +145,8 @@ namespace
             auto candidate = [&] (int marker, float value) { data.setSample (0, marker - offset, value); };
             auto match = [&] (double moving, bool right, juce::int64 minimum = 0, juce::int64 maximum = 400, double rate = 1000.0)
             {
-                return matchBoundary (data, 0, moving, opposite, minimum, maximum, rate, endBoundary, right);
+                return matchBoundary (data, 0, moving, opposite, std::max (minimum, juce::int64 { endBoundary ? 24 : 0 }),
+                                      std::min (maximum, juce::int64 { endBoundary ? 400 : 386 }), rate, endBoundary, right);
             };
 
             reset ();
@@ -164,10 +165,13 @@ namespace
 
             reset ();
             candidate (150, -0.25f); candidate (250, -0.25f);
-            check (match (200, false) == 150 && match (200, true) == 250, "The 50 ms search radius includes both exact limits");
+            check (match (200, false) == 150 && match (200, true) == 250, "Exact 50 ms matches remain available in both directions");
             check (! match (200, false, 151, 400) && ! match (200, true, 0, 249), "Both directions obey their legal marker limits");
-            check (! match (200, false, 0, 400, 980) && ! match (200, true, 0, 400, 980), "Both directions exclude matches outside the source-rate radius");
-            check (! match (200.5, false) && match (200.5, true) == 250, "Fractional current markers retain a radius centred on the actual boundary");
+            check (match (200, false, 0, 400, 980) == 150 && match (200, true, 0, 400, 980) == 250, "Source rate no longer limits the search extent");
+            check (match (200.5, false) == 150 && match (200.5, true) == 250, "Fractional current markers can match beyond 50 ms");
+            candidate (150, 0.6f); candidate (250, 0.6f);
+            candidate (50, -0.25f); candidate (350, -0.25f);
+            check (match (200, false) == 50 && match (200, true) == 350, "Both endpoint kinds find distant matches in either direction");
 
             reset ();
             candidate (199, -0.25f); candidate (201, -0.25f);
@@ -187,12 +191,26 @@ namespace
 
             reset ();
             candidate (offset, -0.25f); candidate (399 + offset, -0.25f);
-            check (match (5 + offset, false) == offset && match (394 + offset, true) == 399 + offset,
+            check (matchBoundary (data, 0, 5 + offset, opposite, 0, 400, 1000, endBoundary, false) == offset &&
+                   matchBoundary (data, 0, 394 + offset, opposite, 0, 400, 1000, endBoundary, true) == 399 + offset,
                    "Directional matching safely reaches the first and last audible file frames");
             candidate (offset, 0.6f); candidate (399 + offset, 0.6f);
             check (! match (offset, false) && ! match (399 + offset, true), "Outward searches at file edges are no-ops");
             check (! match (200, false, 0, 400, nan) && ! match (nan, true), "Nonfinite rates and moving markers are safe in either direction");
         }
+
+        juce::AudioBuffer<float> longAudio (1, 200000);
+        for (auto i { 0 }; i < longAudio.getNumSamples (); ++i) longAudio.setSample (0, i, 0.5f);
+        longAudio.setSample (0, 100, -0.25f);
+        longAudio.setSample (0, 199998, -0.25f);
+        WaveformPresentation::BoundaryMatchSearch batched (longAudio, 0, 1000, 100, 104, 200000, 48000, true, true);
+        check (! batched.advance (65536) && ! batched.result (), "Large-file matching yields without exposing an incomplete result");
+        check (! batched.advance (65536) && ! batched.result (), "Incremental search preserves its progress across batches");
+        check (! batched.advance (65536) && batched.advance (65536) && batched.result () == 199999,
+               "Incremental search reaches a distant exact match without a time cap");
+        longAudio.setSample (0, 1000, -0.25f);
+        WaveformPresentation::BoundaryMatchSearch nearest (longAudio, 0, 1000, 100, 104, 200000, 48000, true, true);
+        check (nearest.advance (1) && nearest.result () == 1001, "Nearest exact match terminates without scanning the remaining file");
     }
 }
 

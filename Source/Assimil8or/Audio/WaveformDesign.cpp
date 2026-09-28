@@ -1,4 +1,5 @@
 #include "WaveformDesign.h"
+#include "../../ThirdParty/DaisySP/PolyBlep.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
 #include <cmath>
@@ -141,7 +142,20 @@ namespace WaveformDesign
             std::vector<juce::dsp::Complex<float>> time (static_cast<size_t> (fftFrames)), spectrum (time.size ()), shifted (time.size ());
             const auto random { randomSteps (settings.seed) };
             for (int frame { 0 }; frame < fftFrames; ++frame)
-                time[static_cast<size_t> (frame)] = static_cast<float> (shapedAudio (shapeAt (static_cast<double> (frame) / fftFrames, settings, random), settings));
+            {
+                const auto phase { static_cast<double> (frame) / fftFrames };
+                const auto increment { 1.0 / fftFrames };
+                auto value { shapeAt (phase, settings, random) };
+                // Correct discontinuities before nonlinear shaping. Keep the
+                // existing phase, ascending saw polarity and pulse gain, rather
+                // than adopting a stateful real-time oscillator for one cycle.
+                if (settings.shape == Shape::saw)
+                    value -= DaisySPPolyBlep::correction (increment, phase);
+                else if (settings.shape == Shape::pulse)
+                    value += DaisySPPolyBlep::correction (increment, phase)
+                           - DaisySPPolyBlep::correction (increment, wrap (phase + 1.0 - settings.pulseWidth));
+                time[static_cast<size_t> (frame)] = static_cast<float> (shapedAudio (value, settings));
+            }
             fft.perform (time.data (), spectrum.data (), false);
             const auto highestHarmonic { std::min (settings.harmonics, settings.cycleFrames / 2 - 1) };
             for (int bin { 0 }; bin < fftFrames; ++bin)

@@ -292,16 +292,21 @@ Nudge and Match Opposite Boundary remain submenus below a separator:
   or END to match its START, **even when that amplitude is not zero**. For example,
   **Loop End to Start** keeps Loop Start fixed and adjusts only Loop End. Each
   of the four marker choices has **Left <<** and **Right >>** options: Left
-  searches earlier in the file; Right searches later. The search checks up to
-  **50 ms only in the chosen direction**, within the marker's valid limits,
-  using the displayed L/R side and the original sample rate. To retain material
-  near an edge, move a START left or an END right rather than trimming inward. It
+  searches earlier in the file; Right searches later. The search covers the
+  **whole valid marker range in the chosen direction**, using the displayed L/R
+  side. To retain material near an edge, move a START left or an END right
+  rather than trimming inward. It
   chooses the smallest amplitude difference between the first and last audible
   frames; equally good matches favour the nearest position. If the existing join
   is already matched, or no improvement exists in the chosen direction, nothing
   moves and the footer reports this; the search never falls back to the other
-  direction. Matching Loop Start keeps Loop End fixed **even in Length
-  mode**: the length is adjusted without changing the Length/End setting.
+  direction. Moves of **50 ms or less** happen immediately. Larger moves show a
+  **Yes/No confirmation** naming the marker, direction and distance; No leaves
+  the markers untouched. The distance is measured at the source sample rate,
+  independent of PITCH OFFSET and audition speed. Confirmation is discarded if
+  the source, zone or relevant editing state changes before approval.
+  Matching Loop Start keeps Loop End fixed **even in Length mode**: the length
+  is adjusted without changing the Length/End setting.
   This is separate from true zero-crossing nudges. Matching amplitudes does not
   also match waveform slopes or the other stereo side, so audition the result;
   a perfectly smooth-looking join is not a guarantee of a click-free loop.

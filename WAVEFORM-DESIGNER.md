@@ -105,6 +105,13 @@ contains one full cycle, without duplicating its first sample at the end.
 - **Amplitude**, **Offset**, **Invert**, and bipolar/unipolar selection set the
   final output range. These are percentages of digital full scale, not volts.
 
+Audio saw/pulse edges use the MIT-licensed DaisySP PolyBLEP correction before
+drive/fold. It rounds their discontinuities while keeping the existing polarity,
+pulse width and symmetry controls. Other shapes keep their existing generation.
+This is a small vendored component, not a replacement for the designer or its
+pitch-aware audition engine. Re-rendering older saw/pulse recipes may therefore
+sound slightly different; existing exported WAVs are not modified.
+
 Audio shaping is oversampled, harmonic-filtered, and zero-centred/normalised
 before the final amplitude, polarity and offset are applied. This limits generated
 high harmonics; it does not guarantee alias-free playback at every hardware pitch.
@@ -143,7 +150,8 @@ a faster repeating control waveform.
 - Random uses a repeatable seed. It generates a repeating stepped pattern;
   it is not an unlimited random stream.
 
-CV is **not normalised or DC-filtered**. Unipolar conversion happens before
+CV is **not normalised, DC-filtered or PolyBLEP-smoothed**. Its deliberate steps
+and absolute levels are preserved. Unipolar conversion happens before
 amplitude/depth and offset, so a unipolar 50% waveform with +10% offset occupies
 10% to 60% of digital full scale. Invert flips the shape before that conversion.
 Clipping warnings indicate that the requested combination exceeded the file's

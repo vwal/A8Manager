@@ -59,6 +59,7 @@ private:
     double playheadSample { -1.0 };
     bool loopSelected { false }, expanded { false };
     unsigned int sourceGeneration { 0 };
+    unsigned int matchGeneration { 0 };
     WaveformRuler timeline;
     RegionMoveWaveform waveform;
     RegionMarkerOverlay markerOverlay;
@@ -107,6 +108,11 @@ private:
     void setMarker (int marker, double position, bool keepOppositeBoundary = false);
     void nudgeMarker (int marker, bool right);
     void matchMarker (int marker, bool right);
+    struct BoundaryMatchRequest;
+    bool isCurrentMatch (const BoundaryMatchRequest& request);
+    void continueBoundaryMatch (std::shared_ptr<BoundaryMatchRequest> request);
+    std::function<void (std::function<void ()>)> scheduleBoundaryMatch;
+    std::function<void (const juce::String&, std::function<void (bool)>)> confirmBoundaryMatch;
     double markerPosition (int marker);
     juce::String markerLabel (int marker);
     void updateDurations ();

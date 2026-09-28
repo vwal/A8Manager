@@ -46,6 +46,12 @@ configure (internet access required), then reuses its build-tree cache. The
 dependency notices are included in built applications. See [UI-PREVIEW.md](UI-PREVIEW.md)
 for playback modes, limitations and build details.
 
+Audio saw/pulse generation also uses a small, pinned MIT-licensed
+[DaisySP PolyBLEP excerpt](Source/ThirdParty/DaisySP/README.md), vendored in the
+source tree. It complements the existing oversampling/harmonic filtering and
+requires no additional download or hardware dependency. Its license is packaged
+with the application; CV generation and its exact DC levels remain unchanged.
+
 Optional parser/CV and stereo split regression probes are documented in
 [tests/README.md](tests/README.md).
 

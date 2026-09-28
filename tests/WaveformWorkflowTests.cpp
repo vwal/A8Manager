@@ -1,6 +1,7 @@
 #include "GUI/Assimil8or/Editor/Waveform/WaveformDisplay.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 #include <iostream>
+#include <deque>
 #include <stdexcept>
 
 struct WaveformTestAccess
@@ -322,6 +323,138 @@ struct WaveformTestAccess
         view.zoneProperties.setSide (0, true);
         channel.setLoopLengthIsEnd (false, true);
 
+        // Headless confirmation seam: invoke the same guarded completion used
+        // by the real Yes/No dialog, without opening a native window in tests.
+        auto prompts { 0 };
+        juce::String promptText;
+        std::function<void (bool)> answer;
+        view.confirmBoundaryMatch = [&] (const juce::String& message, std::function<void (bool)> callback)
+        {
+            ++prompts;
+            promptText = message;
+            answer = std::move (callback);
+        };
+        auto prepareMatch = [&] (int marker, bool rightward, int distance = 100)
+        {
+            view.zoneProperties.setSampleStart (300, true);
+            view.zoneProperties.setSampleEnd (600, true);
+            view.zoneProperties.setLoopStart (350, true);
+            view.zoneProperties.setLoopLength (300.5, true);
+            view.zoneProperties.setSide (0, true);
+            view.sampleProperties.setSampleRate (1000, true);
+            for (auto side { 0 }; side < 2; ++side)
+                for (auto frame { 0 }; frame < audio.getNumSamples (); ++frame) audio.setSample (side, frame, 0.6f);
+            const auto offset { marker % 2 };
+            const auto opposite { marker + (offset == 0 ? 1 : -1) };
+            const auto candidate { static_cast<int> (view.markerPosition (marker)) + (rightward ? distance : -distance) };
+            audio.setSample (0, static_cast<int> (view.markerPosition (opposite)) - (1 - offset), -0.25f);
+            audio.setSample (0, candidate - offset, -0.25f);
+            return candidate;
+        };
+        for (const auto endMode : { false, true })
+        {
+            channel.setLoopLengthIsEnd (endMode, true);
+            for (auto marker { 0 }; marker < 4; ++marker)
+            {
+                for (const auto rightward : { false, true })
+                {
+                    const auto candidate { prepareMatch (marker, rightward) };
+                    const auto beforePrompt { view.zoneProperties.getValueTree ().createCopy () };
+                    const auto oldPrompts { prompts };
+                    view.applyMenuAction (40 + marker * 2 + (rightward ? 1 : 0), {});
+                    check (prompts == oldPrompts + 1 && view.zoneProperties.getValueTree ().isEquivalentTo (beforePrompt),
+                           "Distant matching waits for approval before editing any marker");
+                    check (promptText.contains (markerNames[static_cast<size_t> (marker)]) &&
+                           promptText.contains (rightward ? "right" : "left") && promptText.contains ("ms") &&
+                           promptText.contains ("opposite boundary will stay fixed"),
+                           "Long-move prompt identifies marker, source-time distance, direction and fixed boundary");
+                    answer (false);
+                    check (view.zoneProperties.getValueTree ().isEquivalentTo (beforePrompt), "No preserves all original boundaries");
+                    answer (true);
+                    check (view.zoneProperties.getValueTree ().isEquivalentTo (beforePrompt), "Canceled confirmation cannot later be reused");
+                    view.applyMenuAction (40 + marker * 2 + (rightward ? 1 : 0), {});
+                    std::array<double, 4> original;
+                    for (auto i { 0 }; i < 4; ++i) original[static_cast<size_t> (i)] = view.markerPosition (i);
+                    answer (true);
+                    check (view.markerPosition (marker) == candidate, "Yes applies each long directional match");
+                    for (auto i { 0 }; i < 4; ++i)
+                        if (i != marker) check (view.markerPosition (i) == original[static_cast<size_t> (i)],
+                                               "Approved long move preserves all opposite/unrelated boundaries, including fractional loop ends");
+                    check (channel.getLoopLengthIsEnd () == endMode, "Approved long match never switches Length/End mode");
+                }
+            }
+        }
+        channel.setLoopLengthIsEnd (false, true);
+        for (const auto distance : { 49, 50, 51 })
+        {
+            const auto candidate { prepareMatch (1, true, distance) };
+            const auto oldPrompts { prompts };
+            view.applyMenuAction (43, {});
+            check (prompts == oldPrompts + (distance > 50 ? 1 : 0), "Only distances strictly above 50 ms require approval");
+            if (distance > 50)
+            {
+                check (view.markerPosition (1) == 600, "51 ms match waits for confirmation");
+                answer (true);
+            }
+            check (view.markerPosition (1) == candidate, "Threshold-adjacent matches use the exact candidate");
+        }
+        prepareMatch (1, false, 50);
+        view.sampleProperties.setSampleRate (999.9, true);
+        const auto beforeFractionalPrompt { prompts };
+        view.applyMenuAction (42, {});
+        check (prompts == beforeFractionalPrompt + 1 && view.markerPosition (1) == 600,
+               "A fractional displacement just above 50 ms prompts even if display rounding is close to 50");
+        answer (false);
+
+        prepareMatch (1, false, 428);
+        // Sample End cannot pass Sample Start: use a larger sample span for 428 ms.
+        view.zoneProperties.setSampleStart (100, true);
+        audio.setSample (0, 300, 0.6f);
+        audio.setSample (0, 100, -0.25f);
+        view.applyMenuAction (42, {});
+        check (promptText.contains ("428.0 ms to the left"), "Confirmation shows the actual source-time displacement");
+        answer (false);
+
+        auto checkStale = [&] (std::function<void ()> change)
+        {
+            prepareMatch (1, true);
+            view.applyMenuAction (43, {});
+            check (view.markerPosition (1) == 600, "Stale-approval fixture starts with an unapplied long match");
+            change ();
+            const auto changed { view.zoneProperties.getValueTree ().createCopy () };
+            answer (true);
+            check (view.zoneProperties.getValueTree ().isEquivalentTo (changed), "Stale approval never modifies changed editor state");
+        };
+        checkStale ([&] { view.zoneProperties.setSampleEnd (610, true); view.zoneProperties.setSampleEnd (600, true); });
+        checkStale ([&] { view.zoneProperties.setLoopLength (290, true); });
+        checkStale ([&] { view.zoneProperties.setSide (1, true); view.zoneProperties.setSide (0, true); });
+        checkStale ([&] { view.setEnabled (false); view.setEnabled (true); });
+        checkStale ([&] { channel.setLoopLengthIsEnd (true, true); channel.setLoopLengthIsEnd (false, true); });
+        checkStale ([&] { view.sampleProperties.setSampleRate (2000, true); view.sampleProperties.setSampleRate (1000, true); });
+        checkStale ([&] { view.sampleProperties.setStatus (SampleStatus::doesNotExist, true); view.sampleProperties.setStatus (SampleStatus::exists, true); });
+        checkStale ([&] { const auto file { view.zoneProperties.getSample () }; view.zoneProperties.setSample ("replaced.wav", true); view.zoneProperties.setSample (file, true); });
+        checkStale ([&] { view.setZone (2); view.setZone (1); });
+        prepareMatch (1, true);
+        view.applyMenuAction (43, {});
+        const auto firstAnswer { answer };
+        view.applyMenuAction (43, {});
+        firstAnswer (true);
+        check (view.markerPosition (1) == 600, "Starting another match invalidates earlier outstanding confirmations");
+        answer (false);
+
+        prepareMatch (1, true);
+        std::function<void (bool)> destroyedAnswer;
+        {
+            auto temporary { std::make_unique<WaveformDisplay> () };
+            temporary->init (channelTree, root);
+            temporary->setZone (1);
+            temporary->confirmBoundaryMatch = [&] (const juce::String&, std::function<void (bool)> callback) { destroyedAnswer = std::move (callback); };
+            temporary->applyMenuAction (43, {});
+            check (static_cast<bool> (destroyedAnswer), "Destruction fixture obtains a long-match confirmation");
+        }
+        destroyedAnswer (true);
+        check (view.markerPosition (1) == 600, "Closing a waveform view invalidates its pending approval safely");
+
         view.zoneProperties.setSampleStart (200, true);
         view.zoneProperties.setSampleEnd (400, true);
         view.zoneProperties.setLoopStart (600, true);
@@ -439,6 +572,80 @@ struct WaveformTestAccess
                 bridgeStream->truncate ();
             }
         }
+        // Schedule the production continuation callbacks in a deterministic
+        // FIFO, including buffers freed before the next batch. This is portable
+        // even when a console test runner has no native application event loop.
+        auto makeLongAudio = []
+        {
+            auto buffer { std::make_unique<juce::AudioBuffer<float>> (1, 200000) };
+            for (auto i { 0 }; i < buffer->getNumSamples (); ++i) buffer->setSample (0, i, 0.6f);
+            buffer->setSample (0, 100, -0.25f);
+            buffer->setSample (0, 199998, -0.25f);
+            return buffer;
+        };
+        auto makeLongView = [&] (int zone, juce::AudioBuffer<float>* buffer)
+        {
+            ZoneProperties z (channel.getZoneVT (zone), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            z.setSampleStart (100, false);
+            z.setSampleEnd (1000, false);
+            z.setSide (0, false);
+            SampleProperties s (manager.getSamplePropertiesVT (0, zone), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+            s.setStatus (SampleStatus::uninitialized, false);
+            s.setAudioBufferPtr (buffer, false);
+            s.setLengthInSamples (buffer->getNumSamples (), false);
+            s.setNumChannels (1, false);
+            s.setSampleRate (1000, false);
+            s.setStatus (SampleStatus::exists, false);
+            auto result { std::make_unique<WaveformDisplay> () };
+            result->setSize (760, 220);
+            result->init (channelTree, root);
+            result->setZone (zone);
+            return result;
+        };
+        auto successAudio { makeLongAudio () }, unloadedAudio { makeLongAudio () }, destroyedAudio { makeLongAudio () };
+        auto successView { makeLongView (3, successAudio.get ()) };
+        auto unloadedView { makeLongView (4, unloadedAudio.get ()) };
+        auto destroyedView { makeLongView (5, destroyedAudio.get ()) };
+        std::deque<std::function<void ()>> scheduled;
+        auto schedule = [&] (std::function<void ()> callback) { scheduled.push_back (std::move (callback)); };
+        successView->scheduleBoundaryMatch = unloadedView->scheduleBoundaryMatch = destroyedView->scheduleBoundaryMatch = schedule;
+        auto queuedApprovals { 0 }, invalidPrompts { 0 };
+        successView->confirmBoundaryMatch = [&] (const juce::String&, std::function<void (bool)> callback)
+        {
+            ++queuedApprovals;
+            callback (true);
+        };
+        unloadedView->confirmBoundaryMatch = destroyedView->confirmBoundaryMatch =
+            [&] (const juce::String&, std::function<void (bool)>) { ++invalidPrompts; };
+        successView->applyMenuAction (43, {});
+        unloadedView->applyMenuAction (43, {});
+        destroyedView->applyMenuAction (43, {});
+        check (scheduled.size () == 3 && queuedApprovals == 0 && successView->markerPosition (1) == 1000 &&
+               successView->durationInfo.getText ().contains ("Searching"),
+               "Large-file menu action yields before finishing instead of blocking or applying a partial result");
+        unloadedView->sampleProperties.setStatus (SampleStatus::doesNotExist, true);
+        unloadedView->sampleProperties.setAudioBufferPtr (nullptr, true);
+        unloadedAudio.reset ();
+        destroyedView.reset ();
+        SampleProperties destroyedSample (manager.getSamplePropertiesVT (0, 5), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        destroyedSample.setStatus (SampleStatus::doesNotExist, false);
+        destroyedSample.setAudioBufferPtr (nullptr, false);
+        destroyedAudio.reset ();
+        auto dispatched { 0 };
+        while (! scheduled.empty () && dispatched < 16)
+        {
+            auto callback { std::move (scheduled.front ()) };
+            scheduled.pop_front ();
+            callback ();
+            if (++dispatched == 1)
+                check (successView->markerPosition (1) == 1000 && queuedApprovals == 0 && scheduled.size () == 3,
+                       "Each queued batch yields again before the distant candidate is reached");
+        }
+        check (scheduled.empty () && dispatched == 5 && queuedApprovals == 1 && successView->markerPosition (1) == 199999,
+               "Queued batches complete a distant search and apply its approved candidate");
+        check (invalidPrompts == 0 && unloadedView->zoneProperties.getSampleEnd () == 1000,
+               "Queued searches cancel safely after source unload/free or view destruction without prompting or editing");
+
         view.setLookAndFeel (nullptr);
         std::cout << "PASS: waveform menus, pitch-adjusted durations, comma formatting, zero crossings, region selection/move hit bounds, label collisions, zoom and expanded zone switching\n";
     }

@@ -117,8 +117,12 @@ stereo samples. It checks pitch-adjusted durations independent of audition speed
 comma grouping, sample/time labels, directional and bounded zero crossings,
 context versus gear menus (top-level command order, section headings, shortcut
 column and read-only guards), marker placement, all eight directional boundary-matching actions
-(including fixed fractional loop ends in Length mode, opposite-side exclusion and no-op/disabled guards),
-Length/End behaviour, Sample/Loop
+(including fixed fractional loop ends in Length mode, opposite-side exclusion,
+no-op/disabled guards and confirmation for matches farther than 50 ms),
+accepted/canceled/stale approvals, the exact 50 ms threshold, and queued
+large-file searches canceled by source unload or view destruction. Confirmation
+callbacks are exercised without opening a native dialog.
+It also checks Length/End behaviour, Sample/Loop
 selection callbacks, Option/Alt movement inside regions and on handles, overlap
 selection, outside-region rejection, zoom reset/jumps, right-click versus drag,
 expanded zone switching, inactive-area dimming, disabled editing and collision-free
@@ -133,8 +137,8 @@ application or change their presets/preferences.
 
 **EditorRefinementRegression** checks quieter-side and exact-zero nudges,
 exclusive end markers, bounds and stereo-side selection. Boundary-matching checks
-cover nonzero joins versus true zeros, strict left/right searches for both endpoints, source-rate
-search limits, nearest equal-quality matches, imperfect improvements, fractional
+cover nonzero joins versus true zeros, strict left/right searches for both endpoints,
+unrestricted distance within legal bounds, nearest equal-quality matches, imperfect improvements, fractional
 ends, EOF/frame zero, silence, nonfinite samples and invalid inputs. Temporary files exercise
 overlong-name recovery, extension preservation, invalid names, missing sources
 and collision protection. Preset fixtures check middle/last/only-zone purging,
@@ -210,7 +214,10 @@ The waveform-design checks compile the production renderer, exporter and GUI.
 They use generated data and disposable directories; no real samples, preferences,
 audio devices or hardware are used.
 
-- **WaveformDesignRegression** checks all audio shapes, harmonic filtering after
+- **WaveformDesignRegression** checks the DaisySP PolyBLEP polynomial's edge
+  conventions and source alias-energy reduction against naive saw/pulse shapes,
+  corrected audio phase/polarity, layer consistency and unchanged sharp CV levels.
+  It also checks all audio shapes, harmonic filtering after
   drive/fold, phase/gain, layer metadata separation, deterministic CV/random
   curves, preserved DC/unipolar offsets, clipping and boundary statistics,
   envelope timing, drawn interpolation, validation and recipe round-trips.

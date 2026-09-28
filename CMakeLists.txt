@@ -309,7 +309,9 @@ set_source_files_properties(Source/Assimil8or/Audio/AuditionStretch.cpp PROPERTI
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
 
 # Carry the MIT notices with distributed builds, including the macOS app bundle.
-foreach(dependency IN ITEMS signalsmith-stretch signalsmith-linear)
+# DaisySP is a pinned, vendored PolyBLEP excerpt; no new configure-time download.
+set(daisysp_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Source/ThirdParty/DaisySP")
+foreach(dependency IN ITEMS signalsmith-stretch signalsmith-linear daisysp)
     configure_file("${${dependency}_SOURCE_DIR}/LICENSE.txt"
                    "${CMAKE_CURRENT_BINARY_DIR}/licenses/${dependency}-LICENSE.txt" COPYONLY)
     if(APPLE)

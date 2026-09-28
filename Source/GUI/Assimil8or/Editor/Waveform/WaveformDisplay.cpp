@@ -12,6 +12,16 @@ namespace
 WaveformDisplay::WaveformDisplay ()
 {
     setupColours ();
+    scheduleBoundaryMatch = [] (std::function<void ()> callback) { juce::MessageManager::callAsync (std::move (callback)); };
+    confirmBoundaryMatch = [] (const juce::String& message, std::function<void (bool)> callback)
+    {
+        auto* alert { new juce::AlertWindow ("Move boundary?", message, juce::AlertWindow::QuestionIcon) };
+        alert->addButton ("Yes", 1);
+        // Enter and Escape both preserve the existing markers by default.
+        alert->addButton ("No", 0, juce::KeyPress (juce::KeyPress::returnKey), juce::KeyPress (juce::KeyPress::escapeKey));
+        alert->enterModalState (true, juce::ModalCallbackFunction::create (
+            [callback = std::move (callback)] (int choice) { callback (choice == 1); }), true);
+    };
 
     setWantsKeyboardFocus (true);
     timeline.setUnit (WaveformRuler::Unit::samples);
@@ -244,6 +254,7 @@ void WaveformDisplay::init (juce::ValueTree channelPropertiesVT, juce::ValueTree
     RuntimeRootProperties runtimeRootProperties (rootPropertiesVT, RuntimeRootProperties::WrapperType::client, RuntimeRootProperties::EnableCallbacks::no);
     channelProperties.wrap (channelPropertiesVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     channelProperties.onLoopModeChange = [this] (int) { updateMarkerPositions (); };
+    channelProperties.onLoopLengthIsEndChange = [this] (bool) { ++matchGeneration; };
     sampleManagerProperties.wrap (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::client, AudioPlayerProperties::EnableCallbacks::yes);
     audioPlayerProperties.onAuditionRateChange = [this] (double rate) { auditionRateSlider.setValue (rate, juce::dontSendNotification); };
@@ -288,7 +299,7 @@ void WaveformDisplay::setZone (int zoneIndex)
     sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (channelProperties.getId () - 1, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
     sampleProperties.onStatusChange = [this] (SampleStatus) { updateAudioSource (); };
     sampleProperties.onAudioBufferPtrChange = [this] (AudioBufferType*) { updateAudioSource (); };
-    sampleProperties.onSampleRateChange = [this] (double newSampleRate) { timeline.setSampleRate (newSampleRate); updateDurations (); };
+    sampleProperties.onSampleRateChange = [this] (double newSampleRate) { ++matchGeneration; timeline.setSampleRate (newSampleRate); updateDurations (); };
 
     updateAudioSource ();
 }
@@ -345,6 +356,7 @@ void WaveformDisplay::updateDisplayChannel ()
 
 void WaveformDisplay::updateMarkerPositions ()
 {
+    ++matchGeneration;
     if (! hasSample ())
     {
         markerOverlay.setLoopExtension ({});
@@ -524,6 +536,23 @@ void WaveformDisplay::nudgeMarker (int marker, bool right)
         durationInfo.setText ("No zero crossing " + juce::String (right ? "to the right" : "to the left") + " within this marker's valid range.", juce::dontSendNotification);
 }
 
+struct WaveformDisplay::BoundaryMatchRequest
+{
+    WaveformPresentation::BoundaryMatchSearch search;
+    unsigned int generation, source;
+    const AudioBufferType* buffer;
+    double rate, original;
+    int marker, side;
+    bool right, endMode;
+};
+
+bool WaveformDisplay::isCurrentMatch (const BoundaryMatchRequest& request)
+{
+    return isEnabled () && hasSample () && matchGeneration == request.generation && sourceGeneration == request.source &&
+        sampleProperties.getAudioBufferPtr () == request.buffer && sampleProperties.getSampleRate () == request.rate &&
+        getDisplayChannel () == request.side && channelProperties.getLoopLengthIsEnd () == request.endMode;
+}
+
 void WaveformDisplay::matchMarker (int marker, bool right)
 {
     if (! hasSample () || ! isEnabled () || marker < kSampleStart || marker > kLoopEnd) return;
@@ -532,15 +561,57 @@ void WaveformDisplay::matchMarker (int marker, bool right)
     const auto endBoundary { marker == kSampleEnd || marker == kLoopEnd };
     const auto minimum { static_cast<juce::int64> (constrainMarker (marker, 0.0, true)) };
     const auto maximum { static_cast<juce::int64> (constrainMarker (marker, static_cast<double> (getSampleLength ()), true)) };
-    if (const auto match { WaveformPresentation::matchBoundary (*buffer, getDisplayChannel (), markerPosition (marker),
-            markerPosition (endBoundary ? marker - 1 : marker + 1), minimum, maximum, sampleProperties.getSampleRate (), endBoundary, right) })
+    const auto rate { sampleProperties.getSampleRate () };
+    const auto original { markerPosition (marker) };
+    auto request { std::make_shared<BoundaryMatchRequest> (BoundaryMatchRequest {
+        WaveformPresentation::BoundaryMatchSearch (*buffer, getDisplayChannel (), original,
+            markerPosition (endBoundary ? marker - 1 : marker + 1), minimum, maximum, rate, endBoundary, right),
+        ++matchGeneration, sourceGeneration, buffer, rate, original, marker, getDisplayChannel (), right,
+        channelProperties.getLoopLengthIsEnd () }) };
+    continueBoundaryMatch (std::move (request));
+}
+
+void WaveformDisplay::continueBoundaryMatch (std::shared_ptr<BoundaryMatchRequest> request)
+{
+    // SampleManager mutates/unloads on this thread. Revalidate before every
+    // bounded batch: no worker can retain or dereference a freed sample buffer.
+    if (! isCurrentMatch (*request)) return;
+    auto safe = juce::Component::SafePointer<WaveformDisplay> (this);
+    if (! request->search.advance (65536))
     {
-        setMarker (marker, static_cast<double> (*match), true);
-        jumpToMarker (marker);
+        durationInfo.setText ("Searching for a boundary match to the " + juce::String (request->right ? "right" : "left") + "...", juce::dontSendNotification);
+        scheduleBoundaryMatch ([safe, request] ()
+        {
+            if (safe != nullptr) safe->continueBoundaryMatch (request);
+        });
+        return;
     }
+    const auto match { request->search.result () };
+    if (! match)
+    {
+        durationInfo.setText ("No closer amplitude match to the " + juce::String (request->right ? "right" : "left") +
+                              " within this marker's valid range; marker unchanged.", juce::dontSendNotification);
+        return;
+    }
+    auto apply = [safe, request, position = *match] (bool approved)
+    {
+        if (safe == nullptr || ! safe->isCurrentMatch (*request)) return;
+        // A callback is single-use, including cancellation.
+        ++safe->matchGeneration;
+        if (! approved) { safe->updateDurations (); return; }
+        safe->setMarker (request->marker, static_cast<double> (position), true);
+        safe->jumpToMarker (request->marker);
+    };
+    const auto distance { std::abs (static_cast<double> (*match) - request->original) };
+    if (distance <= request->rate * 0.05) apply (true);
     else
-        durationInfo.setText ("No closer amplitude match to the " + juce::String (right ? "right" : "left") +
-                              " within 50 ms and this marker's valid range; marker unchanged.", juce::dontSendNotification);
+    {
+        const auto milliseconds { distance * 1000.0 / request->rate };
+        const auto message { "The best boundary match for " + WaveformPresentation::markerNames[static_cast<size_t> (request->marker)] +
+            " is " + juce::String (milliseconds, milliseconds < 100.0 ? 2 : 1) + " ms to the " +
+            juce::String (request->right ? "right" : "left") + ".\n\nDo you want to proceed?\nThe opposite boundary will stay fixed." };
+        confirmBoundaryMatch (message, std::move (apply));
+    }
 }
 
 bool WaveformDisplay::keyPressed (const juce::KeyPress& key)
@@ -656,6 +727,7 @@ void WaveformDisplay::setMarker (int markerIndex, double proposedPosition, bool 
 // timeline's unit menu only change the view, so they stay live.
 void WaveformDisplay::enablementChanged ()
 {
+    ++matchGeneration;
     waveform.cancelDrag ();
     markerOverlay.cancelDrag ();
     movingRegion.reset ();

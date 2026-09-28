@@ -71,53 +71,82 @@ namespace WaveformPresentation
         return {};
     }
 
-    // Match the audible endpoint's amplitude, not zero. Search only in the
-    // requested direction, within 50 ms, so an adjustment cannot reshape a whole slice.
-    // The opposite endpoint stays fixed; END addresses the frame before its
-    // exclusive boundary, just as the join preview does, including fractional ends.
+    // Search outwards without a time cap. Exact matches stop the search at the
+    // nearest match; otherwise choose the best amplitude improvement, breaking
+    // ties by distance. Small batches let the UI yield between large-file scans.
+    // The caller must keep the buffer alive and unchanged between advance calls.
+    class BoundaryMatchSearch
+    {
+    public:
+        BoundaryMatchSearch (const juce::AudioBuffer<float>& audio, int side,
+                             double moving, double opposite, juce::int64 minimum,
+                             juce::int64 maximum, double sampleRate, bool endBoundary, bool right)
+        {
+            const auto count { audio.getNumSamples () };
+            if (side < 0 || side >= audio.getNumChannels () || count == 0 ||
+                ! std::isfinite (moving) || ! std::isfinite (opposite) ||
+                ! std::isfinite (sampleRate) || sampleRate <= 0.0) return;
+            // END is exclusive, including fractional ends: use its last audible
+            // frame, exactly as the join preview does.
+            offset = endBoundary ? 1 : 0;
+            if (moving < offset || moving > count - 1 + offset ||
+                opposite < 1 - offset || opposite > count - offset) return;
+            const auto frame { static_cast<juce::int64> (std::floor (moving)) - offset };
+            const auto targetFrame { static_cast<juce::int64> (std::floor (opposite)) - (1 - offset) };
+            data = audio.getReadPointer (side);
+            target = data[targetFrame];
+            if (! std::isfinite (target)) return;
+            bestError = std::isfinite (data[frame]) ? std::abs (static_cast<double> (data[frame]) - target)
+                                                   : std::numeric_limits<double>::infinity ();
+            if (bestError == 0.0) return;
+            minimum = std::max (minimum, static_cast<juce::int64> (offset));
+            maximum = std::min (maximum, static_cast<juce::int64> (count - 1 + offset));
+            if (right) minimum = std::max (minimum, static_cast<juce::int64> (std::floor (moving)) + 1);
+            else maximum = std::min (maximum, static_cast<juce::int64> (std::ceil (moving)) - 1);
+            position = right ? minimum : maximum;
+            limit = right ? maximum : minimum;
+            step = right ? 1 : -1;
+            complete = minimum > maximum;
+        }
+
+        bool advance (int budget)
+        {
+            while (! complete && budget-- > 0)
+            {
+                const auto value { static_cast<double> (data[position - offset]) };
+                if (std::isfinite (value))
+                {
+                    const auto error { std::abs (value - target) };
+                    // The outward traversal encounters the nearest equal-quality
+                    // candidate first. Never move without amplitude improvement.
+                    if (error < bestError)
+                    {
+                        best = position;
+                        bestError = error;
+                    }
+                }
+                complete = bestError == 0.0 || position == limit;
+                position += step;
+            }
+            return complete;
+        }
+        std::optional<juce::int64> result () const { return complete ? best : std::nullopt; }
+
+    private:
+        const float* data { nullptr };
+        double target { 0.0 }, bestError { 0.0 };
+        juce::int64 position { 0 }, limit { 0 };
+        int offset { 0 }, step { 1 };
+        bool complete { true };
+        std::optional<juce::int64> best;
+    };
+
     inline std::optional<juce::int64> matchBoundary (const juce::AudioBuffer<float>& audio, int side,
                                                     double moving, double opposite, juce::int64 minimum,
                                                     juce::int64 maximum, double sampleRate, bool endBoundary, bool right)
     {
-        const auto count { audio.getNumSamples () };
-        if (side < 0 || side >= audio.getNumChannels () || count == 0 ||
-            ! std::isfinite (moving) || ! std::isfinite (opposite) ||
-            ! std::isfinite (sampleRate) || sampleRate <= 0.0) return {};
-        const auto offset { endBoundary ? 1 : 0 };
-        if (moving < offset || moving > count - 1 + offset ||
-            opposite < 1 - offset || opposite > count - offset) return {};
-        const auto frame { static_cast<juce::int64> (std::floor (moving)) - offset };
-        const auto targetFrame { static_cast<juce::int64> (std::floor (opposite)) - (1 - offset) };
-        const auto* data { audio.getReadPointer (side) };
-        const auto target { static_cast<double> (data[targetFrame]) };
-        if (! std::isfinite (target)) return {};
-        const auto radius { std::max (1.0, std::min (static_cast<double> (count), std::ceil (sampleRate * 0.05))) };
-        minimum = std::max ({ minimum, static_cast<juce::int64> (offset), static_cast<juce::int64> (std::ceil (moving - radius)) });
-        maximum = std::min ({ maximum, static_cast<juce::int64> (count - 1 + offset), static_cast<juce::int64> (std::floor (moving + radius)) });
-        // Compare marker coordinates, including fractional markers, rather than
-        // their audible frames. Never cross to the unrequested side to find a match.
-        if (right) minimum = std::max (minimum, static_cast<juce::int64> (std::floor (moving)) + 1);
-        else maximum = std::min (maximum, static_cast<juce::int64> (std::ceil (moving)) - 1);
-        const auto originalError { std::isfinite (data[frame]) ? std::abs (static_cast<double> (data[frame]) - target)
-                                                            : std::numeric_limits<double>::infinity () };
-        auto bestError { originalError };
-        auto bestDistance { std::numeric_limits<double>::infinity () };
-        std::optional<juce::int64> best;
-        for (auto position { minimum }; position <= maximum; ++position)
-        {
-            const auto value { static_cast<double> (data[position - offset]) };
-            if (! std::isfinite (value)) continue;
-            const auto error { std::abs (value - target) };
-            const auto distance { std::abs (static_cast<double> (position) - moving) };
-            // Do not move an already matched join, or make a move with no
-            // amplitude improvement. Equal improvements favour the nearest frame.
-            if (error < originalError && error <= bestError && (error < bestError || distance < bestDistance))
-            {
-                best = position;
-                bestError = error;
-                bestDistance = distance;
-            }
-        }
-        return best;
+        BoundaryMatchSearch search (audio, side, moving, opposite, minimum, maximum, sampleRate, endBoundary, right);
+        while (! search.advance (65536)) {}
+        return search.result ();
     }
 }

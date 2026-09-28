@@ -1,4 +1,5 @@
 #include "Assimil8or/Audio/WaveformDesign.h"
+#include "ThirdParty/DaisySP/PolyBlep.h"
 #include <cmath>
 #include <complex>
 #include <iostream>
@@ -50,11 +51,122 @@ namespace
                 check (std::isfinite (voice.getSample (0, frame)) && std::abs (voice.getSample (0, frame)) <= 1.0f, "Output samples are finite and bounded by digital full scale");
         }
     }
+
+    void checkPolyBlepSources ()
+    {
+        using DaisySPPolyBlep::correction;
+        constexpr double increment { 0.125 };
+        check (near (correction (increment, 0.0), -1.0)
+               && near (correction (increment, increment * 0.5), -0.25)
+               && near (correction (increment, 1.0 - increment * 0.5), 0.25), "DaisySP correction has the expected rising and falling edge signs");
+        for (const auto phase : { increment, 0.25, 0.5, 0.75, 1.0 - increment })
+            check (correction (increment, phase) == 0.0, "PolyBLEP leaves points outside its edge bands unchanged");
+
+        // Exercise the correction itself at a high oscillator frequency. This
+        // does not promise alias-free playback of an exported fixed wavetable.
+        constexpr int frames { 256 }, cycles { 23 };
+        const auto dt { static_cast<double> (cycles) / frames };
+        for (const auto shape : { Shape::saw, Shape::pulse })
+        {
+            juce::AudioBuffer<float> naive (1, frames), corrected (1, frames);
+            for (int frame { 0 }; frame < frames; ++frame)
+            {
+                const auto phase { static_cast<double> ((frame * cycles) % frames) / frames };
+                const auto raw { shape == Shape::saw ? 2.0 * phase - 1.0 : (phase < 0.5 ? 1.0 : -1.0) };
+                const auto fallingPhase { phase < 0.5 ? phase + 0.5 : phase - 0.5 };
+                const auto value { shape == Shape::saw ? raw - correction (dt, phase)
+                                                       : raw + correction (dt, phase) - correction (dt, fallingPhase) };
+                naive.setSample (0, frame, static_cast<float> (raw));
+                corrected.setSample (0, frame, static_cast<float> (value));
+            }
+            double naiveAlias { 0.0 }, correctedAlias { 0.0 };
+            for (int bin { 1 }; bin <= frames / 2; ++bin)
+            {
+                if (bin % cycles == 0) continue; // Only these bins are legal source harmonics below Nyquist.
+                naiveAlias += std::pow (harmonic (naive, bin), 2.0);
+                correctedAlias += std::pow (harmonic (corrected, bin), 2.0);
+            }
+            check (naiveAlias > 0.0 && correctedAlias < naiveAlias * 0.05, "PolyBLEP strongly reduces high-frequency source alias energy compared with a naive saw or pulse");
+        }
+    }
+
+    void checkPolyBlepRendering ()
+    {
+        for (const auto shape : { Shape::saw, Shape::pulse })
+        {
+            auto settings { startingPoint (Mode::oscillator, shape) };
+            settings.cycleFrames = 256;
+            settings.harmonics = 31;
+            settings.brightness = 1.0;
+            const auto cycle { generated (settings) };
+            const auto& audio { cycle.voices[0] };
+            check (cycle.frames == 256 && near (audio.getSample (0, 0), 0.0, 0.000002), "Audio discontinuities are centred on the requested cycle boundary without changing its frame count");
+            check (near (cycle.dc, 0.0) && near (cycle.peak, settings.amplitude), "PolyBLEP audio retains normalized amplitude and zero DC");
+            for (int frame { 1 }; frame < 128; ++frame)
+                check (near (audio.getSample (0, frame), -audio.getSample (0, 256 - frame), 0.000002), "Symmetric saw and pulse sources retain the intended phase around their wrap boundary");
+            check (shape == Shape::saw ? audio.getSample (0, 64) < 0.0f && audio.getSample (0, 192) > 0.0f
+                                      : audio.getSample (0, 64) > 0.0f && audio.getSample (0, 192) < 0.0f,
+                   "BLEP integration preserves the existing saw and pulse polarities");
+            if (shape == Shape::pulse)
+                check (near (audio.getSample (0, 128), 0.0, 0.000002), "Pulse falling edge is corrected at its own boundary as well as at wraparound");
+
+            auto layered { settings };
+            layered.mode = Mode::layers;
+            layered.voiceCount = 3;
+            for (int voice { 0 }; voice < layered.voiceCount; ++voice)
+                layered.voices[static_cast<size_t> (voice)].phaseDegrees = voice * 90.0;
+            const auto bank { generated (layered) };
+            for (int voice { 0 }; voice < layered.voiceCount; ++voice)
+                for (int frame { 0 }; frame < 256; ++frame)
+                    check (near (bank.voices[static_cast<size_t> (voice)].getSample (0, frame), audio.getSample (0, (frame + voice * 64) % 256), 0.000002),
+                           "Layer phases remain periodic shifts of the same corrected source, not separate oscillator states");
+
+            auto adjusted { settings };
+            adjusted.invert = true;
+            adjusted.offset = 0.1;
+            const auto inverted { generated (adjusted) };
+            check (near (inverted.dc, 0.1) && inverted.clippedSamples == 0, "Intentional audio DC offsets survive PolyBLEP and spectral filtering");
+            for (int frame { 0 }; frame < 256; ++frame)
+                check (near (inverted.voices[0].getSample (0, frame), 0.1 - audio.getSample (0, frame)), "Invert remains a polarity change around the requested DC offset");
+
+            adjusted = settings;
+            if (shape == Shape::saw) adjusted.symmetry = 0.25;
+            else adjusted.pulseWidth = 0.25;
+            const auto shaped { generated (adjusted) };
+            checkFinite (shaped);
+            check (! sameAudio (cycle, shaped) && shaped.frames == cycle.frames && near (shaped.dc, 0.0), "Saw skew and pulse width remain active controls on full-length corrected cycles");
+            if (shape == Shape::pulse)
+                check (shaped.voices[0].getSample (0, 32) > 0.0f && shaped.voices[0].getSample (0, 96) < 0.0f,
+                       "A quarter-width pulse still places its falling edge at the selected width");
+        }
+
+        for (const auto shape : { Shape::saw, Shape::pulse })
+        {
+            auto cv { startingPoint (Mode::modulation, shape) };
+            cv.durationSeconds = 0.01;
+            cv.amplitude = 0.4;
+            cv.offset = 0.1;
+            cv.pulseWidth = 0.25;
+            cv.symmetry = 0.25;
+            const auto control { generated (cv) };
+            check (control.frames == 480, "CV retains its requested duration instead of the audio cycle length");
+            for (int frame { 0 }; frame < 480; ++frame)
+            {
+                const auto phase { static_cast<double> (frame) / 480.0 };
+                const auto symmetric { phase < cv.symmetry ? 0.5 * phase / cv.symmetry
+                                                          : 0.5 + 0.5 * (phase - cv.symmetry) / (1.0 - cv.symmetry) };
+                const auto raw { shape == Shape::saw ? 2.0 * symmetric - 1.0 : (phase < cv.pulseWidth ? 1.0 : -1.0) };
+                check (near (control.voices[0].getSample (0, frame), cv.offset + cv.amplitude * raw), "CV saw and pulse preserve every exact level, skew and sharp transition without PolyBLEP or normalization");
+            }
+        }
+    }
 }
 
 void testWaveformDesign ()
 {
     using namespace WaveformDesign;
+    checkPolyBlepSources ();
+    checkPolyBlepRendering ();
     auto sine { startingPoint (Mode::oscillator, Shape::sine) };
     const auto clean { generated (sine) };
     check (clean.frames == 512 && clean.sampleRate == 48000.0 && clean.voices.size () == 1, "Oscillator renders exactly one requested cycle");
@@ -273,5 +385,5 @@ void testWaveformDesign ()
         settings.voiceCount = 8;
         checkFinite (generated (settings));
     }
-    std::cout << "PASS: band-limited periodic designs, CV/DC preservation, layers, deterministic recipes, statistics and bounded validation\n";
+    std::cout << "PASS: PolyBLEP source correction, band-limited periodic designs, CV/DC preservation, layers, deterministic recipes, statistics and bounded validation\n";
 }
