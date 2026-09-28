@@ -466,7 +466,10 @@ juce::PopupMenu WaveformDisplay::buildWaveformMenu (std::optional<double> clicke
         direction.addItem (20 + marker * 2, "Left <<", editable);
         direction.addItem (21 + marker * 2, "Right >>", editable);
         nudgeMenu.addSubMenu (name, direction, editable);
-        matchMenu.addItem (40 + marker, name + " to " + (marker % 2 == 0 ? "End" : "Start"), editable);
+        juce::PopupMenu matchDirection;
+        matchDirection.addItem (40 + marker * 2, "Left <<", editable);
+        matchDirection.addItem (41 + marker * 2, "Right >>", editable);
+        matchMenu.addSubMenu (name + " to " + (marker % 2 == 0 ? "End" : "Start"), matchDirection, editable);
     }
     if (clickedSample)
     {
@@ -502,7 +505,7 @@ void WaveformDisplay::applyMenuAction (int action, std::optional<double> clicked
     else if (action >= 10 && action < 14) jumpToMarker (action - 10);
     else if (isEnabled () && action >= 20 && action < 28) nudgeMarker ((action - 20) / 2, action % 2 != 0);
     else if (isEnabled () && action >= 30 && action < 34 && clickedSample) setMarker (action - 30, *clickedSample);
-    else if (isEnabled () && action >= 40 && action < 44) matchMarker (action - 40);
+    else if (isEnabled () && action >= 40 && action < 48) matchMarker ((action - 40) / 2, action % 2 != 0);
 }
 
 void WaveformDisplay::nudgeMarker (int marker, bool right)
@@ -521,7 +524,7 @@ void WaveformDisplay::nudgeMarker (int marker, bool right)
         durationInfo.setText ("No zero crossing " + juce::String (right ? "to the right" : "to the left") + " within this marker's valid range.", juce::dontSendNotification);
 }
 
-void WaveformDisplay::matchMarker (int marker)
+void WaveformDisplay::matchMarker (int marker, bool right)
 {
     if (! hasSample () || ! isEnabled () || marker < kSampleStart || marker > kLoopEnd) return;
     const auto* buffer { sampleProperties.getAudioBufferPtr () };
@@ -530,13 +533,14 @@ void WaveformDisplay::matchMarker (int marker)
     const auto minimum { static_cast<juce::int64> (constrainMarker (marker, 0.0, true)) };
     const auto maximum { static_cast<juce::int64> (constrainMarker (marker, static_cast<double> (getSampleLength ()), true)) };
     if (const auto match { WaveformPresentation::matchBoundary (*buffer, getDisplayChannel (), markerPosition (marker),
-            markerPosition (endBoundary ? marker - 1 : marker + 1), minimum, maximum, sampleProperties.getSampleRate (), endBoundary) })
+            markerPosition (endBoundary ? marker - 1 : marker + 1), minimum, maximum, sampleProperties.getSampleRate (), endBoundary, right) })
     {
         setMarker (marker, static_cast<double> (*match), true);
         jumpToMarker (marker);
     }
     else
-        durationInfo.setText ("No closer amplitude match within 50 ms and this marker's valid range; marker unchanged.", juce::dontSendNotification);
+        durationInfo.setText ("No closer amplitude match to the " + juce::String (right ? "right" : "left") +
+                              " within 50 ms and this marker's valid range; marker unchanged.", juce::dontSendNotification);
 }
 
 bool WaveformDisplay::keyPressed (const juce::KeyPress& key)

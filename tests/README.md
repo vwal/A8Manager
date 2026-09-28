@@ -116,8 +116,8 @@ mouse-up/cancellation, disabled editing and marker hit routing during modifier m
 stereo samples. It checks pitch-adjusted durations independent of audition speed,
 comma grouping, sample/time labels, directional and bounded zero crossings,
 context versus gear menus (top-level command order, section headings, shortcut
-column and read-only guards), marker placement, all four boundary-matching actions
-(including fixed fractional loop ends in Length mode and no-op/disabled guards),
+column and read-only guards), marker placement, all eight directional boundary-matching actions
+(including fixed fractional loop ends in Length mode, opposite-side exclusion and no-op/disabled guards),
 Length/End behaviour, Sample/Loop
 selection callbacks, Option/Alt movement inside regions and on handles, overlap
 selection, outside-region rejection, zoom reset/jumps, right-click versus drag,
@@ -133,7 +133,7 @@ application or change their presets/preferences.
 
 **EditorRefinementRegression** checks quieter-side and exact-zero nudges,
 exclusive end markers, bounds and stereo-side selection. Boundary-matching checks
-cover nonzero joins versus true zeros, both directions and endpoints, source-rate
+cover nonzero joins versus true zeros, strict left/right searches for both endpoints, source-rate
 search limits, nearest equal-quality matches, imperfect improvements, fractional
 ends, EOF/frame zero, silence, nonfinite samples and invalid inputs. Temporary files exercise
 overlong-name recovery, extension preservation, invalid names, missing sources

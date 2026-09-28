@@ -106,7 +106,7 @@ private:
     bool beginRegionMove (juce::Point<float> point);
     void setMarker (int marker, double position, bool keepOppositeBoundary = false);
     void nudgeMarker (int marker, bool right);
-    void matchMarker (int marker);
+    void matchMarker (int marker, bool right);
     double markerPosition (int marker);
     juce::String markerLabel (int marker);
     void updateDurations ();

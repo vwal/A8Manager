@@ -71,13 +71,13 @@ namespace WaveformPresentation
         return {};
     }
 
-    // Match the audible endpoint's amplitude, not zero. Keep the search local
-    // (50 ms either way) so a small join adjustment cannot reshape a whole slice.
+    // Match the audible endpoint's amplitude, not zero. Search only in the
+    // requested direction, within 50 ms, so an adjustment cannot reshape a whole slice.
     // The opposite endpoint stays fixed; END addresses the frame before its
     // exclusive boundary, just as the join preview does, including fractional ends.
     inline std::optional<juce::int64> matchBoundary (const juce::AudioBuffer<float>& audio, int side,
                                                     double moving, double opposite, juce::int64 minimum,
-                                                    juce::int64 maximum, double sampleRate, bool endBoundary)
+                                                    juce::int64 maximum, double sampleRate, bool endBoundary, bool right)
     {
         const auto count { audio.getNumSamples () };
         if (side < 0 || side >= audio.getNumChannels () || count == 0 ||
@@ -94,6 +94,10 @@ namespace WaveformPresentation
         const auto radius { std::max (1.0, std::min (static_cast<double> (count), std::ceil (sampleRate * 0.05))) };
         minimum = std::max ({ minimum, static_cast<juce::int64> (offset), static_cast<juce::int64> (std::ceil (moving - radius)) });
         maximum = std::min ({ maximum, static_cast<juce::int64> (count - 1 + offset), static_cast<juce::int64> (std::floor (moving + radius)) });
+        // Compare marker coordinates, including fractional markers, rather than
+        // their audible frames. Never cross to the unrequested side to find a match.
+        if (right) minimum = std::max (minimum, static_cast<juce::int64> (std::floor (moving)) + 1);
+        else maximum = std::min (maximum, static_cast<juce::int64> (std::ceil (moving)) - 1);
         const auto originalError { std::isfinite (data[frame]) ? std::abs (static_cast<double> (data[frame]) - target)
                                                             : std::numeric_limits<double>::infinity () };
         auto bestError { originalError };

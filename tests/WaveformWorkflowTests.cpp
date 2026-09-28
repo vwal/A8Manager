@@ -115,6 +115,32 @@ struct WaveformTestAccess
                 {
                     submenus.add (item.text);
                     check (item.isEnabled == editable, "Waveform editing submenus respect read-only state");
+                    if (item.text == "Match Opposite Boundary")
+                    {
+                        juce::PopupMenu::MenuItemIterator matches (*item.subMenu);
+                        auto marker { 0 };
+                        while (matches.next ())
+                        {
+                            const auto& match { matches.getItem () };
+                            check (marker < 4 && match.text == markerNames[static_cast<size_t> (marker)] +
+                                   " to " + (marker % 2 == 0 ? "End" : "Start"), "All four match conditions retain their labels and order");
+                            check (match.subMenu != nullptr && match.isEnabled == editable, "Every match condition exposes a guarded direction submenu");
+                            juce::PopupMenu::MenuItemIterator directions (*match.subMenu);
+                            auto direction { 0 };
+                            while (directions.next ())
+                            {
+                                const auto& action { directions.getItem () };
+                                check (direction < 2 && action.text == (direction == 0 ? "Left <<" : "Right >>") &&
+                                       action.itemID == 40 + marker * 2 + direction && action.subMenu == nullptr,
+                                       "Each match condition offers distinct Left and Right actions in order");
+                                check (action.isEnabled == editable, "Directional match actions respect read-only state");
+                                ++direction;
+                            }
+                            check (direction == 2, "Every match condition has exactly two directions");
+                            ++marker;
+                        }
+                        check (marker == 4, "Matching includes Sample Start, Sample End, Loop Start and Loop End");
+                    }
                 }
                 else if (item.isSeparator) layout.add ("---");
                 else
@@ -181,6 +207,8 @@ struct WaveformTestAccess
         view.setSize (760, 560);
         view.setZone (1);
         check (view.expanded && view.expandButton.getToggleState () && view.zoneProperties.getId () == 2, "Expanded viewer stays open across zone changes");
+        checkMenu (false, true);
+        checkMenu (true, true);
         view.resetZoom ();
         view.setLoopSelected (true);
         const auto shade { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
@@ -222,29 +250,77 @@ struct WaveformTestAccess
         view.zoneProperties.setSampleEnd (600, true);
         view.zoneProperties.setSide (0, true);
         channel.setLoopLengthIsEnd (false, true);
-        view.applyMenuAction (43, {});
+        view.applyMenuAction (46, {});
         check (selectedLoop && view.markerPosition (2) == 300 && view.markerPosition (3) == 562 &&
                view.markerPosition (1) == 600, "Match Loop End keeps Loop Start and sample boundaries fixed");
-        view.applyMenuAction (41, {});
+        view.applyMenuAction (42, {});
         check (! selectedLoop && view.markerPosition (0) == 300 && view.markerPosition (1) == 562,
                "Match Sample End selects SAMPLE and retains its start");
         audio.setSample (0, 300, 0.0f);
         audio.setSample (0, 318, -0.25f);
         view.zoneProperties.setLoopLength (262.5, true);
-        view.applyMenuAction (42, {});
+        view.applyMenuAction (45, {});
         check (selectedLoop && view.markerPosition (2) == 318 && view.markerPosition (3) == 562.5 &&
                view.zoneProperties.getLoopLength () == 244.5 && ! channel.getLoopLengthIsEnd (),
                "Match Loop Start keeps the fractional end fixed even in Length mode, without changing mode");
-        view.applyMenuAction (40, {});
+        view.applyMenuAction (41, {});
         check (! selectedLoop && view.markerPosition (0) == 318 && view.markerPosition (1) == 562,
                "Match Sample Start retains its end and selects SAMPLE");
-        view.applyMenuAction (40, {});
+        view.applyMenuAction (41, {});
         check (view.markerPosition (0) == 318 && view.durationInfo.getText ().contains ("unchanged"), "No improvement reports a no-op");
         view.setEnabled (false);
         const auto matched { view.zoneProperties.getValueTree ().createCopy () };
-        view.applyMenuAction (43, {});
+        for (auto action { 40 }; action < 48; ++action) view.applyMenuAction (action, {});
         check (view.zoneProperties.getValueTree ().isEquivalentTo (matched), "Disabled channels cannot invoke boundary matching");
         view.setEnabled (true);
+
+        // Route every directional action through the menu dispatcher, in both
+        // loop modes. Matches exist on both sides, so neither direction may
+        // silently choose the other side's candidate.
+        for (const auto endMode : { false, true })
+        {
+            channel.setLoopLengthIsEnd (endMode, true);
+            for (auto marker { 0 }; marker < 4; ++marker)
+            {
+                for (const auto rightward : { false, true })
+                {
+                    view.zoneProperties.setSampleStart (300, true);
+                    view.zoneProperties.setSampleEnd (600, true);
+                    view.zoneProperties.setLoopStart (350, true);
+                    view.zoneProperties.setLoopLength (300.5, true);
+                    view.zoneProperties.setSide (marker % 2, true);
+                    view.setLoopSelected (marker < 2);
+                    const std::array<double, 4> original { 300.0, 600.0, 350.0, 650.5 };
+                    const auto offset { marker % 2 };
+                    const auto opposite { marker + (offset == 0 ? 1 : -1) };
+                    const auto moving { original[static_cast<size_t> (marker)] };
+                    const auto leftMatch { static_cast<int> (std::floor (moving)) - 20 };
+                    const auto rightMatch { static_cast<int> (std::ceil (moving)) + 20 };
+                    const auto chosenMatch { rightward ? rightMatch : leftMatch };
+                    for (auto side { 0 }; side < 2; ++side)
+                        for (auto frame { 0 }; frame < audio.getNumSamples (); ++frame) audio.setSample (side, frame, 0.6f);
+                    const auto side { marker % 2 };
+                    audio.setSample (side, static_cast<int> (std::floor (original[static_cast<size_t> (opposite)])) - (1 - offset), -0.25f);
+                    audio.setSample (side, leftMatch - offset, -0.25f);
+                    audio.setSample (side, rightMatch - offset, -0.25f);
+                    // A nearer improvement must not win over the better match.
+                    audio.setSample (side, static_cast<int> (moving) + (rightward ? 7 : -7) - offset, -0.1f);
+                    view.applyMenuAction (40 + marker * 2 + (rightward ? 1 : 0), {});
+                    check (view.markerPosition (marker) == chosenMatch, "All eight menu actions match only in the requested direction on the selected stereo side");
+                    for (auto other { 0 }; other < 4; ++other)
+                        if (other != marker)
+                            check (view.markerPosition (other) == original[static_cast<size_t> (other)], "Directional matching leaves every other boundary fixed, including fractional Loop End");
+                    check (selectedLoop == (marker >= 2) && channel.getLoopLengthIsEnd () == endMode,
+                           "Directional matching selects the edited pair without changing Length/End mode");
+                    const auto alreadyMatched { view.zoneProperties.getValueTree ().createCopy () };
+                    view.applyMenuAction (40 + marker * 2 + (rightward ? 1 : 0), {});
+                    check (view.zoneProperties.getValueTree ().isEquivalentTo (alreadyMatched) && view.durationInfo.getText ().contains ("unchanged"),
+                           "Every direction preserves an already perfect match and reports a no-op");
+                }
+            }
+        }
+        view.zoneProperties.setSide (0, true);
+        channel.setLoopLengthIsEnd (false, true);
 
         view.zoneProperties.setSampleStart (200, true);
         view.zoneProperties.setSampleEnd (400, true);

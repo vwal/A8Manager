@@ -99,35 +99,100 @@ namespace
         }
         data.setSample (0, 161, -0.25f);
         data.setSample (1, 185, -0.25f);
-        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true) == 162, "Nonzero END join matches START 38 frames earlier, with exclusive-end offset");
+        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 162, "Nonzero END join matches START 38 frames earlier, with exclusive-end offset");
         check (WaveformPresentation::zeroCrossing (data, 0, 200, 24, 400, false, true) == 175, "True zero nudge remains distinct from amplitude matching");
-        check (matchBoundary (data, 1, 200, 20, 24, 400, 1000, true) == 186, "Join matching uses the displayed stereo side");
-        check (matchBoundary (data, 0, 20, 200, 0, 196, 1000, false) == 31, "START can match the fixed END's last audible frame");
-        check (matchBoundary (data, 0, 20, 200.5, 0, 196, 1000, false) == 31, "Fractional fixed END uses the same final frame as the join preview");
-        check (! matchBoundary (data, 0, 162, 20, 24, 400, 1000, true), "An already matched boundary stays put");
-        check (! matchBoundary (data, 0, 200, 20, 170, 210, 1000, true), "Do not move outside legal marker limits");
-        check (! matchBoundary (data, 0, 200, 20, 24, 400, 500, true), "Search radius follows source rate, not a whole-file scan");
+        check (matchBoundary (data, 1, 200, 20, 24, 400, 1000, true, false) == 186, "Join matching uses the displayed stereo side");
+        check (matchBoundary (data, 0, 20, 200, 0, 196, 1000, false, true) == 31, "START can match the fixed END's last audible frame");
+        check (matchBoundary (data, 0, 20, 200.5, 0, 196, 1000, false, true) == 31, "Fractional fixed END uses the same final frame as the join preview");
+        check (! matchBoundary (data, 0, 162, 20, 24, 400, 1000, true, false), "An already matched boundary stays put");
+        check (! matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false), "Do not move outside legal marker limits");
+        check (! matchBoundary (data, 0, 200, 20, 24, 400, 500, true, false), "Search radius follows source rate, not a whole-file scan");
         data.setSample (0, 198, -0.24f);
-        check (matchBoundary (data, 0, 200, 20, 170, 210, 1000, true) == 199, "Choose a closer amplitude even when no exact match exists");
+        check (matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false) == 199, "Choose a closer amplitude even when no exact match exists");
         data.setSample (0, 204, -0.25f);
-        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true) == 205, "Equal-quality matches favour the nearer boundary, including to the right");
+        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, true) == 205, "Rightward END matching chooses a match on the requested side");
+        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 162, "Leftward END matching ignores an equally good closer rightward match");
         data.setSample (0, 399, -0.25f);
-        check (matchBoundary (data, 0, 390, 20, 24, 400, 1000, true) == 400, "Matching an exclusive EOF is safe");
+        check (matchBoundary (data, 0, 390, 20, 24, 400, 1000, true, true) == 400, "Matching an exclusive EOF is safe");
         data.setSample (0, 0, -0.25f);
-        check (matchBoundary (data, 0, 5, 400, 0, 396, 1000, false) == 0, "START can match the final file frame at frame zero");
+        check (matchBoundary (data, 0, 5, 400, 0, 396, 1000, false, false) == 0, "START can match the final file frame at frame zero");
         const auto nan { std::numeric_limits<float>::quiet_NaN () };
         data.setSample (0, 204, nan);
         data.setSample (0, 199, nan);
-        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true) == 162, "Nonfinite candidates are skipped and a nonfinite current boundary can be repaired");
+        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 162, "Nonfinite candidates are skipped and a nonfinite current boundary can be repaired");
         data.setSample (0, 20, nan);
-        check (! matchBoundary (data, 0, 200, 20, 24, 400, 1000, true), "Nonfinite opposite endpoint cannot be matched");
-        check (! matchBoundary (data, 2, 200, 20, 24, 400, 1000, true) &&
-               ! matchBoundary (data, 1, 200, 20, 24, 400, 0, true) &&
-               ! matchBoundary (data, 1, 401, 20, 24, 400, 1000, true) &&
-               ! matchBoundary (data, 1, 20, 0, 0, 399, 1000, false) &&
-               ! matchBoundary (data, 1, 200, 20, 300, 100, 1000, true), "Invalid sides, rates, endpoints and inverted bounds are safe");
+        check (! matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, true), "Nonfinite opposite endpoint cannot be matched");
+        check (! matchBoundary (data, 2, 200, 20, 24, 400, 1000, true, false) &&
+               ! matchBoundary (data, 1, 200, 20, 24, 400, 0, true, true) &&
+               ! matchBoundary (data, 1, 401, 20, 24, 400, 1000, true, false) &&
+               ! matchBoundary (data, 1, 20, 0, 0, 399, 1000, false, true) &&
+               ! matchBoundary (data, 1, 200, 20, 300, 100, 1000, true, false), "Invalid sides, rates, endpoints and inverted bounds are safe");
         data.clear ();
-        check (! matchBoundary (data, 0, 200, 20, 24, 400, 1000, true), "Silence never causes arbitrary marker movement");
+        check (! matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) &&
+               ! matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, true), "Silence never causes arbitrary marker movement in either direction");
+
+        // Exercise both marker kinds with the same marker-coordinate fixture;
+        // END reads marker - 1, while START reads the marker itself.
+        for (const auto endBoundary : { false, true })
+        {
+            const auto offset { endBoundary ? 1 : 0 };
+            const auto opposite { endBoundary ? 20.0 : 390.0 };
+            auto reset = [&]
+            {
+                for (auto i { 0 }; i < 400; ++i) data.setSample (0, i, 0.6f);
+                data.setSample (0, endBoundary ? 20 : 389, -0.25f);
+            };
+            auto candidate = [&] (int marker, float value) { data.setSample (0, marker - offset, value); };
+            auto match = [&] (double moving, bool right, juce::int64 minimum = 0, juce::int64 maximum = 400, double rate = 1000.0)
+            {
+                return matchBoundary (data, 0, moving, opposite, minimum, maximum, rate, endBoundary, right);
+            };
+
+            reset ();
+            candidate (160, -0.25f); candidate (180, -0.20f);
+            candidate (220, -0.20f); candidate (240, -0.25f);
+            check (match (200, false) == 160 && match (200, true) == 240, "Both endpoint kinds choose the best amplitude before distance in the requested direction");
+            candidate (180, -0.25f); candidate (220, -0.25f);
+            check (match (200, false) == 180 && match (200, true) == 220, "Equal-quality candidates on each requested side favour the nearer marker");
+            candidate (160, -0.20f); candidate (180, -0.20f);
+            check (match (200, false) == 180, "Left matching ignores better matches on the right");
+            candidate (160, -0.25f); candidate (220, -0.20f); candidate (240, -0.20f);
+            check (match (200, true) == 220, "Right matching ignores better matches on the left");
+            check (! match (200, false, 200, 400) && ! match (200, true, 0, 200), "Legal limits cannot cause a search to cross to the other direction");
+            candidate (200, -0.25f);
+            check (! match (200, false) && ! match (200, true), "An exact current match stays put even with matches in both directions");
+
+            reset ();
+            candidate (150, -0.25f); candidate (250, -0.25f);
+            check (match (200, false) == 150 && match (200, true) == 250, "The 50 ms search radius includes both exact limits");
+            check (! match (200, false, 151, 400) && ! match (200, true, 0, 249), "Both directions obey their legal marker limits");
+            check (! match (200, false, 0, 400, 980) && ! match (200, true, 0, 400, 980), "Both directions exclude matches outside the source-rate radius");
+            check (! match (200.5, false) && match (200.5, true) == 250, "Fractional current markers retain a radius centred on the actual boundary");
+
+            reset ();
+            candidate (199, -0.25f); candidate (201, -0.25f);
+            check (match (200.5, false) == 199 && match (200.5, true) == 201, "Fractional boundaries search strictly left and right in marker coordinates");
+            candidate (199, 0.6f); candidate (200, -0.20f);
+            check (match (199.5, true) == 201, "A rightward fractional search can pass a nearer inferior candidate");
+            candidate (201, 0.6f); candidate (199, 0.6f);
+            check (match (199.5, true) == 200, "Rightward fractional matching includes the immediately following integer marker");
+            check (! match (200.5, false), "A fractional marker does not move to its current audible frame without amplitude improvement");
+
+            reset ();
+            candidate (198, -0.25f); candidate (202, -0.25f);
+            candidate (199, nan); candidate (200, nan); candidate (201, nan);
+            check (match (200, false) == 198 && match (200, true) == 202, "Both directions skip nonfinite candidates and repair a nonfinite current endpoint");
+            data.setSample (0, endBoundary ? 20 : 389, nan);
+            check (! match (200, false) && ! match (200, true), "Neither direction can match a nonfinite fixed endpoint");
+
+            reset ();
+            candidate (offset, -0.25f); candidate (399 + offset, -0.25f);
+            check (match (5 + offset, false) == offset && match (394 + offset, true) == 399 + offset,
+                   "Directional matching safely reaches the first and last audible file frames");
+            candidate (offset, 0.6f); candidate (399 + offset, 0.6f);
+            check (! match (offset, false) && ! match (399 + offset, true), "Outward searches at file edges are no-ops");
+            check (! match (200, false, 0, 400, nan) && ! match (nan, true), "Nonfinite rates and moving markers are safe in either direction");
+        }
     }
 }
 
