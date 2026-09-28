@@ -752,7 +752,9 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::client, AudioPlayerProperties::EnableCallbacks::yes);
     audioPlayerProperties.onPlayStateChange = [this] (AudioPlayerProperties::PlayState playState)
     {
-        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ZoneEditor> (this), playState] ()
+        // Keep construction outside the nested capture for MSVC compatibility.
+        const auto safe { juce::Component::SafePointer<ZoneEditor> (this) };
+        juce::MessageManager::callAsync ([safe, playState] ()
         {
             if (safe == nullptr) return;
             if (safe->hasCvAuditionSource ()) { safe->updateAuditionControls (); return; }

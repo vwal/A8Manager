@@ -75,7 +75,9 @@ ChannelEditor::ChannelEditor ()
         const auto before { channelTree.createCopy () };
         juce::PopupMenu menu;
         menu.addItem (1, "Purge this zone...", channelProperties.getChannelMode () != ChannelProperties::ChannelMode::stereoRight && zoneProperties[index].getSample ().isNotEmpty ());
-        menu.showMenuAsync ({}, [safe = juce::Component::SafePointer<ChannelEditor> (this), index, channelTree, before] (int choice)
+        // Keep construction outside the nested capture for MSVC compatibility.
+        const auto safe { juce::Component::SafePointer<ChannelEditor> (this) };
+        menu.showMenuAsync ({}, [safe, index, channelTree, before] (int choice)
         {
             if (choice == 1 && safe != nullptr && safe->channelProperties.getValueTree () == channelTree && channelTree.isEquivalentTo (before)) safe->confirmPurgeZone (index);
         });
