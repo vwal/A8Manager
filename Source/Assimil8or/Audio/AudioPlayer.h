@@ -64,6 +64,9 @@ private:
     int sampleLength { 0 };
     std::atomic<double> playbackPosition { -1.0 };
     std::atomic<bool> playbackFinished { false };
+    std::atomic<AudioPlayerProperties::SimulationPhase> simulationPhase { AudioPlayerProperties::SimulationPhase::inactive };
+    int simulationLoopStart { 0 };
+    bool simulationRangeActive { false };
 
     double sampleRate { 44100.0 };
     int blockSize { 128 };
@@ -73,7 +76,7 @@ private:
     bool preservePitch { true };
     AuditionStretch auditionStretch;
     int readSampleOffset { 0 };
-    int renderedStart { 0 }, renderedEnd { 0 };
+    int renderedStart { 0 }, renderedEnd { 0 }, renderedLoopStart { 0 };
     bool resetAuditionResampler { true };
 
     class AuditionInputSource : public juce::AudioSource
@@ -143,6 +146,7 @@ private:
     void renderAuditionInput (const juce::AudioSourceChannelInfo& bufferToFill);
     void initFromZone (std::tuple<int, int> channelAndZoneIndecies);
     void initSamplePoints ();
+    bool initSimulationPoints ();
     bool isStereoPair ();
     bool selectedSampleIsCv ();
     void prepareSampleForPlayback ();

@@ -5,8 +5,9 @@ Assimil8or. You can see and adjust sample boundaries, audition regions on your
 computer, and save the resulting preset for use with the module.
 
 The computer audition is an editing aid, **not a complete simulation of the
-Assimil8or**. In particular, it previews the selected region and zone PITCH
-OFFSET, but not all the channel processing you can configure in the editor.
+Assimil8or**. It previews individual regions or a forward sample-into-loop
+sequence, with zone PITCH OFFSET, but not all the channel processing you can
+configure in the editor.
 
 ## Contents
 
@@ -261,7 +262,8 @@ the stripes; ordinary unselected audio remains uniformly dimmed. The stripes
 update with markers, channel loop mode, zoom and selected zone, in both sizes.
 They describe the configured loop extent in source coordinates, independently of
 the SAMPLE/LOOP audition selection—not a simulation of reverse playback, gate
-release or modulation. Audition still plays only the selected region.
+release or modulation. Ordinary ONCE/LOOP audition plays only the selected
+region; **Sample > Loop** can audition the forward journey across that bridge.
 
 ### Expanded view and marker tools
 
@@ -346,13 +348,54 @@ just once. Selecting the other pair of fields or editing the other marker pair s
 press ONCE or LOOP again to hear the new selection. Dragging a large-waveform
 marker now selects its corresponding pair of fields for audition.
 
-Three controls use the word “loop,” but have different jobs:
+These controls use the word “loop,” but have different jobs:
 
 - **LOOP below the small waveform:** repeat the currently selected audition
   region on the computer; does not enable looping in the saved preset.
 - **Zoom to Loop Markers** in the waveform menu: frame the loop region.
 - **LOOP mode in the channel parameters** (No Loop, Loop, Loop and Release):
   a saved playback setting for the module, not the computer's transport button.
+- **Sample > Loop:** a separate forward simulation that plays an intro and
+  then repeats the loop, regardless of the saved channel mode.
+
+### Simulating sample playback into a loop
+
+Click **Sample > Loop** in the waveform toolbar, or choose **Trigger sample into
+loop simulation** from its gear/right-click menu. This works in both the normal
+and expanded waveform views.
+
+In a very short, narrow waveform view, use the menu action: the toolbar button
+is hidden to leave room for the waveform and marker labels.
+
+- Playback starts at **Sample Start** and continues forward to **Loop Start**.
+  If the loop is later than Sample End, it continues across the striped gap
+  without stopping or skipping that audio.
+- On reaching the loop, playback repeats between **Loop Start and Loop End**.
+  The loop can be inside the sample region, overlap its end, or lie after it.
+  Sample End does not stop this simulation; audio after Loop End is not played.
+- During the intro and striped gap, the Zones panel stays on **SAMPLE**, with
+  **ONCE** highlighted as **STOP**. On entering the loop it switches to **LOOP**,
+  with the **LOOP** transport button highlighted as **STOP**.
+- Click whichever **STOP** is highlighted to end playback. The waveform toolbar
+  also changes to **Stop simulation**. After stopping, the ordinary ONCE and LOOP
+  buttons remain available.
+
+Marker edits remain live. During simulation, the Zones section follows playback
+rather than switching when you edit the other marker pair. Once playback is
+inside the loop, moving that loop keeps playback inside its new bounds. Invalid
+ranges stop the preview. Switching samples/zones or purging a channel also stops
+the simulation; it does not transfer to the new source.
+
+If Sample Start is already inside the loop, simulation begins in the loop phase
+immediately. A loop ending at or before Sample Start cannot be reached by this
+forward preview, so the trigger is disabled. Empty/unavailable samples and known
+CV waveforms cannot use it either. For stereo pairs, trigger from the left/master
+channel; both sides play together.
+
+**Audition speed, Keep pitch and zone PITCH OFFSET still apply.** This mode never
+changes your saved play mode, loop mode or markers. It models this forward
+sample-to-loop sequence only—not reverse playback, gate release, CV-driven
+markers, or all unusual Assimil8or marker-order behaviors.
 
 ### Reading the small END/START display
 

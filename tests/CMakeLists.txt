@@ -70,6 +70,7 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     StereoAssignmentTests.cpp
     StereoChannelUiTests.cpp
     ChannelPurgeUiTests.cpp
+    SimulationUiTests.cpp
     PairedZoneEditTests.cpp
     PresetWorkflowAuditTests.cpp
     ../Source/Assimil8or/Assimil8orPreset.cpp
@@ -151,6 +152,9 @@ set_tests_properties(WaveformDesignRegression WaveformDesignExportRegression Wav
     PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME RootFolderRegression COMMAND A8ManagerInteractionTests --root-folder)
 add_test(NAME PlaybackRegression COMMAND A8ManagerInteractionTests --playback)
+add_test(NAME SampleLoopSimulationRegression COMMAND A8ManagerInteractionTests --sample-loop-simulation)
+add_test(NAME SimulationUiRegression COMMAND A8ManagerInteractionTests --simulation-ui)
+set_tests_properties(SampleLoopSimulationRegression SimulationUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME LoopPointsRegression COMMAND A8ManagerInteractionTests --loop-preview)
 add_test(NAME ZoneVoltageRegression COMMAND A8ManagerInteractionTests --zone-voltages)
 add_test(NAME RegionMoveRegression COMMAND A8ManagerInteractionTests --region-move)

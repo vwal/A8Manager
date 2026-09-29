@@ -24,6 +24,8 @@ void testSharedPresetSession ();
 void testChannelCvSafety ();
 void testGeneratedSidecarValidator ();
 void testChannelPurgeUi ();
+void testSampleLoopSimulation ();
+void testSimulationUi ();
 void testWaveformDesignRecall ();
 void testWaveformWorkspace ();
 void testWaveformDuration ();
@@ -135,6 +137,8 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI initialise;
     try
     {
+        if (argc == 2 && juce::String (argv[1]) == "--sample-loop-simulation") { testSampleLoopSimulation (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--simulation-ui") { testSimulationUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--channel-purge-ui") { testChannelPurgeUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--generated-sidecar-validator") { testGeneratedSidecarValidator (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--waveform-design-recall") { testWaveformDesignRecall (); return 0; }

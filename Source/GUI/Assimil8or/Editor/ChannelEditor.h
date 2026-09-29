@@ -221,6 +221,7 @@ public:
 
 private:
     friend struct StereoChannelUiTestAccess;
+    friend struct SimulationUiTestAccess;
     enum class VoltageBalanceType
     {
         distributeAcross5V,

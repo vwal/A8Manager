@@ -7,6 +7,7 @@ void AudioPlayerProperties::initValueTree ()
     setSampleSource (-1, -1, false);
     setSamplePointsSelector (SamplePointsSelector::SamplePoints, false);
     setPlaybackPosition (-1.0, false);
+    setSimulationPhase (SimulationPhase::inactive, false);
     setAuditionRate (1.0, false);
     setPreservePitch (true, false);
 }
@@ -41,6 +42,16 @@ void AudioPlayerProperties::setPlaybackPosition (double position, bool includeSe
 double AudioPlayerProperties::getPlaybackPosition ()
 {
     return getValue<double> (PlaybackPositionPropertyId);
+}
+
+void AudioPlayerProperties::setSimulationPhase (SimulationPhase phase, bool includeSelfCallback)
+{
+    setValue (static_cast<int> (phase), SimulationPhasePropertyId, includeSelfCallback);
+}
+
+AudioPlayerProperties::SimulationPhase AudioPlayerProperties::getSimulationPhase ()
+{
+    return static_cast<SimulationPhase> (getValue<int> (SimulationPhasePropertyId));
 }
 
 void AudioPlayerProperties::setPlayState (PlayState playState, bool includeSelfCallback)
@@ -94,6 +105,11 @@ void AudioPlayerProperties::valueTreePropertyChanged (juce::ValueTree& treeWhose
         {
             if (onAuditionRateChange != nullptr)
                 onAuditionRateChange (getAuditionRate ());
+        }
+        else if (property == SimulationPhasePropertyId)
+        {
+            if (onSimulationPhaseChange != nullptr)
+                onSimulationPhaseChange (getSimulationPhase ());
         }
         else if (property == PlaybackPositionPropertyId)
         {

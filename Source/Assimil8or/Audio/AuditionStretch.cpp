@@ -5,7 +5,8 @@
 struct AuditionStretch::Impl
 {
     // Provide look-ahead without reading outside the selected region. Loops
-    // repeat, including regions shorter than an FFT; one-shots zero-pad.
+    // repeat, including regions shorter than an FFT; one-shots zero-pad. An
+    // intro-to-loop stream zero-pads before its intro and wraps only its tail.
     struct Input
     {
         const juce::AudioBuffer<float>* buffer { nullptr };
@@ -13,6 +14,8 @@ struct AuditionStretch::Impl
         juce::int64 position { 0 };
         float fraction { 0.0f };
         bool looping { false };
+        int loopOffset { 0 };
+        bool hasIntro { false };
 
         struct Channel
         {
@@ -20,8 +23,11 @@ struct AuditionStretch::Impl
             int channel;
             float at (juce::int64 frame) const
             {
-                if (input.looping)
-                    frame = (frame % input.length + input.length) % input.length;
+                if (input.looping && (! input.hasIntro || frame >= input.length))
+                {
+                    const auto loopLength { input.length - input.loopOffset };
+                    frame = input.loopOffset + ((frame - input.loopOffset) % loopLength + loopLength) % loopLength;
+                }
                 else if (frame < 0 || frame >= input.length)
                     return 0.0f;
                 return input.buffer->getSample (channel, input.start + static_cast<int> (frame));
@@ -51,13 +57,14 @@ void AuditionStretch::prepare (double sampleRate)
 }
 
 void AuditionStretch::reset (const juce::AudioBuffer<float>& source, int start, int end, double cursor,
-                            double speed, double pitchSemitones, bool looping)
+                            double speed, double pitchSemitones, bool looping, int loopStart)
 {
     jassert (source.getNumChannels () >= 2 && start >= 0 && end > start && end <= source.getNumSamples ());
     auto& state { *impl };
     const auto relative { cursor - start };
     state.input = { &source, start, end - start, static_cast<juce::int64> (std::floor (relative)),
-                    static_cast<float> (relative - std::floor (relative)), looping };
+                    static_cast<float> (relative - std::floor (relative)), looping,
+                    loopStart >= start && loopStart < end ? loopStart - start : 0, loopStart > start && loopStart < end };
     state.inputRemainder = 0.0;
     state.stretch.setTransposeSemitones (static_cast<float> (pitchSemitones));
     // Compensate both input and output latency. Read-ahead is not audible
@@ -79,7 +86,8 @@ void AuditionStretch::process (const juce::AudioSourceChannelInfo& output, doubl
         state.stretch.process (state.input, inputCount, state.scratch.getArrayOfWritePointers (), count);
         state.input.position += inputCount;
         // Keep the running index bounded even during hours of loop playback.
-        if (state.input.looping) state.input.position %= state.input.length;
+        if (state.input.looping && state.input.position >= state.input.length)
+            state.input.position = state.input.loopOffset + (state.input.position - state.input.loopOffset) % (state.input.length - state.input.loopOffset);
         for (auto channel { 0 }; channel < juce::jmin (2, output.buffer->getNumChannels ()); ++channel)
             output.buffer->copyFrom (channel, output.startSample + written, state.scratch, channel, 0, count);
         written += count;

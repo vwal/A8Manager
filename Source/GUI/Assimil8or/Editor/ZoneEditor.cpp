@@ -8,6 +8,7 @@
 #include "../../../Assimil8or/Preset/ChannelProperties.h"
 #include "../../../Assimil8or/Preset/PresetProperties.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
+#include "../../../Assimil8or/Audio/SampleLoopSimulation.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Debug/DumpStack.h"
 #include "oolib/GUI/ErrorHelpers.h"
@@ -60,19 +61,23 @@ ZoneEditor::ZoneEditor ()
 
     setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector::SamplePoints, true);
 
-    auto setupPlayButton = [this] (juce::TextButton& playButton, juce::String text, juce::String otherButtonText,
-                                   AudioPlayerProperties::PlayState playState)
+    auto setupPlayButton = [this] (juce::TextButton& playButton, juce::String text, AudioPlayerProperties::PlayState playState)
     {
         playButton.setButtonText (text);
         playButton.setEnabled (false);
-        playButton.onClick = [this, text, &playButton, playState, otherButtonText] ()
+        playButton.onClick = [this, &playButton, playState] ()
         {
-            if (hasCvAuditionSource ()) { updateAuditionControls (); return; }
-            if (playButton.getButtonText () == "STOP")
+            if (hasCvAuditionSource () || ! playButton.isEnabled ()) { updateAuditionControls (); return; }
+            // Read the current transport, not a label that may still be waiting
+            // for a queued UI refresh after another zone started or stopped.
+            const auto state { audioPlayerProperties.getPlayState () };
+            const bool simulationStop { state == AudioPlayerProperties::PlayState::sampleIntoLoop &&
+                (playButton.getToggleState () ||
+                 (audioPlayerProperties.getSimulationPhase () == AudioPlayerProperties::SimulationPhase::loop) == (&playButton == &loopPlayButton)) };
+            if (isCurrentAuditionSource () &&
+                (simulationStop || state == playState))
             {
-                // stopping
                 audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
-                playButton.setButtonText (text);
             }
             else
             {
@@ -81,20 +86,16 @@ ZoneEditor::ZoneEditor ()
                 audioPlayerProperties.setSampleSource (parentChannelIndex, zoneIndex, false);
                 // starting
                 audioPlayerProperties.setPlayState (playState, false);
-                playButton.setButtonText ("STOP");
-                if (&playButton == &oneShotPlayButton)
-                    loopPlayButton.setButtonText (otherButtonText);
-                else
-                    oneShotPlayButton.setButtonText (otherButtonText);
             }
+            updatePlaybackDisplay ();
         };
         addAndMakeVisible (playButton);
     };
     loopPlayButton.setTooltip ("Plays the currently selected SOURCE in looping mode");
-    setupPlayButton (loopPlayButton, "LOOP", "ONCE", AudioPlayerProperties::PlayState::loop);
+    setupPlayButton (loopPlayButton, "LOOP", AudioPlayerProperties::PlayState::loop);
 
     oneShotPlayButton.setTooltip ("Plays the currently selected SOURCE in one shot mode");
-    setupPlayButton (oneShotPlayButton, "ONCE", "LOOP", AudioPlayerProperties::PlayState::play);
+    setupPlayButton (oneShotPlayButton, "ONCE", AudioPlayerProperties::PlayState::play);
     setupLabel (cvAuditionNotice, "CV sample\nSpeaker audition disabled", 10.0f, juce::Justification::centred);
     cvAuditionNotice.setColour (juce::Label::textColourId, juce::Colour (0xffffc472));
     cvAuditionNotice.setTooltip ("This sample or its stereo partner is marked as control voltage (CV). Speaker/headphone audition is blocked. The waveform and preset remain editable for Assimil8or hardware.");
@@ -198,8 +199,13 @@ bool ZoneEditor::handleSamplesInternal (int startingZoneIndex, juce::StringArray
     return assigned;
 }
 
-void ZoneEditor::setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector newSamplePointsSelector, bool forceSetup)
+void ZoneEditor::setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector newSamplePointsSelector, bool forceSetup, bool publishToPlayer)
 {
+    const bool followingSimulation { publishToPlayer && isCurrentAuditionSource () &&
+        audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop };
+    if (followingSimulation)
+        newSamplePointsSelector = audioPlayerProperties.getSimulationPhase () == AudioPlayerProperties::SimulationPhase::loop
+            ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints;
     if (samplePointsSelector != newSamplePointsSelector || forceSetup)
     {
         samplePointsSelector = newSamplePointsSelector;
@@ -210,7 +216,7 @@ void ZoneEditor::setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelec
     }
     // Each zone remembers its choice; only the visible editor may publish it
     // to the shared player. Re-publish even when its local choice is unchanged.
-    if (isShowing () && (audioPlayerProperties.getSamplePointsSelector () != samplePointsSelector ||
+    if (publishToPlayer && ! followingSimulation && isShowing () && (audioPlayerProperties.getSamplePointsSelector () != samplePointsSelector ||
                          audioPlayerProperties.getSampleSource () != std::make_tuple (parentChannelIndex, zoneIndex)))
     {
         audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
@@ -245,6 +251,7 @@ void ZoneEditor::updateLoopPointsView ()
     }
     loopPointsView.setLoopPoints (startSample, numSamples, side);
     loopPointsView.repaint ();
+    if (onSimulationAvailabilityChanged) onSimulationAvailabilityChanged ();
 }
 
 void ZoneEditor::updateDurations ()
@@ -750,18 +757,9 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
     editManager = systemServices.getEditManager ();
 
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::client, AudioPlayerProperties::EnableCallbacks::yes);
-    audioPlayerProperties.onPlayStateChange = [this] (AudioPlayerProperties::PlayState playState)
-    {
-        // Keep construction outside the nested capture for MSVC compatibility.
-        const auto safe { juce::Component::SafePointer<ZoneEditor> (this) };
-        juce::MessageManager::callAsync ([safe, playState] ()
-        {
-            if (safe == nullptr) return;
-            if (safe->hasCvAuditionSource ()) { safe->updateAuditionControls (); return; }
-            safe->oneShotPlayButton.setButtonText (playState == AudioPlayerProperties::PlayState::play ? "STOP" : "ONCE");
-            safe->loopPlayButton.setButtonText (playState == AudioPlayerProperties::PlayState::loop ? "STOP" : "LOOP");
-        });
-    };
+    audioPlayerProperties.onPlayStateChange = [this] (AudioPlayerProperties::PlayState) { queuePlaybackDisplayUpdate (); };
+    audioPlayerProperties.onSampleSourceChanged = [this] (auto) { queuePlaybackDisplayUpdate (); };
+    audioPlayerProperties.onSimulationPhaseChange = [this] (AudioPlayerProperties::SimulationPhase) { queuePlaybackDisplayUpdate (); };
 
     zoneProperties.wrap (zonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::yes);
     uneditedZoneProperties.wrap (uneditedZonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
@@ -878,11 +876,65 @@ void ZoneEditor::updateAuditionControls ()
     cvAuditionNotice.setVisible (cv);
     oneShotPlayButton.setTooltip (cv ? cvAuditionNotice.getTooltip () : "Plays the currently selected SOURCE in one shot mode");
     loopPlayButton.setTooltip (cv ? cvAuditionNotice.getTooltip () : "Plays the currently selected SOURCE in looping mode");
-    if (cv)
+    updatePlaybackDisplay ();
+    if (onSimulationAvailabilityChanged) onSimulationAvailabilityChanged ();
+}
+
+bool ZoneEditor::isCurrentAuditionSource ()
+{
+    return parentChannelIndex >= 0 && zoneIndex >= 0 &&
+           audioPlayerProperties.getSampleSource () == std::make_tuple (parentChannelIndex, zoneIndex);
+}
+
+bool ZoneEditor::canStartSampleIntoLoop ()
+{
+    if (parentChannelIndex < 0 || zoneIndex < 0 || isStereoRightChannelMode || hasCvAuditionSource () ||
+        sampleProperties.getStatus () != SampleStatus::exists || sampleProperties.getAudioBufferPtr () == nullptr)
+        return false;
+    const auto frames { std::min (sampleProperties.getLengthInSamples (),
+        static_cast<juce::int64> (sampleProperties.getAudioBufferPtr ()->getNumSamples ())) };
+    return SampleLoopSimulation::resolve (zoneProperties, frames).has_value ();
+}
+
+void ZoneEditor::startSampleIntoLoop ()
+{
+    if (! canStartSampleIntoLoop ()) return;
+    audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+    audioPlayerProperties.setSampleSource (parentChannelIndex, zoneIndex, false);
+    const bool startsWithinLoop { zoneProperties.getSampleStart ().value_or (0) >= zoneProperties.getLoopStart ().value_or (0) };
+    audioPlayerProperties.setSimulationPhase (startsWithinLoop ? AudioPlayerProperties::SimulationPhase::loop
+                                                             : AudioPlayerProperties::SimulationPhase::sample, false);
+    audioPlayerProperties.setSamplePointsSelector (startsWithinLoop ? AudioPlayerProperties::SamplePointsSelector::LoopPoints
+                                                                  : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false);
+    audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::sampleIntoLoop, false);
+    updatePlaybackDisplay ();
+}
+
+void ZoneEditor::queuePlaybackDisplayUpdate ()
+{
+    const juce::Component::SafePointer<ZoneEditor> safe (this);
+    deferPlaybackDisplayUpdate ([safe] ()
     {
-        oneShotPlayButton.setButtonText ("ONCE");
-        loopPlayButton.setButtonText ("LOOP");
-    }
+        if (safe != nullptr) safe->updatePlaybackDisplay ();
+    });
+}
+
+void ZoneEditor::updatePlaybackDisplay ()
+{
+    using State = AudioPlayerProperties::PlayState;
+    const auto state { audioPlayerProperties.getPlayState () };
+    const bool active { isCurrentAuditionSource () && oneShotPlayButton.isEnabled () && ! hasCvAuditionSource () };
+    const bool simulation { active && state == State::sampleIntoLoop };
+    const bool loopPhase { simulation && audioPlayerProperties.getSimulationPhase () == AudioPlayerProperties::SimulationPhase::loop };
+    if (simulation)
+        setActiveSamplePoints (loopPhase ? AudioPlayerProperties::SamplePointsSelector::LoopPoints
+                                       : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false, false);
+    const bool onceActive { active && (state == State::play || (simulation && ! loopPhase)) };
+    const bool loopActive { active && (state == State::loop || loopPhase) };
+    oneShotPlayButton.setButtonText (onceActive ? "STOP" : "ONCE");
+    loopPlayButton.setButtonText (loopActive ? "STOP" : "LOOP");
+    oneShotPlayButton.setToggleState (onceActive, juce::dontSendNotification);
+    loopPlayButton.setToggleState (loopActive, juce::dontSendNotification);
 }
 
 void ZoneEditor::setLoopLengthIsEnd (bool newLoopLengthIsEnd)

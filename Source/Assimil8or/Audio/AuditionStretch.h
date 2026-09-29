@@ -10,8 +10,10 @@ public:
     AuditionStretch ();
     ~AuditionStretch ();
     void prepare (double sampleRate);
+    // An optional loopStart inside [start, end) plays the intro only once;
+    // subsequent read-ahead repeats [loopStart, end), not the intro.
     void reset (const juce::AudioBuffer<float>& source, int start, int end, double cursor,
-                double speed, double pitchSemitones, bool looping);
+                double speed, double pitchSemitones, bool looping, int loopStart = -1);
     void process (const juce::AudioSourceChannelInfo& output, double speed);
 
 private:

@@ -31,8 +31,11 @@ public:
     void focusZone ();
     void setLoopSelected (bool loopSelected);
     void setExpanded (bool expanded);
+    void refreshSimulationControls ();
     std::function<void (bool)> onRegionSelected;
     std::function<void ()> onExpandRequested;
+    std::function<bool ()> canTriggerSimulation;
+    std::function<void ()> onTriggerSimulation;
 
     void init (juce::ValueTree channelPropertiesVT, juce::ValueTree rootPropertiesVT);
     void setZone (int zoneIndex);
@@ -40,6 +43,7 @@ public:
 private:
     friend struct WaveformTestAccess;
     friend struct AudioAuditTestAccess;
+    friend struct SimulationUiTestAccess;
     // Marker list indices, in the order they are added to the overlay.
     enum MarkerIndex
     {
@@ -90,6 +94,7 @@ private:
     } expandButton;
     juce::TextButton zoomIn { "+" }, zoomOut { "-" }, menuButton { juce::String::fromUTF8 ("\xe2\x9a\x99") };
     juce::TextButton zoomInfo;
+    juce::TextButton simulationButton { "Sample > Loop" };
     juce::Label durationInfo;
     juce::Label auditionRateLabel;
     juce::Slider auditionRateSlider;
@@ -118,6 +123,8 @@ private:
     double markerPosition (int marker);
     juce::String markerLabel (int marker);
     void updateDurations ();
+    bool isSimulatingThisZone ();
+    void triggerSimulation ();
 
     bool hasSample ();
     juce::int64 getSampleLength ();

@@ -1,4 +1,5 @@
 #include "AudioPlayer.h"
+#include "SampleLoopSimulation.h"
 #include <cmath>
 #include <limits>
 #include "../../Assimil8or/PresetManagerProperties.h"
@@ -69,12 +70,18 @@ void AudioPlayer::init (juce::ValueTree rootPropertiesVT)
 void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
 {
     juce::ScopedLock sourceLock (dataCS);
+    if (playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
+    {
+        handlePlayState (AudioPlayerProperties::PlayState::stop);
+        playbackFinished.store (true);
+    }
     playbackPosition.store (-1.0);
     LogAudioPlayer ("initFromZone");
     auto [channelIndex, zoneIndex] { channelAndZoneIndecies };
     if (channelIndex < 0 || channelIndex >= 8 || zoneIndex < 0 || zoneIndex >= 8)
     {
         handlePlayState (AudioPlayerProperties::PlayState::stop);
+        playbackFinished.store (true); // Publish the cleared source's STOP on the message timer.
         sampleBuffer.reset ();
         sampleStart = sampleLength = 0;
         return;
@@ -154,19 +161,23 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
     // Only the selected pair may change the audition range.
     zoneProperties.onSampleStartChange = [this] (std::optional<juce::int64>)
     {
-        if (audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::SamplePoints) initSamplePoints ();
+        if (audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop ||
+            audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::SamplePoints) initSamplePoints ();
     };
     zoneProperties.onSampleEndChange = [this] (std::optional<juce::int64>)
     {
-        if (audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::SamplePoints) initSamplePoints ();
+        if (audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop ||
+            audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::SamplePoints) initSamplePoints ();
     };
     zoneProperties.onLoopStartChange = [this] (std::optional<juce::int64>)
     {
-        if (audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::LoopPoints) initSamplePoints ();
+        if (audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop ||
+            audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::LoopPoints) initSamplePoints ();
     };
     zoneProperties.onLoopLengthChange = [this] (std::optional<double>)
     {
-        if (audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::LoopPoints) initSamplePoints ();
+        if (audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop ||
+            audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::LoopPoints) initSamplePoints ();
     };
     sampleProperties.onStatusChange = [this] (SampleStatus status)
     {
@@ -217,6 +228,18 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
 void AudioPlayer::initSamplePoints ()
 {
     juce::ScopedLock sl (dataCS);
+    if (playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
+    {
+        if (! initSimulationPoints ())
+        {
+            playState = AudioPlayerProperties::PlayState::stop;
+            simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
+            playbackPosition.store (-1.0);
+            playbackFinished.store (true);
+        }
+        return;
+    }
+    simulationRangeActive = false;
     if (! std::isfinite (sampleRateRatio) || sampleRateRatio <= 0.0 || ! zoneProperties.isValid ())
     {
         sampleStart = sampleLength = 0;
@@ -240,6 +263,39 @@ void AudioPlayer::initSamplePoints ()
         curSampleOffset = sampleStart;
 }
 
+bool AudioPlayer::initSimulationPoints ()
+{
+    const auto range { SampleLoopSimulation::resolve (zoneProperties, sampleProperties.getLengthInSamples ()) };
+    if (! range || ! std::isfinite (sampleRateRatio) || sampleRateRatio <= 0.0 || sampleBuffer == nullptr ||
+        sampleBuffer->getNumChannels () < 2 || sampleAuditionBlocked)
+        return false;
+    const auto limit { static_cast<double> (sampleBuffer->getNumSamples ()) };
+    const auto toFrame = [this, limit] (double frame) { return static_cast<int> (std::clamp (frame * sampleRateRatio, 0.0, limit)); };
+    const auto start { toFrame (static_cast<double> (range->sampleStart)) };
+    const auto loopStart { toFrame (static_cast<double> (range->loopStart)) };
+    const auto end { toFrame (range->loopEnd) };
+    if (end <= start || end <= loopStart) return false;
+    if (sampleStart != start || sampleStart + sampleLength != end || simulationLoopStart != loopStart)
+        resetAuditionResampler = true;
+    sampleStart = start;
+    sampleLength = end - start;
+    simulationLoopStart = loopStart;
+    simulationRangeActive = true;
+    // Once captured, moving a loop keeps the cursor in the edited loop. While
+    // traversing the intro, marker changes preserve its forward progress.
+    if (simulationPhase.load () == AudioPlayerProperties::SimulationPhase::loop)
+    {
+        if (curSampleOffset < loopStart || curSampleOffset >= end) curSampleOffset = loopStart;
+    }
+    else
+    {
+        if (curSampleOffset < start) curSampleOffset = start;
+        if (curSampleOffset >= end) curSampleOffset = loopStart;
+        if (curSampleOffset >= loopStart) simulationPhase.store (AudioPlayerProperties::SimulationPhase::loop);
+    }
+    return true;
+}
+
 bool AudioPlayer::isStereoPair ()
 {
     return channelProperties.isValid () && channelProperties.getChannelMode () != ChannelProperties::ChannelMode::stereoRight &&
@@ -261,6 +317,14 @@ bool AudioPlayer::selectedSampleIsCv ()
 void AudioPlayer::prepareSampleForPlayback ()
 {
     juce::ScopedLock sl (dataCS);
+    // A replacement file, stereo route, or device must not inherit a running
+    // simulation from a different source. Marker edits never enter this path.
+    if (playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
+    {
+        playState = AudioPlayerProperties::PlayState::stop;
+        playbackFinished.store (true);
+    }
+    simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
     resetAuditionResampler = true;
     playbackPosition.store (-1.0);
     sampleBuffer.reset ();
@@ -268,6 +332,7 @@ void AudioPlayer::prepareSampleForPlayback ()
     if (sampleAuditionBlocked)
     {
         playState = AudioPlayerProperties::PlayState::stop;
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         playbackFinished.store (true);
         sampleStart = sampleLength = 0;
         curSampleOffset = 0.0;
@@ -373,6 +438,7 @@ void AudioPlayer::shutdownAudio ()
         waveformSelected = false;
         waveformAudition.stopImmediately ();
         playState = AudioPlayerProperties::PlayState::stop;
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         playbackFinished.store (false);
     }
     audioDeviceManager.removeChangeListener (this);
@@ -397,6 +463,7 @@ juce::Result AudioPlayer::startWaveformAudition ()
             return result;
         waveformSelected = true;
         playState = AudioPlayerProperties::PlayState::stop;
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         resetAuditionResampler = true;
         playbackFinished.store (false);
         playbackPosition.store (-1.0);
@@ -404,6 +471,7 @@ juce::Result AudioPlayer::startWaveformAudition ()
     // Notify sample UI without re-entering its playback handler or touching
     // the preset, source selection, markers or audition-speed preferences.
     audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+    audioPlayerProperties.setSimulationPhase (AudioPlayerProperties::SimulationPhase::inactive, false);
     audioPlayerProperties.setPlaybackPosition (-1.0, false);
     return juce::Result::ok ();
 }
@@ -453,6 +521,8 @@ void AudioPlayer::configureAudioDevice (juce::String config)
 void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState)
 {
     juce::ScopedLock sl (dataCS);
+    const auto wasSimulation { simulationRangeActive };
+    simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
     if (newPlayState != AudioPlayerProperties::PlayState::stop && sampleAuditionBlocked)
     {
         // Block direct and stale UI requests before touching the independent
@@ -468,6 +538,25 @@ void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState
         waveformSelected = false;
     }
     resetAuditionResampler = true;
+    if (newPlayState == AudioPlayerProperties::PlayState::sampleIntoLoop)
+    {
+        if (! initSimulationPoints ())
+        {
+            playState = AudioPlayerProperties::PlayState::stop;
+            simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
+            playbackPosition.store (-1.0);
+            playbackFinished.store (true);
+            return;
+        }
+        curSampleOffset = sampleStart;
+        simulationPhase.store (curSampleOffset >= simulationLoopStart ? AudioPlayerProperties::SimulationPhase::loop
+                                                                      : AudioPlayerProperties::SimulationPhase::sample);
+    }
+    else if (wasSimulation)
+    {
+        playState = newPlayState;
+        initSamplePoints (); // Restore the selected ordinary audition range.
+    }
     if (newPlayState == AudioPlayerProperties::PlayState::stop)
     {
         LogAudioPlayer ("AudioPlayer::handlePlayState: stop");
@@ -518,6 +607,13 @@ void AudioPlayer::releaseResources ()
     audioDeviceReady = false;
     waveformSelected = false;
     waveformAudition.stopImmediately ();
+    if (playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
+    {
+        playState = AudioPlayerProperties::PlayState::stop;
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
+        playbackPosition.store (-1.0);
+        playbackFinished.store (true);
+    }
     auditionResampler.releaseResources ();
 }
 
@@ -589,6 +685,7 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
     if (sampleAuditionBlocked)
     {
         playState = AudioPlayerProperties::PlayState::stop;
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         playbackPosition.store (-1.0);
         playbackFinished.store (true);
         return;
@@ -599,6 +696,7 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
     auto finishPlayback = [this] ()
     {
         playState = AudioPlayerProperties::PlayState::stop;
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         playbackPosition.store (-1.0);
         playbackFinished.store (true);
     };
@@ -610,12 +708,20 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
     }
 
     const auto end { sampleStart + juce::jmin (sampleLength, sampleBuffer->getNumSamples () - sampleStart) };
-    if (curSampleOffset < sampleStart || curSampleOffset >= end)
-        curSampleOffset = sampleStart;
-    const auto looping { playState == AudioPlayerProperties::PlayState::loop };
+    const auto simulating { playState == AudioPlayerProperties::PlayState::sampleIntoLoop };
+    const auto loopStart { simulating ? simulationLoopStart : sampleStart };
+    if (simulating && (loopStart < 0 || loopStart >= end))
+    {
+        finishPlayback ();
+        return;
+    }
+    const auto activeStart { simulating && simulationPhase.load () == AudioPlayerProperties::SimulationPhase::loop ? loopStart : sampleStart };
+    if (curSampleOffset < activeStart || curSampleOffset >= end)
+        curSampleOffset = activeStart;
+    const auto looping { playState == AudioPlayerProperties::PlayState::loop || simulating };
     const auto stretching { preservePitch && (std::abs (auditionRate - 1.0) > 1.0e-9 || std::abs (zonePitchOffset) > 1.0e-9) };
     const auto speed { effectiveAuditionRate () };
-    if (resetAuditionResampler || renderedStart != sampleStart || renderedEnd != end)
+    if (resetAuditionResampler || renderedStart != sampleStart || renderedEnd != end || renderedLoopStart != loopStart)
     {
         // The input may have read beyond the audible cursor. Discard that
         // look-ahead when the source/range changes or playback restarts.
@@ -623,9 +729,11 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
         readSampleOffset = static_cast<int> (curSampleOffset);
         renderedStart = sampleStart;
         renderedEnd = end;
+        renderedLoopStart = loopStart;
         auditionResampler.flushBuffers ();
         if (stretching)
-            auditionStretch.reset (*sampleBuffer, sampleStart, end, curSampleOffset, speed, zonePitchOffset, looping);
+            auditionStretch.reset (*sampleBuffer, activeStart, end, curSampleOffset, speed, zonePitchOffset, looping,
+                                   simulating ? loopStart : -1);
         resetAuditionResampler = false;
     }
     const auto count { looping ? bufferToFill.numSamples
@@ -638,10 +746,12 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
         else auditionResampler.getNextAudioBlock (output);
     }
     curSampleOffset += count * speed;
+    if (simulating && curSampleOffset >= loopStart)
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::loop);
     if (curSampleOffset >= end)
     {
         if (looping)
-            curSampleOffset = sampleStart + std::fmod (curSampleOffset - sampleStart, end - sampleStart);
+            curSampleOffset = loopStart + std::fmod (curSampleOffset - loopStart, end - loopStart);
         else
         {
             finishPlayback ();
@@ -662,8 +772,8 @@ void AudioPlayer::renderAuditionInput (const juce::AudioSourceChannelInfo& buffe
     {
         if (readSampleOffset >= renderedEnd)
         {
-            if (playState == AudioPlayerProperties::PlayState::loop)
-                readSampleOffset = renderedStart;
+            if (playState == AudioPlayerProperties::PlayState::loop || playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
+                readSampleOffset = renderedLoopStart;
             else
                 return;
         }
@@ -681,5 +791,11 @@ void AudioPlayer::timerCallback ()
     // callback only publishes atomics, including natural one-shot completion.
     if (playbackFinished.exchange (false))
         audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+    const auto phase { simulationPhase.load () };
+    audioPlayerProperties.setSimulationPhase (phase, true);
+    if (phase != AudioPlayerProperties::SimulationPhase::inactive)
+        audioPlayerProperties.setSamplePointsSelector (phase == AudioPlayerProperties::SimulationPhase::loop
+                                                          ? AudioPlayerProperties::SamplePointsSelector::LoopPoints
+                                                          : AudioPlayerProperties::SamplePointsSelector::SamplePoints, true);
     audioPlayerProperties.setPlaybackPosition (playbackPosition.load (), true);
 }

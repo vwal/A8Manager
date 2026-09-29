@@ -321,6 +321,14 @@ struct ZoneEditorTestAccess
         check (editor.sampleDurationLabel.getText () == "SAMPLE 0:00.250", "Audition speed does not leak into zone durations");
         using Selector = AudioPlayerProperties::SamplePointsSelector;
         editor.audioPlayerProperties.setSamplePointsSelector (Selector::LoopPoints, false); // another zone's last choice
+        // This detached fixture bypasses init() and its sample-status callback.
+        // A direct call to a disabled button must be ignored, then refresh the
+        // same enablement that loading a real sample normally updates.
+        editor.oneShotPlayButton.onClick ();
+        check (editor.audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::stop &&
+               editor.audioPlayerProperties.getSamplePointsSelector () == Selector::LoopPoints,
+               "Disabled audition controls cannot start playback or change its source range");
+        editor.updateAuditionControls ();
         editor.oneShotPlayButton.onClick ();
         check (editor.audioPlayerProperties.getSamplePointsSelector () == Selector::SamplePoints, "Starting restores the visible SAMPLE choice, not another zone's LOOP choice");
         editor.oneShotPlayButton.onClick (); // stop

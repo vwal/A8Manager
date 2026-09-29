@@ -49,8 +49,13 @@ WaveformDisplay::WaveformDisplay ()
         if (hasSample () && movingRegion && movingRegion->fileLength == getSampleLength ())
             RegionMove::apply (zoneProperties, *movingRegion, delta);
     };
-    for (auto* button : std::array<juce::Button*, 5> { &expandButton, &menuButton, &zoomIn, &zoomOut, &zoomInfo })
+    for (auto* button : std::array<juce::Button*, 6> { &expandButton, &menuButton, &zoomIn, &zoomOut, &zoomInfo, &simulationButton })
         addAndMakeVisible (button);
+    simulationButton.setEnabled (false);
+    simulationButton.setTooltip ("Trigger sample into loop simulation: play forward from Sample Start through any gap, then repeat between the loop markers. "
+                                 "Stops with this button or the highlighted STOP in Zones. Requires an audio sample and a loop ending after Sample Start; "
+                                 "does not change the preset's play or loop mode.");
+    simulationButton.onClick = [this] () { triggerSimulation (); };
     zoomIn.setTooltip ("Zoom in around the centre. Scroll over the waveform to zoom at the pointer.");
     zoomOut.setTooltip ("Zoom out");
     expandButton.setTooltip ("Expand the waveform over the channel controls; click again or Escape to close. Zone switching stays available.");
@@ -269,13 +274,19 @@ void WaveformDisplay::init (juce::ValueTree channelPropertiesVT, juce::ValueTree
     audioPlayerProperties.onSampleSourceChanged = [this] (std::tuple<int, int>)
     {
         playheadSample = -1.0;
+        refreshSimulationControls ();
         repaint (waveform.getBounds ());
     };
     audioPlayerProperties.onPlayStateChange = [this] (AudioPlayerProperties::PlayState state)
     {
         if (state == AudioPlayerProperties::PlayState::stop)
             playheadSample = -1.0;
+        refreshSimulationControls ();
         repaint (waveform.getBounds ());
+    };
+    audioPlayerProperties.onSimulationPhaseChange = [this] (AudioPlayerProperties::SimulationPhase)
+    {
+        refreshSimulationControls ();
     };
 
     setZone (0);
@@ -357,6 +368,7 @@ void WaveformDisplay::updateDisplayChannel ()
 void WaveformDisplay::updateMarkerPositions ()
 {
     ++matchGeneration;
+    refreshSimulationControls ();
     if (! hasSample ())
     {
         markerOverlay.setLoopExtension ({});
@@ -405,6 +417,32 @@ void WaveformDisplay::publishView ()
     scrollbar.setEnabled (length > visible);
     zoomInfo.setButtonText (length > 0 && visible > 0 ? juce::String (100.0 * length / visible, 0) + "%" : "No sample");
     updateDurations ();
+    refreshSimulationControls ();
+}
+
+bool WaveformDisplay::isSimulatingThisZone ()
+{
+    return audioPlayerProperties.isValid () && channelProperties.isValid () && zoneProperties.isValid ()
+        && audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop
+        && audioPlayerProperties.getSampleSource () == std::make_tuple (channelProperties.getId () - 1, zoneProperties.getId () - 1);
+}
+
+void WaveformDisplay::refreshSimulationControls ()
+{
+    const auto active { isSimulatingThisZone () };
+    simulationButton.setButtonText (active ? "Stop simulation" : "Sample > Loop");
+    simulationButton.setToggleState (active, juce::dontSendNotification);
+    simulationButton.setEnabled (isEnabled () && (active || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
+}
+
+void WaveformDisplay::triggerSimulation ()
+{
+    if (! isEnabled ()) return;
+    if (isSimulatingThisZone ())
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+    else if (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())
+        onTriggerSimulation ();
+    refreshSimulationControls ();
 }
 
 //==============================================================================
@@ -493,6 +531,11 @@ juce::PopupMenu WaveformDisplay::buildWaveformMenu (std::optional<double> clicke
     menu.addSeparator ();
     menu.addSubMenu ("Zero Crossing Nudge", nudgeMenu, editable);
     menu.addSubMenu ("Match Opposite Boundary", matchMenu, editable);
+    menu.addSeparator ();
+    menu.addSectionHeader ("AUDITION");
+    const auto simulating { isSimulatingThisZone () };
+    menu.addItem (50, simulating ? "Stop sample into loop simulation" : "Trigger sample into loop simulation",
+                  isEnabled () && (simulating || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
     return menu;
 }
 
@@ -518,6 +561,7 @@ void WaveformDisplay::applyMenuAction (int action, std::optional<double> clicked
     else if (isEnabled () && action >= 20 && action < 28) nudgeMarker ((action - 20) / 2, action % 2 != 0);
     else if (isEnabled () && action >= 30 && action < 34 && clickedSample) setMarker (action - 30, *clickedSample);
     else if (isEnabled () && action >= 40 && action < 48) matchMarker ((action - 40) / 2, action % 2 != 0);
+    else if (action == 50) triggerSimulation ();
 }
 
 void WaveformDisplay::nudgeMarker (int marker, bool right)
@@ -747,6 +791,7 @@ void WaveformDisplay::enablementChanged ()
     waveform.cancelDrag ();
     markerOverlay.cancelDrag ();
     movingRegion.reset ();
+    refreshSimulationControls ();
 }
 
 void WaveformDisplay::resized ()
@@ -760,9 +805,15 @@ void WaveformDisplay::resized ()
     }
     zoomInfo.setBounds (toolbar.removeFromLeft (76));
     toolbar.removeFromLeft (6);
+    // In a short, narrow waveform, keep the existing single toolbar row so
+    // marker labels still have room. The same action remains in both menus.
+    const auto inlineSimulation { getWidth () >= 650 || getHeight () >= 180 };
+    simulationButton.setVisible (inlineSimulation);
+    simulationButton.setBounds (inlineSimulation ? toolbar.removeFromLeft (136) : juce::Rectangle<int> {});
+    if (inlineSimulation) toolbar.removeFromLeft (6);
     // Keep the controls usable in a narrow viewport without squeezing the speed
     // entry or Keep pitch option. Wider windows retain the single row.
-    if (getWidth () < 480)
+    if (getWidth () < (inlineSimulation ? 650 : 480))
         toolbar = bounds.removeFromTop (28).reduced (3, 2);
     const auto compact { getWidth () < 700 };
     auditionRateLabel.setText (compact ? "Speed" : "Audition speed", juce::dontSendNotification);

@@ -167,11 +167,27 @@ ChannelEditor::ChannelEditor ()
         const auto selected { zoneTabs.getCurrentTabIndex () };
         if (selected >= 0 && selected < 8) zoneEditors[selected].selectLoop (loop);
     };
+    sampleWaveformDisplay.canTriggerSimulation = [this] ()
+    {
+        const auto selected { zoneTabs.getCurrentTabIndex () };
+        return initialized && selected >= 0 && selected < 8 && zoneEditors[selected].canStartSampleIntoLoop ();
+    };
+    sampleWaveformDisplay.onTriggerSimulation = [this] ()
+    {
+        const auto selected { zoneTabs.getCurrentTabIndex () };
+        if (initialized && selected >= 0 && selected < 8) zoneEditors[selected].startSampleIntoLoop ();
+    };
     for (auto index { 0 }; index < 8; ++index)
+    {
         zoneEditors[index].onRegionSelected = [this, index] (bool loop)
         {
             if (zoneTabs.getCurrentTabIndex () == index) sampleWaveformDisplay.setLoopSelected (loop);
         };
+        zoneEditors[index].onSimulationAvailabilityChanged = [this, index] ()
+        {
+            if (zoneTabs.getCurrentTabIndex () == index) sampleWaveformDisplay.refreshSimulationControls ();
+        };
+    }
 
     updateAllZoneTabNames ();
     addChildComponent (stereoRightTransparantOverly);

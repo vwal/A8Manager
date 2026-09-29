@@ -23,7 +23,7 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers thirty-one tests, with 60- or 90-second timeouts. Use `ctest --test-dir
+CTest registers thirty-three tests, with 60- or 90-second timeouts. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
@@ -90,7 +90,27 @@ Intermittent failures have been observed in the existing 0.0625x keep-pitch
 case: 207 crossings versus 204.8 expected, or 167 versus 163.84 (a two-crossing
 tolerance). Ten consecutive passing repeats were also observed. Signalsmith randomises phases at extreme stretch
 ratios, so this appears to be sensitivity of that measurement to random phase.
-The gesture fix does not change audio processing or relax that assertion.
+The simulation work retains this assertion and the existing ordinary-audition path.
+
+**SampleLoopSimulationRegression** renders the real AudioPlayer offline. Exact
+stereo frame checks cover loops inside the sample, overlapping Sample End and
+beyond Sample End (including every frame in the intervening gap). It verifies
+sample-to-loop phase changes against the audible cursor rather than resampler
+read-ahead, repeated wraps, output subregions, STOP, and returning to ordinary
+audition. Additional cases cover overlapping Sample Start, equal boundaries,
+unreachable/invalid loops, source-rate conversion, 0.0625x–4x audition,
+Keep pitch, zone transposition, live marker/rate edits, CV blocking and source
+changes. Phase/selection notifications must stay off the audio thread.
+
+**SimulationUiRegression** drives actual ZoneEditor controls and their
+ChannelEditor/waveform wiring. It checks SAMPLE/ONCE STOP during the gap,
+LOOP/LOOP STOP after entry, both stop buttons, the queued-phase handoff race,
+immediate retrigger state, source isolation, CV/stereo/missing-audio guards,
+expanded waveform continuity and unchanged preset data. Deferred display
+callbacks use an injected queue in this console test, executing the production
+SafePointer closures to verify stale-state and destroyed-editor safety without
+relying on a native event loop. WaveformWorkflowRegression also exercises the
+new toolbar/menu dispatch, disabled actions and responsive layout.
 
 **LoopPointsRegression** renders the actual loop-join component offscreen.
 It verifies that quiet and loud signals have comparable visibility, both halves

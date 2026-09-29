@@ -27,6 +27,9 @@ public:
     void selectLoop (bool loop) { setActiveSamplePoints (loop ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false); }
     bool isLoopSelected () const { return samplePointsSelector == AudioPlayerProperties::SamplePointsSelector::LoopPoints; }
     std::function<void (bool)> onRegionSelected;
+    bool canStartSampleIntoLoop ();
+    void startSampleIntoLoop ();
+    std::function<void ()> onSimulationAvailabilityChanged;
 
     // TODO - can we make this local, since we should be able to access the edits through the EditManager
     std::function<void (int zoneIndex)> displayToolsMenu;
@@ -36,6 +39,7 @@ private:
     friend struct ZoneEditorTestAccess;
     friend struct AudioAuditTestAccess;
     friend struct CvAuditionTestAccess;
+    friend struct SimulationUiTestAccess;
     class ClickListener : public juce::MouseListener
     {
     public:
@@ -83,6 +87,13 @@ private:
     juce::Label cvAuditionNotice;
     bool hasCvAuditionSource ();
     void updateAuditionControls ();
+    bool isCurrentAuditionSource ();
+    void updatePlaybackDisplay ();
+    void queuePlaybackDisplayUpdate ();
+    std::function<void (std::function<void ()>)> deferPlaybackDisplayUpdate = [] (std::function<void ()> callback)
+    {
+        juce::MessageManager::callAsync (std::move (callback));
+    };
     juce::TextButton toolsButton;
     juce::TextButton copyNextButton { "Copy > next" };
     juce::TextButton continueNextButton { "Continue > next" };
@@ -125,7 +136,7 @@ private:
     juce::PopupMenu getSampleAdjustMenu (SampleMarker marker);
     bool nudgeSampleMarker (SampleMarker marker, bool right);
     bool handleSamplesInternal (int zoneIndex, juce::StringArray files);
-    void setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector samplePointsSelector, bool forceSetup);
+    void setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector samplePointsSelector, bool forceSetup, bool publishToPlayer = true);
     void setupZoneComponents ();
     void setupZonePropertiesCallbacks ();
     double snapLoopLength (double rawValue);

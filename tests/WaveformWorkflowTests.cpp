@@ -53,6 +53,16 @@ struct WaveformTestAccess
         view.setLookAndFeel (&look);
         view.setSize (760, 220);
         view.init (channelTree, root);
+        bool simulationAllowed { true };
+        int simulationTriggers { 0 };
+        view.canTriggerSimulation = [&] () { return simulationAllowed; };
+        view.onTriggerSimulation = [&] ()
+        {
+            ++simulationTriggers;
+            audition.setSampleSource (0, view.zoneProperties.getId () - 1, false);
+            audition.setPlayState (AudioPlayerProperties::PlayState::sampleIntoLoop, false);
+        };
+        view.refreshSimulationControls ();
         check (view.markerPosition (3) == 400.5 && view.markerLabel (3).contains ("400.5"), "Loop end model and label retain fractional frame precision");
         auto selectedLoop { false };
         view.onRegionSelected = [&] (bool loop) { selectedLoop = loop; };
@@ -148,23 +158,60 @@ struct WaveformTestAccess
                 {
                     layout.add (juce::String (item.itemID));
                     actions.add (item.itemID);
-                    check (item.isEnabled == (item.itemID < 30 || editable), "Direct actions preserve zoom/jump access and guard marker placement");
+                    check (item.isEnabled == (item.itemID < 30 || editable), "Direct actions preserve zoom/jump access and guard marker placement and audition");
                     if (item.itemID >= 10 && item.itemID < 14)
                         check (item.shortcutKeyDescription == juce::String (item.itemID - 9), "Jump shortcuts occupy the menu's right-hand shortcut column");
                 }
             }
             auto expected { juce::Array<int> { 1, 2, 3, 10, 11, 12, 13 } };
             if (context) expected.addArray (juce::Array<int> { 30, 31, 32, 33 });
+            expected.add (50);
             check (actions == expected, "Zoom, jump and context placement actions are top-level and in the requested order");
-            check (headings == (context ? juce::StringArray { "ZOOM", "JUMP TO MARKER", "SET MARKER HERE" }
-                                       : juce::StringArray { "ZOOM", "JUMP TO MARKER" }), "Menu headings distinguish frequent actions");
+            check (headings == (context ? juce::StringArray { "ZOOM", "JUMP TO MARKER", "SET MARKER HERE", "AUDITION" }
+                                       : juce::StringArray { "ZOOM", "JUMP TO MARKER", "AUDITION" }), "Menu headings distinguish frequent actions");
             check (submenus == juce::StringArray { "Zero Crossing Nudge", "Match Opposite Boundary" }, "Only nudge and matching remain submenus");
             auto expectedLayout { juce::StringArray { "ZOOM", "1", "2", "3", "---", "JUMP TO MARKER", "10", "11", "12", "13", "---" } };
             if (context) expectedLayout.addArray ({ "SET MARKER HERE", "30", "31", "32", "33", "---" });
+            expectedLayout.addArray ({ "---", "AUDITION", "50" });
             check (layout == expectedLayout, "Separators precede Jump/Set headings, never follow headings or the initial Zoom title");
         };
         checkMenu (false, true);
         checkMenu (true, true);
+
+        const auto beforeSimulation { channelTree.createCopy () };
+        view.simulationButton.onClick ();
+        check (simulationTriggers == 1 && view.isSimulatingThisZone () && view.simulationButton.getToggleState ()
+               && view.simulationButton.getButtonText () == "Stop simulation", "Toolbar triggers simulation and becomes an explicit highlighted stop control");
+        view.applyMenuAction (50, {});
+        check (audition.getPlayState () == AudioPlayerProperties::PlayState::stop && ! view.simulationButton.getToggleState (),
+               "Waveform menu stops the current simulation without starting it again");
+        simulationAllowed = false;
+        view.refreshSimulationControls ();
+        view.simulationButton.onClick ();
+        view.applyMenuAction (50, 400.0);
+        check (! view.simulationButton.isEnabled () && simulationTriggers == 1,
+               "Both trigger paths recheck eligibility instead of dispatching a stale/disabled action");
+        simulationAllowed = true;
+        view.setExpanded (true);
+        view.applyMenuAction (50, {});
+        check (simulationTriggers == 2 && view.isSimulatingThisZone (), "Expanded view shares the same simulation control and runtime source");
+        audition.setSampleSource (1, 0, false);
+        check (! view.isSimulatingThisZone () && view.simulationButton.getButtonText () == "Sample > Loop",
+               "Another channel's simulation cannot appear as this waveform's STOP");
+        audition.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+        view.setExpanded (false);
+        check (channelTree.isEquivalentTo (beforeSimulation), "Simulation controls never edit preset data");
+        for (const int width : { 380, 649, 650, 760, 1600 })
+        {
+            view.setSize (width, 220);
+            for (const juce::Component* control : std::array<const juce::Component*, 5> {
+                &view.zoomInfo, &view.simulationButton, &view.auditionRateLabel, &view.auditionRateSlider, &view.preservePitchButton })
+                check (view.getLocalBounds ().contains (control->getBounds ()), "Simulation toolbar controls remain inside narrow and expanded views");
+            check (! view.simulationButton.getBounds ().intersects (view.auditionRateLabel.getBounds ())
+                   && ! view.auditionRateSlider.getBounds ().intersects (view.preservePitchButton.getBounds ()),
+                   "Simulation button, audition rate and Keep pitch controls never overlap");
+        }
+        view.setSize (760, 220);
 
         view.resetZoom ();
         auto mouse = [] (juce::Component& component, juce::Point<float> position, juce::Point<float> origin, int flags)

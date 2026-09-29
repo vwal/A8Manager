@@ -1,4 +1,5 @@
 #include "Assimil8or/Audio/AudioPlayer.h"
+#include "Assimil8or/Audio/SampleLoopSimulation.h"
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -7,6 +8,259 @@
 // Configure the actual audition engine without opening an audio device.
 struct AudioPlayerTestAccess
 {
+    static void runSimulation ()
+    {
+        auto check = [] (bool condition, const char* message) { if (! condition) throw std::runtime_error (message); };
+        using State = AudioPlayerProperties::PlayState;
+        using Phase = AudioPlayerProperties::SimulationPhase;
+        using Selector = AudioPlayerProperties::SamplePointsSelector;
+        AudioPlayer player;
+        player.audioPlayerProperties.enableCallbacks (true);
+        player.audioPlayerProperties.onPlayStateChange = [&] (auto state) { player.handlePlayState (state); };
+        player.audioPlayerProperties.onSamplePointsSelectorChanged = [&] (auto) { player.initSamplePoints (); };
+        player.audioPlayerProperties.onAuditionRateChange = [&] (double rate) { player.handleAuditionRate (rate); };
+        player.audioPlayerProperties.onPreservePitchChange = [&] (bool preserve) { player.handlePreservePitch (preserve); };
+        player.prepareAuditionResampler ();
+        AudioPlayerProperties observer (player.audioPlayerProperties.getValueTree (), AudioPlayerProperties::WrapperType::client,
+                                        AudioPlayerProperties::EnableCallbacks::yes);
+        auto notifications { 0 };
+        observer.onSimulationPhaseChange = [&] (auto)
+        {
+            check (juce::MessageManager::existsAndIsCurrentThread (), "Simulation phase notifications must be on the message thread");
+            ++notifications;
+        };
+        observer.onSamplePointsSelectorChanged = [&] (auto)
+        {
+            check (juce::MessageManager::existsAndIsCurrentThread (), "Simulation selector notifications must be on the message thread");
+            ++notifications;
+        };
+        auto configure = [&] (int start, int sampleEnd, int loopStart, double loopEnd, double ratio = 1.0)
+        {
+            observer.setPlayState (State::stop, true);
+            player.timerCallback ();
+            player.sampleAuditionBlocked = false;
+            player.sampleRateRatio = ratio;
+            player.sampleProperties.setLengthInSamples (128, false);
+            player.sampleBuffer = std::make_unique<juce::AudioBuffer<float>> (2, static_cast<int> (128 * ratio));
+            for (auto i { 0 }; i < player.sampleBuffer->getNumSamples (); ++i)
+            {
+                player.sampleBuffer->setSample (0, i, static_cast<float> (i + 1) / 512.0f);
+                player.sampleBuffer->setSample (1, i, -static_cast<float> (i + 1) / 512.0f);
+            }
+            player.zoneProperties.setSampleStart (start, false);
+            player.zoneProperties.setSampleEnd (sampleEnd, false);
+            player.zoneProperties.setLoopStart (loopStart, false);
+            player.zoneProperties.setLoopLength (loopEnd - loopStart, false);
+            observer.setPreservePitch (false, true);
+            observer.setAuditionRate (1.0, true);
+            player.handleZonePitch (0.0);
+            observer.setSamplePointsSelector (Selector::SamplePoints, true);
+            player.initSamplePoints ();
+        };
+        auto render = [&] (juce::AudioBuffer<float>& output, int start, int count)
+        {
+            const auto before { notifications };
+            std::thread audioThread ([&] () { player.getNextAudioBlock ({ &output, start, count }); });
+            audioThread.join ();
+            check (notifications == before, "Rendering must not publish simulation phase or change UI selection");
+        };
+        auto expectFrame = [&] (const juce::AudioBuffer<float>& output, int index, int source)
+        {
+            const auto value { static_cast<float> (source + 1) / 512.0f };
+            check (std::abs (output.getSample (0, index) - value) < 1e-6f &&
+                   std::abs (output.getSample (1, index) + value) < 1e-6f, "Simulation must preserve exact stereo intro/loop contents");
+        };
+
+        // Three useful marker relationships: loop after the sample, straddling
+        // Sample End, and fully inside the sample. All have the same transport.
+        for (const auto sampleEnd : { 20, 30, 64 })
+        {
+            configure (8, sampleEnd, 24, 40);
+            const auto presetBefore { player.zoneProperties.getValueTree ().createCopy () };
+            observer.setSamplePointsSelector (Selector::LoopPoints, true);
+            observer.setPlayState (State::sampleIntoLoop, true);
+            player.timerCallback ();
+            check (observer.getSimulationPhase () == Phase::sample && observer.getSamplePointsSelector () == Selector::SamplePoints,
+                   "Trigger must start the SAMPLE phase even when LOOP was previously selected");
+            juce::AudioBuffer<float> output (3, 140);
+            output.clear ();
+            render (output, 2, 8);
+            check (player.simulationPhase.load () == Phase::sample, "The audible intro must retain its sample phase");
+            player.timerCallback ();
+            check (observer.getPlaybackPosition () == 16.0 && observer.getSimulationPhase () == Phase::sample,
+                   "Intro playback cursor and sample phase must advance together");
+            render (output, 10, 6);
+            check (player.readSampleOffset >= 24 && player.simulationPhase.load () == Phase::sample,
+                   "Resampler look-ahead into the loop must not advance the audible phase");
+            render (output, 16, 2);
+            player.timerCallback ();
+            check (observer.getPlaybackPosition () == 24.0 && observer.getSimulationPhase () == Phase::loop &&
+                   observer.getSamplePointsSelector () == Selector::LoopPoints && observer.getPlayState () == State::sampleIntoLoop,
+                   "At Loop Start, phase and selection change without interrupting simulation");
+            render (output, 18, 120);
+            player.timerCallback ();
+            for (auto i { 0 }; i < 136; ++i)
+                expectFrame (output, i + 2, i < 32 ? 8 + i : 24 + (i - 32) % 16);
+            check (output.getMagnitude (2, 0, 140) == 0.0f && output.getSample (0, 0) == 0.0f && output.getSample (0, 139) == 0.0f,
+                   "Simulation must respect output subregions and silence unused outputs");
+            check (observer.getPlaybackPosition () == 32.0 && observer.getPlayState () == State::sampleIntoLoop,
+                   "The loop repeats indefinitely and must not stop at Sample End");
+            check (presetBefore.isEquivalentTo (player.zoneProperties.getValueTree ()), "Simulation must never rewrite zone markers or offsets");
+            observer.setPlayState (State::stop, true);
+            player.timerCallback ();
+            render (output, 0, 140);
+            check (observer.getSimulationPhase () == Phase::inactive && observer.getPlaybackPosition () < 0.0 && output.getMagnitude (0, 140) == 0.0f,
+                   "STOP must clear simulation and silence both channels immediately");
+            check (player.sampleStart == 24 && player.sampleLength == 16, "Stopping simulation restores the selected ordinary loop range");
+        }
+
+        for (const auto loopStart : { 4, 8 })
+        {
+            configure (8, 32, loopStart, 16);
+            observer.setPlayState (State::sampleIntoLoop, true);
+            player.timerCallback ();
+            check (observer.getSimulationPhase () == Phase::loop, "Sample Start inside or at Loop Start begins in the loop phase");
+            juce::AudioBuffer<float> output (2, 40);
+            render (output, 0, 40);
+            for (auto i { 0 }; i < 40; ++i)
+                expectFrame (output, i, i < 8 ? 8 + i : loopStart + (i - 8) % (16 - loopStart));
+        }
+
+        // UI eligibility and engine failure use the same source-frame rules.
+        for (const auto loopEnd : { 4.0, 8.0, 129.0 })
+        {
+            configure (8, 32, 0, loopEnd);
+            check (! SampleLoopSimulation::resolve (player.zoneProperties, 128), "Before-start, touching-end, and out-of-file loops are unsupported");
+            observer.setPlayState (State::sampleIntoLoop, true);
+            player.timerCallback ();
+            check (observer.getPlayState () == State::stop && observer.getSimulationPhase () == Phase::inactive,
+                   "Unsupported marker relationships must fail safely rather than start a stuck simulation");
+        }
+        configure (8, 32, 24, 24);
+        check (! SampleLoopSimulation::resolve (player.zoneProperties, 128), "A zero-length loop cannot simulate");
+        configure (8, 8, 24, 40);
+        check (! SampleLoopSimulation::resolve (player.zoneProperties, 128), "An empty sample range cannot simulate");
+        for (const auto invalidFrame : { std::numeric_limits<juce::int64>::min (), std::numeric_limits<juce::int64>::max () })
+        {
+            configure (8, 32, 24, 40);
+            player.zoneProperties.setLoopStart (invalidFrame, false);
+            check (! SampleLoopSimulation::resolve (player.zoneProperties, 128),
+                   "Pathological loop bounds must be rejected before calculating a default length");
+            player.zoneProperties.setLoopStart (24, false);
+            player.zoneProperties.setSampleStart (invalidFrame, false);
+            check (! SampleLoopSimulation::resolve (player.zoneProperties, 128), "Pathological Sample Start must be rejected safely");
+            player.zoneProperties.setSampleStart (8, false);
+            player.zoneProperties.setSampleEnd (invalidFrame, false);
+            check (! SampleLoopSimulation::resolve (player.zoneProperties, 128), "Pathological Sample End must be rejected safely");
+        }
+
+        configure (8, 20, 24, 40);
+        player.handleZonePitch (12.0);
+        observer.setPlayState (State::sampleIntoLoop, true);
+        juce::AudioBuffer<float> pitched (2, 16);
+        render (pitched, 0, 7);
+        player.timerCallback ();
+        check (observer.getPlaybackPosition () == 22.0 && observer.getSimulationPhase () == Phase::sample,
+               "Varispeed zone Pitch Offset must advance the intro at the transposed rate");
+        render (pitched, 0, 1);
+        player.timerCallback ();
+        check (observer.getPlaybackPosition () == 24.0 && observer.getSimulationPhase () == Phase::loop,
+               "Transposed intro must change phase exactly at Loop Start");
+        observer.setPlayState (State::play, true);
+        check (player.sampleStart == 24 && player.sampleLength == 16,
+               "Switching directly to ONCE must restore the ordinary selected loop range");
+        render (pitched, 0, 16);
+        player.timerCallback ();
+        check (observer.getPlayState () == State::stop && observer.getSimulationPhase () == Phase::inactive,
+               "Ordinary ONCE after simulation must stop at its range end");
+
+        // Slow playback makes read-ahead especially large relative to the
+        // audible cursor. The stretched path must follow the same transport.
+        for (const auto preserve : { false, true })
+            for (const auto rate : { 0.0625, 0.5, 2.0, 4.0 })
+            {
+                configure (8, 20, 24, 40, 2.0);
+                observer.setPreservePitch (preserve, true);
+                observer.setAuditionRate (rate, true);
+                if (preserve) player.handleZonePitch (3.25);
+                observer.setPlayState (State::sampleIntoLoop, true);
+                player.timerCallback ();
+                juce::AudioBuffer<float> output (2, 128);
+                render (output, 0, 1);
+                player.timerCallback ();
+                check (observer.getSimulationPhase () == Phase::sample &&
+                       std::abs (observer.getPlaybackPosition () - (8.0 + rate / 2.0)) < 1e-9,
+                       "Look-ahead at every speed must preserve the true source-frame intro cursor");
+                auto frames { 1 };
+                while (frames < 2049)
+                {
+                    render (output, 0, 128);
+                    frames += 128;
+                    for (auto i { 0 }; i < 128; ++i)
+                        check (std::isfinite (output.getSample (0, i)) && std::isfinite (output.getSample (1, i)),
+                               "Stretched simulation must remain finite through many tiny-loop wraps");
+                }
+                player.timerCallback ();
+                const auto expected { (48.0 + std::fmod (16.0 + frames * rate - 48.0, 32.0)) / 2.0 };
+                check (observer.getSimulationPhase () == Phase::loop && std::abs (observer.getPlaybackPosition () - expected) < 1e-8,
+                       "Varispeed and Keep pitch must share correct phase, rate, and source-frame loop mapping");
+                observer.setAuditionRate (0.75, true);
+                const auto previous { observer.getPlaybackPosition () };
+                render (output, 0, 8);
+                player.timerCallback ();
+                check (std::abs (observer.getPlaybackPosition () - (24.0 + std::fmod (previous - 24.0 + 3.0, 16.0))) < 1e-8,
+                       "Changing speed inside the loop must not replay the sample intro");
+            }
+
+        configure (8, 20, 24, 40);
+        observer.setPlayState (State::sampleIntoLoop, true);
+        juce::AudioBuffer<float> output (2, 64);
+        render (output, 0, 4);
+        player.zoneProperties.setSampleEnd (16, false);
+        player.initSamplePoints ();
+        check (player.curSampleOffset == 12.0 && player.sampleLength == 32, "Sample End edits must not cut off the intro-to-loop path");
+        player.zoneProperties.setLoopStart (40, false);
+        player.zoneProperties.setLoopLength (8.0, false);
+        player.initSamplePoints ();
+        render (output, 0, 28);
+        player.timerCallback ();
+        check (observer.getPlaybackPosition () == 40.0 && observer.getSimulationPhase () == Phase::loop,
+               "Editing a future loop preserves intro progress and captures the new loop");
+        player.zoneProperties.setLoopStart (60, false);
+        player.zoneProperties.setLoopLength (8.0, false);
+        player.initSamplePoints ();
+        render (output, 0, 4);
+        player.timerCallback ();
+        check (observer.getPlaybackPosition () == 64.0 && observer.getSimulationPhase () == Phase::loop,
+               "Moving a captured loop stays inside its new bounds without replaying the intro");
+        player.zoneProperties.setLoopLength (0.0, false);
+        player.initSamplePoints ();
+        player.timerCallback ();
+        check (observer.getPlayState () == State::stop && observer.getSimulationPhase () == Phase::inactive,
+               "An invalid live loop edit stops simulation safely");
+
+        configure (8, 20, 24, 40);
+        player.sampleAuditionBlocked = true;
+        observer.setPlayState (State::sampleIntoLoop, true);
+        render (output, 0, 64);
+        player.timerCallback ();
+        check (output.getMagnitude (0, 64) == 0.0f && observer.getPlayState () == State::stop,
+               "CV safety must block the new simulation route as well as ordinary preview");
+        configure (8, 20, 24, 40);
+        observer.setPlayState (State::sampleIntoLoop, true);
+        player.initFromZone ({ -1, -1 });
+        player.timerCallback ();
+        check (observer.getPlayState () == State::stop && observer.getSimulationPhase () == Phase::inactive,
+               "Changing or clearing the source must reset simulation");
+        configure (8, 20, 24, 40);
+        observer.setPlayState (State::sampleIntoLoop, true);
+        player.prepareSampleForPlayback ();
+        player.timerCallback ();
+        check (observer.getPlayState () == State::stop && observer.getSimulationPhase () == Phase::inactive,
+               "File or stereo-route replacement must stop simulation rather than reuse old marker state");
+        std::cout << "PASS: sample-into-loop exact stereo transport, gap traversal, phase/read-ahead isolation, overlap and equality, invalid bounds, speed/pitch, live edits, CV protection and source reset\n";
+    }
+
     static void runRouting ()
     {
         auto check = [] (bool condition, const char* message) { if (! condition) throw std::runtime_error (message); };
@@ -401,3 +655,4 @@ struct AudioPlayerTestAccess
 
 void testPlayback () { AudioPlayerTestAccess::run (); }
 void testStereoPreview () { AudioPlayerTestAccess::runRouting (); }
+void testSampleLoopSimulation () { AudioPlayerTestAccess::runSimulation (); }
