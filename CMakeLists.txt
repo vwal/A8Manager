@@ -66,10 +66,13 @@ set(ASSIMIL8OR_AUDIO_FILES
     Source/Assimil8or/Audio/WaveformAudition.cpp
     Source/Assimil8or/Audio/WaveformAudition.h
     Source/Assimil8or/Audio/CvSampleSafety.h
+    Source/Assimil8or/Audio/ChannelCvSafety.h
     Source/Assimil8or/Audio/WaveformDesign.cpp
     Source/Assimil8or/Audio/WaveformDesign.h
     Source/Assimil8or/Audio/WaveformDesignExport.cpp
     Source/Assimil8or/Audio/WaveformDesignExport.h
+    Source/Assimil8or/Audio/WaveformDesignAssignment.cpp
+    Source/Assimil8or/Audio/WaveformDesignAssignment.h
     Source/Assimil8or/Audio/AudioManager.cpp
     Source/Assimil8or/Audio/AudioManager.h
     Source/Assimil8or/Audio/AudioPlayer.cpp
@@ -126,6 +129,7 @@ set(ASSIMIL8OR_VALIDATOR_FILES
 set(GUI_FILES
     Source/GUI/WaveformWorkspace.cpp
     Source/GUI/WaveformWorkspace.h
+    Source/GUI/PresetEditSession.h
     Source/GUI/BottomStatusWindow.cpp
     Source/GUI/BottomStatusWindow.h
     Source/GUI/CurrentFolderComponent.cpp

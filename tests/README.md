@@ -23,7 +23,7 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers twenty-five tests, with 60- or 90-second timeouts. Use `ctest --test-dir
+CTest registers twenty-eight tests, with 60- or 90-second timeouts. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
@@ -264,3 +264,16 @@ hardware playback and listening quality remain manual tests. A rendered screensh
 or a passing preset-parser test is not a claim of hardware verification. Use the
 [hardware checklist](../HARDWARE-TEST-CHECKLIST.md) to record module and listening
 tests separately.
+
+## Shared waveform/preset integration
+
+`WaveformDesignAssignmentRegression` exercises generated audio/CV/bank assignment
+into detached preset snapshots, unique flat files and recipes, numbered package
+exports, stereo/link protection, voltage-range splitting, content-type isolation
+and ownership-checked rollback. `SharedPresetSessionRegression` checks the actual
+shared edit/baseline adapter, non-001 saves, identity preservation, and stale or
+changed-and-reverted folder/preset rejection. `ChannelCvSafetyRegression` checks
+sample-import isolation (including stereo), Mix locks, paste validation and Save
+protection. Workspace and stereo-channel UI tests cover the corresponding controls
+and asynchronous confirmation/commit behavior. These are software regressions,
+not hardware voltage/mix-routing measurements.

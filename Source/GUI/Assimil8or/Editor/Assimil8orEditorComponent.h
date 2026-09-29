@@ -35,6 +35,7 @@ public:
     void receiveSampleLoadRequest (juce::File sampleFile);
     void overwritePresetOrCancel (std::function<void ()> overwriteFunction, std::function<void ()> cancelFunction);
     std::optional<double> getSelectedDuration (int region);
+    void savePreset ();
 
 private:
     friend struct StereoChannelUiTestAccess;
@@ -104,7 +105,6 @@ private:
     juce::PopupMenu createChannelCloneMenu (int channelIndex,   std::function <void (ChannelProperties&)> setter);
     bool isChannelActive (int channelIndex);
     void revertPreset ();
-    void savePreset ();
     void setPresetToDefaults ();
     void setupPresetComponents ();
     void setupPresetPropertiesCallbacks ();

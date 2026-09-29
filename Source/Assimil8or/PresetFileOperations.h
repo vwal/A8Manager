@@ -2,6 +2,7 @@
 #include "Assimil8orPreset.h"
 #include "FileTypeHelpers.h"
 #include "Preset/PresetHelpers.h"
+#include "Audio/ChannelCvSafety.h"
 #include <array>
 
 namespace PresetFileOperations
@@ -33,6 +34,7 @@ namespace PresetFileOperations
 
     inline juce::Result save (juce::File file, juce::ValueTree edited, juce::ValueTree baseline)
     {
+        if (const auto safety { ChannelCvSafety::validatePreset (edited, file.getParentDirectory ()) }; safety.failed ()) return safety;
         Assimil8orPreset writer;
         const auto result { writer.write (file, edited) };
         if (result.wasOk ()) PresetProperties::copyTreeProperties (edited, baseline);

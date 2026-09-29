@@ -1,6 +1,7 @@
 #include "WaveformDesignExport.h"
 #include "AudioManager.h"
 #include "CvSampleSafety.h"
+#include "ChannelCvSafety.h"
 #include "../Assimil8orPreset.h"
 #include "../Preset/ParameterPresetsSingleton.h"
 #include <cmath>
@@ -24,28 +25,28 @@
 
 namespace WaveformDesign
 {
-    namespace
+    namespace ExportSupport
     {
         // Ordinary POSIX rename can replace an existing empty directory. Use
         // the platform's exclusive rename instead; never fall back to overwrite.
-        juce::Result publishFolder (const juce::File& stage, const juce::File& destination)
+        juce::Result publishExclusive (const juce::File& stage, const juce::File& destination)
         {
 #if JUCE_WINDOWS
             if (::MoveFileExW (stage.getFullPathName ().toWideCharPointer (), destination.getFullPathName ().toWideCharPointer (), 0))
                 return juce::Result::ok ();
-            return juce::Result::fail ("Unable to publish the export folder (Windows error " + juce::String (::GetLastError ()) + ").");
+            return juce::Result::fail ("Unable to publish the generated output (Windows error " + juce::String (::GetLastError ()) + ").");
 #elif JUCE_MAC
             if (::renamex_np (stage.getFullPathName ().toRawUTF8 (), destination.getFullPathName ().toRawUTF8 (), RENAME_EXCL) == 0)
                 return juce::Result::ok ();
-            return juce::Result::fail ("Unable to publish the export folder: " + juce::String (std::strerror (errno)));
+            return juce::Result::fail ("Unable to publish the generated output: " + juce::String (std::strerror (errno)));
 #elif JUCE_LINUX && defined (SYS_renameat2)
             if (::syscall (SYS_renameat2, AT_FDCWD, stage.getFullPathName ().toRawUTF8 (), AT_FDCWD,
                            destination.getFullPathName ().toRawUTF8 (), RENAME_NOREPLACE) == 0)
                 return juce::Result::ok ();
-            return juce::Result::fail ("Unable to publish the export folder: " + juce::String (std::strerror (errno)));
+            return juce::Result::fail ("Unable to publish the generated output: " + juce::String (std::strerror (errno)));
 #else
             juce::ignoreUnused (stage, destination);
-            return juce::Result::fail ("This platform does not provide the required non-overwriting folder rename.");
+            return juce::Result::fail ("This platform does not provide the required non-overwriting output rename.");
 #endif
         }
 
@@ -116,11 +117,44 @@ namespace WaveformDesign
             return juce::Result::ok ();
         }
 
-        juce::String instructions (const Settings& settings, const Render& rendered, const juce::StringArray& waves)
+        void configureChannel (juce::ValueTree tree, const Settings& settings, int voiceIndex, int count)
         {
+            const auto voice { settings.mode == Mode::layers ? settings.voices[static_cast<size_t> (voiceIndex)] : Voice {} };
+            ChannelProperties channel (tree, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+            channel.setChannelMode (voiceIndex == 0 ? ChannelProperties::master : ChannelProperties::link, false);
+            channel.setPitch (voice.detuneCents / 100.0, false);
+            channel.setPan (voice.pan, false);
+            channel.setLevel (0.0, false);
+            // Numeric minimum is the intended hardware Off setting for CV.
+            channel.setMixLevel (settings.mode == Mode::modulation ? -90.0 : mixHeadroomDb (count), false);
+            if (settings.mode == Mode::modulation) ChannelCvSafety::mute (channel);
+            channel.setAttack (0.0, false);
+            channel.setRelease (0.0, false);
+            channel.setAutoTrigger (false, false);
+            channel.setPlayMode (settings.playback == Playback::gatedLoop ? 0 : 1, false);
+            channel.setLoopMode (settings.playback == Playback::oneShot ? 0 : settings.playback == Playback::loop ? 1 : 2, false);
+            channel.setLoopLengthIsEnd (false, false);
+        }
+
+        void configureZone (juce::ValueTree tree, const juce::String& filename, juce::int64 frames)
+        {
+            ZoneProperties zone (tree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            zone.setSample (filename, false);
+            zone.setSide (0, false);
+            zone.setSampleStart (0, false);
+            zone.setSampleEnd (frames, false);
+            zone.setLoopStart (0, false);
+            zone.setLoopLength (static_cast<double> (frames), false);
+            zone.setPitchOffset (0.0, false);
+            zone.setLevelOffset (0.0, false);
+        }
+
+        juce::String instructions (const Settings& settings, const Render& rendered, const juce::StringArray& waves, int presetNumber)
+        {
+            const auto slot { juce::String (presetNumber).paddedLeft ('0', 3) };
             juce::String text { "A8Manager Waveform Design\n\n" };
-            text << "Copy this entire new folder to the root of your Assimil8or SD card, safely eject it, then load the folder and preset 001.\n"
-                 << "Keep prst001.yml and its WAV files together. Do not merge into another preset folder without checking names and references.\n"
+            text << "Copy this entire new folder to the root of your Assimil8or SD card, safely eject it, then load the folder and preset " << slot << ".\n"
+                 << "Keep prst" << slot << ".yml and its WAV files together. Do not merge into another preset folder without checking names and references.\n"
                  << "design.json is the editable design recipe. This README and recipe are not hardware configuration files.\n\n"
                  << "TRIGGERING AND PLAYBACK\n"
                  << "Automatic triggering is OFF: loading this preset does not start playback. Trigger/gate channel 1; linked layers follow it.\n";
@@ -179,9 +213,11 @@ namespace WaveformDesign
         }
     }
 
-    juce::Result exportDesign (const Settings& settings, const juce::File& parentFolder, const juce::String& name, ExportResult& result)
+    juce::Result exportDesign (const Settings& settings, const juce::File& parentFolder, const juce::String& name, ExportResult& result, int presetNumber)
     {
+        using namespace ExportSupport;
         result = ExportResult {};
+        if (presetNumber < 1 || presetNumber > 199) return juce::Result::fail ("Choose a preset number from 1 to 199.");
         if (! parentFolder.isDirectory ()) return juce::Result::fail ("Choose an existing parent folder for the new export.");
         Render rendered;
         if (const auto valid { render (settings, rendered) }; valid.failed ()) return valid;
@@ -211,7 +247,7 @@ namespace WaveformDesign
         const auto defaults { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType) };
         auto tree { defaults.createCopy () };
         PresetProperties preset (tree, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
-        preset.setId (1, false);
+        preset.setId (presetNumber, false);
         preset.setName (safeStem (name).substring (0, 12), false);
         juce::StringArray waves;
         for (int index { 0 }; index < count; ++index)
@@ -221,34 +257,14 @@ namespace WaveformDesign
                                                settings.mode == Mode::modulation) }; written.failed ())
                 return fail (written.getErrorMessage ());
             waves.add (filename);
-            const auto voice { settings.mode == Mode::layers ? settings.voices[static_cast<size_t> (index)] : Voice {} };
             ChannelProperties channel (preset.getChannelVT (index), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
-            channel.setChannelMode (index == 0 ? ChannelProperties::master : ChannelProperties::link, false);
-            channel.setPitch (voice.detuneCents / 100.0, false);
-            channel.setPan (voice.pan, false);
-            channel.setLevel (0.0, false);
-            // The app's numeric minimum represents the intended Off setting;
-            // textual "Off" is not accepted by its numeric preset parser.
-            // Confirm this sentinel on the module before hardware CV use.
-            channel.setMixLevel (settings.mode == Mode::modulation ? -90.0 : mixHeadroomDb (count), false);
-            channel.setAttack (0.0, false);
-            channel.setRelease (0.0, false);
-            channel.setAutoTrigger (false, false);
-            channel.setPlayMode (settings.playback == Playback::gatedLoop ? 0 : 1, false);
-            channel.setLoopMode (settings.playback == Playback::oneShot ? 0 : settings.playback == Playback::loop ? 1 : 2, false);
-            channel.setLoopLengthIsEnd (false, false);
+            configureChannel (channel.getValueTree (), settings, index, count);
             ZoneProperties zone (channel.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-            zone.setSample (filename, false);
-            zone.setSide (0, false);
-            zone.setSampleStart (0, false);
-            zone.setSampleEnd (rendered.frames, false);
-            zone.setLoopStart (0, false);
-            zone.setLoopLength (static_cast<double> (rendered.frames), false);
+            configureZone (zone.getValueTree (), filename, rendered.frames);
             zone.setMinVoltage (-5.0, false);
-            zone.setPitchOffset (0.0, false);
-            zone.setLevelOffset (0.0, false);
         }
-        const auto presetFile { stage.getChildFile ("prst001.yml") };
+        const auto presetFilename { "prst" + juce::String (presetNumber).paddedLeft ('0', 3) + ".yml" };
+        const auto presetFile { stage.getChildFile (presetFilename) };
         Assimil8orPreset writer;
         if (const auto written { writer.write (presetFile, tree) }; written.failed ()) return fail (written.getErrorMessage ());
         juce::StringArray lines;
@@ -259,7 +275,7 @@ namespace WaveformDesign
             return fail ("The generated preset did not pass read-back validation.");
         if (const auto written { writeText (stage.getChildFile ("design.json"), juce::JSON::toString (toJson (settings)) + "\n") }; written.failed ())
             return fail (written.getErrorMessage ());
-        if (const auto written { writeText (stage.getChildFile ("README.txt"), instructions (settings, rendered, waves)) }; written.failed ())
+        if (const auto written { writeText (stage.getChildFile ("README.txt"), instructions (settings, rendered, waves, presetNumber)) }; written.failed ())
             return fail (written.getErrorMessage ());
 
         const auto stem { safeStem (name) };
@@ -268,14 +284,14 @@ namespace WaveformDesign
             const auto tail { suffix == 0 ? juce::String () : "-" + juce::String (suffix + 1) };
             const auto destination { parentFolder.getChildFile (stem.substring (0, 31 - tail.length ()) + tail) };
             if (destination.exists ()) continue;
-            const auto published { publishFolder (stage, destination) };
+            const auto published { publishExclusive (stage, destination) };
             if (published.failed ())
             {
                 if (destination.exists ()) continue; // A concurrent export took the name; try the next one.
                 return fail (published.getErrorMessage ());
             }
             result.folder = destination;
-            result.preset = destination.getChildFile ("prst001.yml");
+            result.preset = destination.getChildFile (presetFilename);
             result.recipe = destination.getChildFile ("design.json");
             for (const auto& filename : waves) result.waves.add (destination.getChildFile (filename));
             return juce::Result::ok ();

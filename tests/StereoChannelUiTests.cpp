@@ -213,6 +213,37 @@ struct StereoChannelUiTestAccess
         menuAction (editor->createChannelToolsMenu (2), "Revert") ();
         check (independent.getPan () == savedChannel.getPan () && independent.getPitch () == savedChannel.getPitch (), "Channel Revert reads the matching saved CHANNEL, not the whole preset");
         checkZonesUnchanged (independent.getValueTree (), beforeRevert);
+
+        auto& cvEditor { editor->channelEditors[2] };
+        SampleProperties cvState (samples.getSamplePropertiesVT (2, 0), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        cvState.setName ("stereo-ui-fixture.wav", true);
+        independent.setMixLevel (0.0, true);
+        independent.setMixMod ("1A", 0.5, true);
+        cvState.setIsCv (true, true);
+        check (independent.getMixLevel () == -90.0 && FormatHelpers::getCvInput (independent.getMixMod ()) == "Off",
+               "Loaded CV metadata forces the entire channel out of the stereo mix");
+        check (! cvEditor.mixLevelTextEditor.isEnabled () && ! cvEditor.mixModComboBox.isEnabled () &&
+               ! cvEditor.mixModTextEditor.isEnabled () && ! cvEditor.mixModIsFaderComboBox.isEnabled (),
+               "CV channels visibly lock mix level and every mix modulation control");
+        check (cvEditor.mixLevelTextEditor.getText () == "Off" && cvEditor.mixLevelTextEditor.getTooltip ().contains ("CV channel"),
+               "CV mix displays Off and explains the individual-output routing");
+        independent.setMixLevel (3.0, true);
+        independent.setMixMod ("2B", 1.0, true);
+        check (independent.getMixLevel () == -90.0 && FormatHelpers::getCvInput (independent.getMixMod ()) == "Off",
+               "Programmatic edits or an older menu cannot restore CV stereo-mix level or modulation");
+        cvState.setName ("old-file.wav", true);
+        check (cvEditor.mixLevelTextEditor.isEnabled () && cvEditor.mixModComboBox.isEnabled (),
+               "Stale CV metadata for a different filename does not lock the current zone's channel");
+        cvState.setName ("stereo-ui-fixture.wav", true);
+        check (! cvEditor.mixLevelTextEditor.isEnabled (), "Matching CV metadata restores the mix safety lock");
+        cvState.setIsCv (false, true);
+        check (cvEditor.mixLevelTextEditor.isEnabled () && cvEditor.mixModTextEditor.isEnabled () && cvEditor.mixModIsFaderComboBox.isEnabled (),
+               "Removing the final matching CV sample restores ordinary independent-channel mix editing");
+        cvEditor.mixLevelTextEditor.setValue (0.0);
+        check (independent.getMixLevel () == 0.0, "Ordinary audio mix remains editable after CV safety lock clears");
+        rightProperties.setChannelMode (ChannelProperties::stereoRight, true);
+        check (! right.mixLevelTextEditor.isEnabled () && ! right.mixModComboBox.isEnabled (),
+               "Clearing another channel's CV state never enables inherited Stereo Right mix controls");
         const auto disposedDefault { menuAction (editor->createChannelToolsMenu (1), "Default (both channels)") };
         editor->setLookAndFeel (nullptr);
         editor.reset ();

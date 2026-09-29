@@ -23,6 +23,9 @@ public:
 
     bool assignSamples (int channelIndex, int zoneIndex, const juce::StringArray& files);
     const juce::String& getLastAssignmentError () const { return lastAssignmentError; }
+    bool channelContainsCv (int channelIndex);
+    void enforceCvMix (int channelIndex);
+    juce::Result validateContentChange (juce::ValueTree proposedPreset);
     double clampMinVoltage (int channelIndex, int zoneIndex, double voltage);
     juce::ValueTree getChannelDefaults ();
     juce::ValueTree getZoneDefaults ();
@@ -35,6 +38,7 @@ public:
 private:
     friend struct AudioFileSafetyTestAccess;
     friend struct StereoAssignmentTestAccess;
+    friend struct ChannelCvSafetyTestAccess;
     juce::String lastAssignmentError;
     PresetProperties presetProperties;
     AppProperties appProperties;

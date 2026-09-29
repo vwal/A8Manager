@@ -3,9 +3,12 @@
 #include <JuceHeader.h>
 #include "../Assimil8or/Audio/WaveformDesign.h"
 #include "../Assimil8or/Audio/WaveformAudition.h"
+#include "../Assimil8or/Audio/WaveformDesignAssignment.h"
+#include "PresetEditSession.h"
 
 // A separate design surface. Its host supplies audition through the existing
-// audio device; creating/loading a design never edits the open preset or files.
+// audio device. Designing stays separate; explicit assignment edits the host's
+// current preset only after generated files and its original context validate.
 class WaveformWorkspace : public juce::Component, private juce::Timer
 {
 public:
@@ -13,7 +16,11 @@ public:
     ~WaveformWorkspace () override;
 
     void setInitialFolder (juce::File folder);
+    using AssignmentContext = PresetEditSession::Snapshot;
+    void refreshAssignmentContext ();
     WaveformDesign::Settings getSettings () const;
+    std::function<std::optional<AssignmentContext> ()> onGetAssignmentContext;
+    std::function<juce::Result (const AssignmentContext&, const WaveformDesign::AssignmentResult&)> onApplyAssignment;
     std::function<std::optional<double> (int)> onMatchDuration; // 0 file, 1 sample, 2 loop
     std::function<void (juce::File)> onOpenExportedFolder;
     std::function<void ()> onClose;
@@ -26,6 +33,7 @@ public:
 
 private:
     friend struct WaveformWorkspaceTestAccess;
+    std::function<void (const juce::String&, std::function<void (bool)>)> confirmAssignment;
     struct Impl;
     std::unique_ptr<Impl> impl;
     void timerCallback () override;

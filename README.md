@@ -4,13 +4,16 @@ A tool to manage Presets and Sample files for the Rossum-Electro Assimil8or
 
 This branch contains the [3.0.0 workspace update](UI-PREVIEW.md) with scalable
 controls, direct value dragging, waveform controls, and sequential zone editing.
-It also includes a separate **Waveform designer** for single-cycle audio,
-CV/modulation and linked layer banks such as supersaws. Designs export to new,
-self-contained A8 folders with 24-bit PCM WAVs, a preset, and an editable recipe.
+It also includes a **Waveform designer** for single-cycle audio,
+CV/modulation and linked layer banks such as supersaws. Both workspaces share
+the preset slots and unsaved edits. Generate & Assign writes unique 24-bit WAVs
+and a recipe into the current folder; Save writes the selected preset. Standalone
+package export remains available with a selectable preset number.
 Audio cycles and complete layer banks can be auditioned live while shaping;
 the compact waveform preview also has an expanded view.
 Generated CV files are marked to prevent Samples-workspace speaker audition,
-and new CV presets default to Mix Off for individual-output use (verify on hardware).
+and known CV channels lock Mix and Mix modulation Off for individual-output use
+(verify on hardware). CV and audio cannot be assigned to zones in the same channel.
 See the [waveform workspace guide](WAVEFORM-DESIGNER.md) and
 [hardware test checklist](HARDWARE-TEST-CHECKLIST.md).
 The [CV-generation review](CV-GENERATION-REVIEW.md) compares the supplied discussion

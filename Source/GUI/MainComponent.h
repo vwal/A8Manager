@@ -12,6 +12,7 @@
 #include "oolib/GUI/SplitWindowComponent.h"
 #include "ModernTheme.h"
 #include "WaveformWorkspace.h"
+#include "PresetEditSession.h"
 
 class WorkspaceSplitter : public SplitWindowComponent
 {
@@ -26,7 +27,7 @@ class WorkspaceSplitter : public SplitWindowComponent
     }
 };
 
-class MainComponent : public juce::Component
+class MainComponent : public juce::Component, private juce::Timer
 {
 public:
     MainComponent (juce::ValueTree rootPropertiesVT);
@@ -49,11 +50,19 @@ private:
     BottomStatusWindow bottomStatusWindow;
     WaveformWorkspace waveformWorkspace;
     AppProperties appProperties;
+    PresetEditSession presetSession;
+    juce::Label designerPresetLabel, designerSaveState;
+    juce::TextEditor designerPresetName;
+    juce::TextButton designerSave { "SAVE" }, designerFolder { "Root folder..." };
+    bool showingDesigner { false };
+    uint64_t displayedRevision { 0 };
 
     juce::TooltipWindow tooltipWindow;
 
     void restoreLayout ();
     void saveLayoutChanges ();
+    void updateSharedPresetHeader ();
+    void timerCallback () override;
 
     void resized () override;
     void paint (juce::Graphics& g) override;

@@ -1,4 +1,6 @@
 #include "GUI/WaveformWorkspace.h"
+#include "Assimil8or/Preset/ParameterPresetsSingleton.h"
+#include "Assimil8or/Preset/PresetProperties.h"
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -67,6 +69,140 @@ namespace
 
 struct WaveformWorkspaceTestAccess
 {
+    static void assignmentWorkflow ()
+    {
+        using namespace WaveformDesign;
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-workspace-assignment", "", false) };
+        check (folder.createDirectory ().wasOk (), "Create owned assignment workflow folder");
+        struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+        auto live { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType).createCopy () };
+        live.setProperty (PresetProperties::IdPropertyId, 7, nullptr);
+        live.setProperty (PresetProperties::NamePropertyId, "Unsaved name", nullptr);
+        const auto original { live.createCopy () };
+        std::uint64_t revision { 1 };
+        auto applications { 0 }, prompts { 0 };
+        juce::String promptText;
+        juce::Array<juce::File> createdFiles;
+        juce::File recipe;
+        std::function<void (bool)> answer;
+        WaveformWorkspace workspace;
+        workspace.setSize (1000, 760);
+        check (! control<juce::Button> (workspace, "design-assign").isEnabled (), "Assignment remains unavailable without a shared preset context");
+        workspace.onGetAssignmentContext = [&] () -> std::optional<WaveformWorkspace::AssignmentContext>
+        {
+            return WaveformWorkspace::AssignmentContext { folder, live.createCopy (), revision };
+        };
+        workspace.onApplyAssignment = [&] (const WaveformWorkspace::AssignmentContext& context, const AssignmentResult& output)
+        {
+            if (context.revision != revision || context.folder != folder || ! context.preset.isEquivalentTo (live))
+                return juce::Result::fail ("The preset changed while generating.");
+            live = output.editedPreset.createCopy ();
+            createdFiles = output.createdFiles;
+            recipe = output.recipe;
+            ++revision; ++applications;
+            return juce::Result::ok ();
+        };
+        workspace.confirmAssignment = [&] (const juce::String& message, std::function<void (bool)> callback)
+        {
+            ++prompts; promptText = message; answer = std::move (callback);
+        };
+        workspace.refreshAssignmentContext ();
+        auto& target { control<juce::ComboBox> (workspace, "design-target-channel") };
+        auto& zone { control<juce::ComboBox> (workspace, "design-target-zone") };
+        auto& slot { control<juce::ComboBox> (workspace, "design-export-slot") };
+        check (target.getSelectedId () == 1 && zone.getSelectedId () == 1 && target.getText ().contains ("empty"),
+               "Initial assignment suggests an empty independent channel and first zone");
+        check (slot.getNumItems () == 199 && slot.getSelectedId () == 1 && slot.getItemId (198) == 199,
+               "Separate package export exposes every valid preset slot independently");
+        slot.setSelectedId (73, juce::sendNotificationSync);
+        check (live.isEquivalentTo (original), "Changing the package preset number never changes the shared preset");
+        target.setSelectedId (2, juce::sendNotificationSync);
+        control<juce::Slider> (workspace, "design-phase-value").setValue (79, juce::sendNotificationSync);
+        control<juce::TextEditor> (workspace, "design-name").setText ("Shared design", false);
+        const auto recipeBeforeContext { juce::JSON::toString (toJson (workspace.getSettings ())) };
+        ++revision;
+        workspace.refreshAssignmentContext ();
+        check (target.getSelectedId () == 2 && juce::JSON::toString (toJson (workspace.getSettings ())) == recipeBeforeContext,
+               "Refreshing an edited preset retains the chosen target and current waveform design");
+        click (workspace, "Generate & Assign...");
+        check (prompts == 1 && promptText.contains ("channel 2, zone 1") && promptText.contains ("channel-wide") &&
+               promptText.contains ("other zones") && promptText.contains ("CV range") && promptText.contains ("Save"),
+               "Assignment confirms the exact destination, channel-wide impact, CV split and unsaved result");
+        check (applications == 0 && folder.findChildFiles (juce::File::findFiles, false).isEmpty (), "Confirmation happens before generating files or changing the preset");
+        answer (false); answer (true);
+        check (applications == 0 && live.isEquivalentTo (original) && folder.findChildFiles (juce::File::findFiles, false).isEmpty (),
+               "Canceled assignment is single-use and leaves files and existing unsaved edits untouched");
+        click (workspace, "Generate & Assign...");
+        ++revision;
+        answer (true);
+        check (applications == 0 && folder.findChildFiles (juce::File::findFiles, false).isEmpty () &&
+               control<juce::Label> (workspace, "design-status").getText ().contains ("confirmation"),
+               "A stale confirmation is rejected before starting generation");
+        click (workspace, "Generate & Assign...");
+        answer (true);
+        auto waitForAssignment = [&]
+        {
+            for (auto tick { 0 }; tick < 500; ++tick)
+            {
+                workspace.timerCallback ();
+                if (control<juce::Button> (workspace, "design-assign").isEnabled ()) return;
+                std::this_thread::sleep_for (std::chrono::milliseconds (10));
+            }
+            throw std::runtime_error ("Waveform assignment worker did not finish");
+        };
+        waitForAssignment ();
+        check (applications == 1 && createdFiles.size () >= 2 && recipe.existsAsFile (), "Worker generates files and recipe before applying its detached preset snapshot");
+        for (const auto& file : createdFiles) check (file.existsAsFile (), "Successful assignment retains every generated file");
+        check (! folder.getChildFile ("prst007.yml").exists () && live.getProperty (PresetProperties::NamePropertyId) == original.getProperty (PresetProperties::NamePropertyId),
+               "Assignment preserves an unsaved preset name and never writes its YAML automatically");
+        PresetProperties assignedPreset (live, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+        ChannelProperties assignedChannel (assignedPreset.getChannelVT (1), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        ZoneProperties assignedZone (assignedChannel.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        check (assignedZone.getSample ().isNotEmpty () && folder.getChildFile (assignedZone.getSample ()).existsAsFile (),
+               "Assignment maps generated audio into the explicitly selected channel and zone");
+        Settings savedDesign;
+        check (fromJson (juce::JSON::parse (recipe.loadFileAsString ()), savedDesign).wasOk () && savedDesign.phaseDegrees == 79.0 &&
+               juce::JSON::toString (toJson (savedDesign)) == recipeBeforeContext,
+               "Saved assignment recipe represents the complete approved design snapshot");
+        const auto successfulPreset { live.createCopy () };
+        const auto successfulFiles { folder.findChildFiles (juce::File::findFiles, false).size () };
+        click (workspace, "Generate & Assign...");
+        answer (true);
+        ++revision; // Change after worker dispatch but before the UI commit.
+        waitForAssignment ();
+        check (applications == 1 && live.isEquivalentTo (successfulPreset) && folder.findChildFiles (juce::File::findFiles, false).size () == successfulFiles,
+               "Post-render stale assignment cleans up only its new files and retains the live preset and prior generation");
+
+        control<juce::ComboBox> (workspace, "design-mode").setSelectedId (3, juce::sendNotificationSync);
+        check (! target.isItemEnabled (3) && target.isItemEnabled (1), "A seven-voice bank disables starting channels without room for all voices");
+        live.setProperty (PresetProperties::IdPropertyId, 8, nullptr);
+        ChannelProperties thirdChannel (assignedPreset.getChannelVT (2), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        thirdChannel.setChannelMode (ChannelProperties::stereoRight, false);
+        ++revision;
+        workspace.refreshAssignmentContext ();
+        check (! target.isItemEnabled (1) && ! target.isItemEnabled (2) && ! control<juce::Button> (workspace, "design-assign").isEnabled (),
+               "Banks cannot overlap either side of an existing stereo pair");
+        control<juce::ComboBox> (workspace, "design-mode").setSelectedId (1, juce::sendNotificationSync);
+        check (! target.isItemEnabled (2) && ! target.isItemEnabled (3) && target.isItemEnabled (4), "Single-voice targets also protect both stereo partners");
+        check (workspace.getSettings ().phaseDegrees == 79, "Preset changes do not reset the remembered audio design");
+        control<juce::ComboBox> (workspace, "design-mode").setSelectedId (2, juce::sendNotificationSync);
+        target.setSelectedId (4, juce::sendNotificationSync);
+        click (workspace, "Generate & Assign...");
+        check (promptText.contains ("Mix Off") && promptText.contains ("cannot share a channel"), "CV assignment explicitly warns about individual output routing and audio/CV separation");
+        answer (false);
+        workspace.setSize (975, 732); // Actual minimum space beside the shared preset sidebar/header.
+        settle (workspace);
+        for (const auto* name : { "design-assign", "design-export", "design-target-channel", "design-target-zone", "design-export-slot" })
+        {
+            auto& field { control<juce::Component> (workspace, name) };
+            const auto bounds { workspace.getLocalArea (&field, field.getLocalBounds ()) };
+            check (workspace.getLocalBounds ().contains (bounds) && bounds.getWidth () >= 80 && bounds.getHeight () >= 20,
+                   "Assignment and package controls fit beside the shared preset list at minimum UI size");
+        }
+        snapshot (workspace, "waveform-workspace-assignment");
+        std::cout << "PASS: waveform shared-preset assignment, exact targets, confirmation, worker apply, stale rollback, channel safety and independent package slot\n";
+    }
+
     static void settle (WaveformWorkspace& workspace)
     {
         // Poll the actual message-thread timer path, without a native window,
@@ -414,7 +550,7 @@ struct WaveformWorkspaceTestAccess
         control<juce::ComboBox> (workspace, "design-mode").setSelectedId (3, juce::sendNotificationSync);
         check (juce::JSON::toString (toJson (workspace.getSettings ())) == retainedLayers, "Mode switching preserves individual voice edits");
         control<juce::TextEditor> (workspace, "design-name").setText (".", false);
-        click (workspace, "Create A8 files...");
+        click (workspace, "Export package...");
         check (control<juce::Label> (workspace, "design-status").getText ().contains ("usable design name"), "Invalid export name is rejected before opening a chooser or writing files");
         check (! find (workspace, "design-open-export")->isVisible (), "Open exported folder stays hidden until a successful explicit export");
         click (workspace, "Back to preset");
@@ -427,4 +563,5 @@ void testWaveformWorkspace ()
 {
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
+    WaveformWorkspaceTestAccess::assignmentWorkflow ();
 }

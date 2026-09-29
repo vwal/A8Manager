@@ -4,30 +4,72 @@ Use the **Waveform designer** button at the top of A8Manager to create audio
 cycles, CV/modulation files, and multi-channel layers. **Samples** returns to
 your sample/preset editor. Neither action discards the open preset or the design.
 
-## First export
+## Shared presets: Generate & Assign
+
+The preset-slot list is visible in both workspaces. It is the **same selected
+preset**, not a separate designer bank. Select an existing slot or an empty one;
+the preset name, Save button and unsaved changes are shared with Samples.
+Switching slots/folders still asks before discarding unsaved preset edits, and
+does not discard the waveform design. **Root folder...** selects a different
+folder without stepping through intermediate locations.
+
+1. Choose the destination preset in the left-hand list. Use **Show All** to see
+   empty slots as well as existing presets.
+2. Design and audition an Audio Cycle or Layer Bank, or visually design CV.
+3. Choose **Target channel** and **Target zone**, then **Generate & Assign...**.
+   Empty independent channels are suggested. A bank needs consecutive channels;
+   stereo pairs and assignments that split an existing Link/Cycle group are
+   rejected. Choose an existing zone or the next unused zone without leaving gaps.
+4. Review the confirmation. Target-zone samples and markers are replaced;
+   generated pitch, pan, envelope, play/loop and mix settings apply to the whole
+   channel, including its other zones. Appending a zone divides the former last
+   zone's CV-selection range. Other sample content remains unchanged.
+5. Click **SAVE** to write the selected `prstNNN.yml`. Assignment itself does not
+   save the preset or discard your previous unsaved edits.
+
+Generated mono 24-bit WAVs and a uniquely named `.design.json` recipe are placed
+directly in the current folder. Existing WAVs are never overwritten, including
+when regenerating a design. If the preset/folder changes during generation,
+assignment is canceled and its unused generated files are cleaned up. Successful
+assignment keeps its files even if you later discard the preset edits; those
+files may be useful independently and are not automatically deleted.
+
+**CV and audio must use separate channels**, though they may coexist on different
+channels of one preset. This includes every zone, not just the selected zone.
+Even replacing the only zone with the opposite content type requires purging
+that channel first. Known CV channels are locked to **Mix Off** and **Mix
+modulation Off**, leaving the individual output available. Samples imports and
+zone paste enforce the same separation. An already mixed preset cannot be saved
+until corrected. Missing/unreadable destination samples prevent assignment
+because their purpose cannot be verified. Untagged third-party CV cannot be
+reliably recognized: the monitoring precautions below still apply.
+
+## Standalone package export
 
 1. Choose a mode and a starting shape. Adjust the controls while watching the
    preview. A new preview appears after the background render finishes.
    For Audio Cycle or Layer Bank, turn down your speakers/headphones and use
    **Start audition** to hear the design before exporting.
 2. Choose playback: **One shot**, **Loop** (continuous), or **Gated loop**.
-3. Give the design a name, then choose **Create A8 files**. Select a parent folder.
+3. Give the design a name, choose **Package preset** (001–199), then choose
+   **Export package...**. Select a parent folder.
    A8Manager creates a new, uniquely named `A8-...` folder inside it.
 4. **Open in Sample workspace** opens the generated folder for inspection.
    Existing unsaved preset edits still require confirmation before changing roots.
    For hardware use, copy the whole generated folder to the root of your SD card,
-   safely eject it, and load that folder's preset 001 on Assimil8or.
+   safely eject it, and load the chosen preset number on Assimil8or.
 5. Trigger/gate channel 1. Layer banks' Link channels follow channel 1.
 
-The folder includes one mono **24-bit integer PCM WAV** per voice, `prst001.yml`,
+The folder includes one mono **24-bit integer PCM WAV** per voice, `prstNNN.yml`,
 `design.json`, and a `README.txt` with the exact settings and loading instructions.
 WAVs use the chosen 48 or 96 kHz rate. Existing files and folders are not replaced;
 repeated exports get a numbered folder suffix. This does not assign files to or
 save over the preset currently being edited. Other zones/channels in the exported
 preset are empty defaults.
 
-Use the recipe-loading control to reopen `design.json`. Exporting also saves the
-recipe; unexported changes are held only for the current application session.
+Use **Load recipe...** to reopen a package's `design.json` or an assigned design's
+uniquely named `.design.json`. Assignment and export both save the recipe;
+unwritten design changes are held only for the current application session.
 Each Workspace mode remembers its current design while the app remains open,
 so switching between Audio Cycle, CV and Layer Bank preserves those edits.
 Choosing a fresh Starting point replaces the current mode's design with preset
@@ -184,11 +226,12 @@ Arbitrary unmarked CV, older files moved alone, and files with metadata stripped
 by another tool cannot reliably be identified. This protection applies only in
 A8Manager, not other players; never use another player to send CV to speakers.
 
-New CV presets default to **Mix Output Level = Off**, leaving the individual
+Generated CV channels use **Mix Output Level = Off**, leaving the individual
 output available. The exported numeric value is `MixLevel: -90`, the application's
 minimum. Confirm the module displays **Off** and test both outputs with a scope
 before relying on it; the exact file representation still needs a hardware
-round-trip check. Existing presets and audio/layer exports are unchanged.
+round-trip check. Mix modulation is also Off. A known CV channel cannot have its
+Mix controls reenabled in the editor; other audio channels retain their own mix.
 
 See the [CV-generation discussion review](CV-GENERATION-REVIEW.md) for planned
 possibilities such as zone-linked companion CV, triggers and envelope following.
@@ -200,8 +243,9 @@ Spread controls provide initial detune, phase and pan values; each voice can the
 be edited independently for detune in cents, phase in degrees, pan and level.
 Applying a spread resets those per-voice values, including their levels.
 
-Each voice becomes a separate mono WAV on a separate channel. Channel 1 is
-**Master**; subsequent channels are **Link**, not Stereo Right. The preset stores
+Each voice becomes a separate mono WAV on a separate channel. The first assigned
+channel (channel 1 for a standalone package) is **Master**; subsequent channels
+are **Link**, not Stereo Right. Trigger the first channel of that group. The preset stores
 each voice's detune in channel PITCH and its pan separately. Phase and level are
 already baked into the WAV and are not applied twice. Detune creates real beating
 when the hardware plays the channels together; phase variation alone does not.
@@ -220,7 +264,7 @@ on Assimil8or for the final hardware result.
 - **Loop (continuous):** One Shot play mode plus Normal Loop. One trigger starts
   indefinite looping; gate release does not stop it. Use the module's manual
   stop controls (hold Play Mode and press the channel button).
-- **Gated Loop:** Gated play mode plus Gated Loop. Hold the channel-1 gate high
+- **Gated Loop:** Gated play mode plus Gated Loop. Hold the group's first channel gate high
   to sustain playback; releasing it ends the gated playback.
 
 Exported presets disable automatic triggering and set attack/release to zero.

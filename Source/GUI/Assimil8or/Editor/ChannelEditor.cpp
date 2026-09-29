@@ -334,6 +334,16 @@ void ChannelEditor::pasteZone (int zoneIndex)
     const auto clipboard { copyBufferZoneProperties.getValueTree ().createCopy () };
     auto apply = [this, zoneIndex, clipboard] ()
     {
+        if (clipboard.getProperty (ZoneProperties::SamplePropertyId).toString ().isNotEmpty ())
+        {
+            const auto prepared { channelProperties.getValueTree ().getParent ().createCopy () };
+            if (! PairedZoneEdits::pasteContent (prepared.getChild (channelIndex), zoneIndex, clipboard)) return;
+            if (const auto allowed { editManager->validateContentChange (prepared) }; allowed.failed ())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot paste zone", allowed.getErrorMessage ());
+                return;
+            }
+        }
         audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
         if (! PairedZoneEdits::pasteContent (channelProperties.getValueTree (), zoneIndex, clipboard))
         {
@@ -1698,7 +1708,7 @@ void ChannelEditor::setupChannelComponents ()
     // MIX EDITOR
     mixLevelTextEditor.getMinValueCallback = [this] () { return minChannelProperties.getMixLevel (); };
     mixLevelTextEditor.getMaxValueCallback = [this] () { return maxChannelProperties.getMixLevel (); };
-    mixLevelTextEditor.toStringCallback = [this] (double value) { return FormatHelpers::formatDouble (value, 1, false); };
+    mixLevelTextEditor.toStringCallback = [] (double value) { return value <= -90.0 ? juce::String ("Off") : FormatHelpers::formatDouble (value, 1, false); };
     mixLevelTextEditor.updateDataCallback = [this] (double value) { mixLevelUiChanged (value); };
     mixLevelTextEditor.getIncrementCallback = [] () { return 0.1; };
     mixLevelTextEditor.onDragCallback = [this] (double valueDelta)
@@ -2389,6 +2399,11 @@ void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree u
         // Zone Properties setup
         auto& curZoneProperties { zoneProperties [zoneIndex] };
         curZoneProperties.wrap (zonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::yes);
+        auto& cvSample { cvSampleStates [zoneIndex] };
+        cvSample.wrap (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
+        cvSample.onIsCvChange = [this] (bool) { refreshCvMixControls (); };
+        cvSample.onNameChange = [this] (juce::String) { refreshCvMixControls (); };
+        cvSample.onStatusChange = [this] (SampleStatus) { refreshCvMixControls (); };
         curZoneProperties.onSampleChange = [this] (juce::String sample)
         {
             // TODO - optimize so we only update the zone that is changing
@@ -2546,10 +2561,7 @@ void ChannelEditor::checkStereoRightOverlay ()
     loopModeComboBox.setEnabled (! isStereoRightMode);
     loopStartModComboBox.setEnabled (! isStereoRightMode);
     loopStartModTextEditor.setEnabled (! isStereoRightMode);
-    mixLevelTextEditor.setEnabled (! isStereoRightMode);
-    mixModComboBox.setEnabled (! isStereoRightMode);
-    mixModTextEditor.setEnabled (! isStereoRightMode);
-    mixModIsFaderComboBox.setEnabled (! isStereoRightMode);
+    refreshCvMixControls ();
     // Pan and its modulation remain independent on the hardware's right channel.
     panTextEditor.setEnabled (true);
     panModComboBox.setEnabled (true);
@@ -3177,13 +3189,34 @@ void ChannelEditor::loopStartModUiChanged (juce::String cvInput, double loopStar
 void ChannelEditor::mixLevelDataChanged (double mixLevel)
 {
     LogDataAndUiChanges ("mixLevelDataChanged");
-    mixLevelTextEditor.setText (FormatHelpers::formatDouble (mixLevel, 1, false));
+    mixLevelTextEditor.setText (mixLevel <= -90.0 ? juce::String ("Off") : FormatHelpers::formatDouble (mixLevel, 1, false));
+}
+
+bool ChannelEditor::hasCvContent ()
+{
+    for (size_t zone { 0 }; zone < cvSampleStates.size (); ++zone)
+        if (cvSampleStates[zone].isValid () && cvSampleStates[zone].getIsCv () && zoneProperties[zone].isValid ()
+            && zoneProperties[zone].getSample ().isNotEmpty () && zoneProperties[zone].getSample () == cvSampleStates[zone].getName ()) return true;
+    return false;
+}
+
+void ChannelEditor::refreshCvMixControls ()
+{
+    if (! channelProperties.isValid ()) return;
+    const auto cv { hasCvContent () };
+    const auto editable { ! cv && channelProperties.getChannelMode () != ChannelProperties::stereoRight };
+    mixLevelTextEditor.setEnabled (editable);
+    mixModComboBox.setEnabled (editable);
+    mixModTextEditor.setEnabled (editable);
+    mixModIsFaderComboBox.setEnabled (editable);
+    mixLevelTextEditor.setTooltip (cv ? "CV channel: Mix is locked Off. Use the individual output only." : "Stereo mix output level; -90 dB is Off.");
+    if (cv && editManager) editManager->enforceCvMix (channelIndex);
 }
 
 void ChannelEditor::mixLevelUiChanged (double mixLevel)
 {
     LogDataAndUiChanges ("mixLevelUiChanged");
-    channelProperties.setMixLevel (mixLevel, false);
+    channelProperties.setMixLevel (hasCvContent () ? -90.0 : mixLevel, false);
 }
 
 void ChannelEditor::mixModDataChanged (juce::String cvInput, double mixMod)

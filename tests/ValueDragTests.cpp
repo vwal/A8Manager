@@ -19,6 +19,9 @@ void testStereoChannelUi ();
 void testPairedZoneEdits ();
 void testWaveformDesign ();
 void testWaveformDesignExport ();
+void testWaveformDesignAssignment ();
+void testSharedPresetSession ();
+void testChannelCvSafety ();
 void testWaveformWorkspace ();
 void testWaveformDuration ();
 void testWaveformAudition ();
@@ -129,6 +132,9 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI initialise;
     try
     {
+        if (argc == 2 && juce::String (argv[1]) == "--shared-preset-session") { testSharedPresetSession (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--waveform-design-assignment") { testWaveformDesignAssignment (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--channel-cv-safety") { testChannelCvSafety (); return 0; }
         if (argc == 2 && juce::String (argv [1]) == "--stereo-channel-ui")
         {
             testStereoChannelUi ();

@@ -1,5 +1,6 @@
 #include "EditManager.h"
 #include "../../../Assimil8or/Audio/SafeAudioImport.h"
+#include "../../../Assimil8or/Audio/ChannelCvSafety.h"
 #include "SampleManager/SampleManagerProperties.h"
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
@@ -45,16 +46,57 @@ void EditManager::init (juce::ValueTree rootPropertiesVT, juce::ValueTree preset
     presetProperties.wrap (presetPropertiesVT, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
     presetProperties.forEachChannel ([this, &sampleManagerProperties] (juce::ValueTree channelVT, int channelIndex)
     {
-        channelPropertiesList [channelIndex].wrap (channelVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        channelPropertiesList [channelIndex].wrap (channelVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
+        channelPropertiesList [channelIndex].onMixLevelChange = [this, channelIndex] (double) { enforceCvMix (channelIndex); };
+        channelPropertiesList [channelIndex].onMixModChange = [this, channelIndex] (CvInputAndAmount) { enforceCvMix (channelIndex); };
         channelPropertiesList [channelIndex].forEachZone ([this, &sampleManagerProperties, channelIndex] (juce::ValueTree zoneVT, int zoneIndex)
         {
             zoneAndSamplePropertiesList [channelIndex][zoneIndex].zoneProperties.wrap (zoneVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
             zoneAndSamplePropertiesList [channelIndex][zoneIndex].sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);
+            auto& sample { zoneAndSamplePropertiesList [channelIndex][zoneIndex].sampleProperties };
+            sample.onIsCvChange = [this, channelIndex] (bool cv) { if (cv) enforceCvMix (channelIndex); };
+            sample.onNameChange = [this, channelIndex] (juce::String) { enforceCvMix (channelIndex); };
+            sample.onStatusChange = [this, channelIndex] (SampleStatus) { enforceCvMix (channelIndex); };
             ++zoneIndex;
             return true;
         });
+        enforceCvMix (channelIndex);
         return true;
     });
+}
+
+bool EditManager::channelContainsCv (int channelIndex)
+{
+    if (channelIndex < 0 || channelIndex >= 8) return false;
+    for (auto& zone : zoneAndSamplePropertiesList [channelIndex])
+        if (zone.sampleProperties.isValid () && zone.sampleProperties.getIsCv () && zone.zoneProperties.getSample ().isNotEmpty ()
+            && zone.sampleProperties.getName () == zone.zoneProperties.getSample ()) return true;
+    return false;
+}
+
+void EditManager::enforceCvMix (int channelIndex)
+{
+    if (channelContainsCv (channelIndex)) ChannelCvSafety::mute (channelPropertiesList [channelIndex]);
+}
+
+juce::Result EditManager::validateContentChange (juce::ValueTree proposed)
+{
+    if (! audioManager) return juce::Result::fail ("Audio services are unavailable.");
+    const juce::File folder { appProperties.getMostRecentFolder () };
+    PresetProperties next (proposed, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+    for (int index { 0 }; index < 8; ++index)
+    {
+        if (next.getChannelVT (index).isEquivalentTo (presetProperties.getChannelVT (index))) continue;
+        const auto before { ChannelCvSafety::inspect (*audioManager, presetProperties.getChannelVT (index), folder) };
+        const auto after { ChannelCvSafety::inspect (*audioManager, next.getChannelVT (index), folder) };
+        if (after.unreadable) return juce::Result::fail ("The pasted sample is missing or unreadable; its audio/CV purpose cannot be verified.");
+        if (after.cv)
+            if (const auto valid { ChannelCvSafety::accepts (before, true, index) }; valid.failed ()) return valid;
+        if (after.audio)
+            if (const auto valid { ChannelCvSafety::accepts (before, false, index) }; valid.failed ()) return valid;
+        if (after.cv && after.audio) return juce::Result::fail ("CV and audio cannot share a channel.");
+    }
+    return juce::Result::ok ();
 }
 
 double EditManager::getXfadeGroupValueByIndex (int xfadeGroupIndex)
@@ -256,7 +298,7 @@ bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::St
     if (zoneIndex > initialNumZones)
         return fail ("Fill the preceding empty zones before assigning this zone.");
 
-    struct ImportedSample { juce::File file; juce::int64 length; unsigned int channels; };
+    struct ImportedSample { juce::File file; juce::int64 length; unsigned int channels; bool cv; };
     std::vector<ImportedSample> importedSamples;
     std::vector<juce::File> createdFiles;
     auto abandonImport = [&] (const juce::String& message)
@@ -277,8 +319,18 @@ bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::St
         if (imported != source) createdFiles.push_back (imported);
         auto reader { audioManager->getReaderFor (imported) };
         if (! reader) return abandonImport ("The imported audio could not be reopened.");
-        importedSamples.push_back ({ imported, reader->lengthInSamples, reader->numChannels });
+        importedSamples.push_back ({ imported, reader->lengthInSamples, reader->numChannels, CvSampleSafety::isCv (imported, *reader) });
     }
+
+    const auto cv { importedSamples.front ().cv };
+    for (const auto& sample : importedSamples)
+        if (sample.cv != cv) return abandonImport ("CV and audio cannot be assigned to zones in the same channel.");
+    if (const auto allowed { ChannelCvSafety::accepts (ChannelCvSafety::inspect (*audioManager, channelPropertiesList[channelIndex].getValueTree (), folder), cv, channelIndex) }; allowed.failed ())
+        return abandonImport (allowed.getErrorMessage ());
+    if (channelIndex < 7 && channelPropertiesList[channelIndex + 1].getChannelMode () == ChannelProperties::stereoRight)
+        if (const auto allowed { ChannelCvSafety::accepts (ChannelCvSafety::inspect (*audioManager, channelPropertiesList[channelIndex + 1].getValueTree (), folder), cv, channelIndex + 1) }; allowed.failed ())
+            return abandonImport (allowed.getErrorMessage ());
+    if (cv) ChannelCvSafety::mute (channelPropertiesList[channelIndex]);
 
     const auto initialEndIndex { initialNumZones - 1 };
     const auto dropZoneStartIndex { zoneIndex };
@@ -320,6 +372,7 @@ bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::St
                                                                 && getNumUsedZones (parentChannelId) == 0) };
                 if (availableChannel)
                 {
+                    if (cv) ChannelCvSafety::mute (nextChannelProperties);
                     if (! alreadyPaired)
                         for (int index { 0 }; index < 8; ++index)
                         {

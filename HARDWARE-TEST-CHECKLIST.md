@@ -25,6 +25,34 @@ Record observations rather than changing several controls at once. For a failed
 test, note the recipe, exact settings, output, trigger/gate sequence, expected
 result and actual result. A short scope capture or recording is useful.
 
+## Shared-preset assignment checks
+
+Use a disposable folder, not the only copy of existing samples/presets. The tests
+below supplement the standalone preset-001 tests in the rest of this checklist.
+
+- [ ] In Samples choose an empty non-001 slot, e.g. 047. Switch to Waveform
+  designer: the same slot and name remain selected, and other slots are visible.
+- [ ] Generate an Audio Cycle into CH 1 / zone 1. Switch back to Samples and
+  inspect it. Save; confirm `prst047.yml` is created, not `prst001.yml`.
+- [ ] In the same preset assign a CV LFO to CH 3 / zone 1. Confirm CH 3 Mix and
+  Mix modulation are Off and locked, while CH 1 retains its audio mix settings.
+  Attempt CV into CH 1 and audio into CH 3, including replacement: both must fail.
+- [ ] Try the same prohibited assignments through Samples imports and zone paste.
+  Confirm the original assignments survive and CV remains blocked from audition.
+- [ ] Append another same-purpose design to zone 2. Inspect both zones' voltage
+  ranges; zone 1's former selection range is divided without changing its WAV.
+- [ ] Assign a two-voice bank to CH 5–6. On the module, trigger CH 5: CH 6 should
+  follow as Link. CH 1 and CH 3 assignments should remain intact.
+- [ ] With CV disconnected from speakers, load preset 047 on the module. Verify
+  CV at the CH 3 individual output and **no CV contribution to the stereo mix**
+  using a suitable scope. Check the hardware reports Mix Off on CH 3.
+- [ ] Regenerate a design. The new WAV has a unique name; older WAVs and other
+  presets referencing them must be unchanged. Reopen its `.design.json` recipe.
+- [ ] Make an unsaved preset edit, then switch workspaces: it remains. Changing
+  slots asks before discarding it. Cancel leaves the original slot and edits.
+- [ ] Export a standalone package with a chosen non-001 Package preset number;
+  verify its YAML filename/header and loading instructions agree.
+
 ### Test record
 
 Date: __________  A8Manager build: __________  Module firmware: __________

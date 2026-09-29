@@ -608,16 +608,27 @@ check and repair any affected sample assignments before saving or transferring.
 
 ## Creating waveforms and CV
 
-Choose **Waveform designer** in the top toolbar. This is a separate design
-surface: switching to it does not replace the sample or preset you are editing.
+Choose **Waveform designer** in the top toolbar. It shares the current folder,
+preset-slot list and editable preset with **Samples**; switching views does not
+replace or discard the sample, preset or design you are editing.
 It has Audio Cycle, CV/Modulation, and Layer Bank modes, with starting shapes,
 shaping controls, an interactive curve editor and a visual preview.
 
-**Create A8 files** writes a new folder containing WAV files, preset 001,
-`design.json` and loading instructions. An existing folder is never overwritten.
+**Generate & Assign...** creates uniquely named WAVs and a recipe in the current
+folder, then assigns them to your chosen channel/zone in the selected preset.
+Layer banks occupy consecutive channels. Review the confirmation: target zones
+are replaced and generated channel-wide settings affect their other zones too.
+Click **SAVE** to write that preset slot; assignment does not save automatically.
+CV and audio cannot share a channel. Known CV channels have Mix and Mix modulation
+locked **Off**, including when imported through Samples. Use separate channels
+for oscillator/audio and modulation content.
+
+**Export package...** remains available for a standalone folder containing WAVs,
+a selectable preset number (001–199), `design.json` and loading instructions.
+It does not change the selected preset. An existing folder is never overwritten.
 Use **Open in Sample workspace** to inspect the result; any unsaved preset is
 protected by the usual confirmation. Or copy the entire generated folder onto
-your Assimil8or SD card and load preset 001 on the module.
+your Assimil8or SD card and load the chosen preset number on the module.
 
 The [Waveform Designer guide](WAVEFORM-DESIGNER.md) explains the controls,
 supersaw layering, sample-length matching, DC safety, and voltage calibration.
@@ -629,7 +640,7 @@ CV/Modulation is deliberately excluded from speaker audition. New CV WAVs also
 carry a purpose tag that blocks their playback in **Samples**, with disabled
 ONCE/LOOP buttons and a **CV sample / Speaker audition disabled** notice. Either
 side of a stereo pair being CV blocks the pair. You can still edit its markers
-and preset. New CV presets default to Mix Off for individual-output use; verify
+and preset. Known CV channels keep Mix Off for individual-output use; verify
 the module displays Off before connecting a mix output to speakers.
 
 Older CV exports are recognised beside their original matching recipe; arbitrary

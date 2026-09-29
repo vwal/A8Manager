@@ -47,10 +47,14 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../Source/Assimil8or/Audio/WaveformAudition.cpp
     WaveformDesignTests.cpp
     WaveformDesignExportTests.cpp
+    WaveformDesignAssignmentTests.cpp
+    SharedPresetSessionTests.cpp
+    ChannelCvSafetyTests.cpp
     WaveformWorkspaceTests.cpp
     WaveformDurationTests.cpp
     ../Source/Assimil8or/Audio/WaveformDesign.cpp
     ../Source/Assimil8or/Audio/WaveformDesignExport.cpp
+    ../Source/Assimil8or/Audio/WaveformDesignAssignment.cpp
     ../Source/GUI/WaveformWorkspace.cpp
     RootFolderTests.cpp
     PlaybackTests.cpp
@@ -118,6 +122,11 @@ set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPE
 add_test(NAME ValueDragRegression COMMAND A8ManagerInteractionTests)
 add_test(NAME WaveformDesignRegression COMMAND A8ManagerInteractionTests --waveform-design)
 add_test(NAME WaveformDesignExportRegression COMMAND A8ManagerInteractionTests --waveform-design-export)
+add_test(NAME WaveformDesignAssignmentRegression COMMAND A8ManagerInteractionTests --waveform-design-assignment)
+add_test(NAME SharedPresetSessionRegression COMMAND A8ManagerInteractionTests --shared-preset-session)
+add_test(NAME ChannelCvSafetyRegression COMMAND A8ManagerInteractionTests --channel-cv-safety)
+set_tests_properties(WaveformDesignAssignmentRegression SharedPresetSessionRegression ChannelCvSafetyRegression
+    PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME WaveformWorkspaceRegression COMMAND A8ManagerInteractionTests --waveform-workspace)
 add_test(NAME WaveformDurationRegression COMMAND A8ManagerInteractionTests --waveform-duration)
 add_test(NAME WaveformAuditionRegression COMMAND A8ManagerInteractionTests --waveform-audition)

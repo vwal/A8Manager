@@ -55,6 +55,7 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
     bottomStatusWindow.init (rootPropertiesVT);
     currentFolderComponent.init (rootPropertiesVT);
     midiConfigComponent.init (rootPropertiesVT);
+    presetSession.init (rootPropertiesVT);
 
     presetListEditorSplitter.setComponents (&presetListComponent, &assimil8orEditorComponent);
     presetListEditorSplitter.setHorizontalSplit (false);
@@ -76,6 +77,33 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
     addChildComponent (midiConfigComponent);
     addAndMakeVisible (bottomStatusWindow);
     addChildComponent (waveformWorkspace);
+    for (auto* component : std::initializer_list<juce::Component*> { &designerPresetLabel, &designerPresetName, &designerSaveState, &designerSave, &designerFolder })
+        addChildComponent (component);
+    designerPresetLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    designerPresetLabel.setColour (juce::Label::textColourId, Theme::accent);
+    designerPresetName.setFont (juce::FontOptions (16.0f));
+    designerPresetName.setInputRestrictions (12, " !\"#$%^&'()#+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~");
+    designerPresetName.setSelectAllWhenFocused (true);
+    designerPresetName.setTooltip ("The A8 preset name, shared with Samples. Save writes the selected preset slot.");
+    designerPresetName.onTextChange = [this] ()
+    {
+        if (! presetSession.snapshot ()) return;
+        PresetProperties preset (presetSession.getEdit (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+        preset.setName (designerPresetName.getText (), false);
+    };
+    designerSave.onClick = [this] ()
+    {
+        if (presetSession.snapshot ()) assimil8orEditorComponent.savePreset ();
+        updateSharedPresetHeader ();
+    };
+    designerFolder.onClick = [this] () { currentFolderComponent.selectRootFolder (); };
+    waveformWorkspace.onGetAssignmentContext = [this] () { return presetSession.snapshot (); };
+    waveformWorkspace.onApplyAssignment = [this] (const WaveformWorkspace::AssignmentContext& context, const WaveformDesign::AssignmentResult& generated)
+    {
+        const auto result { presetSession.apply (context, generated.editedPreset) };
+        updateSharedPresetHeader ();
+        return result;
+    };
     waveformWorkspace.onClose = [this] () { showWaveformWorkspace (false); };
     waveformWorkspace.onMatchDuration = [this] (int region) { return assimil8orEditorComponent.getSelectedDuration (region); };
     waveformWorkspace.onOpenExportedFolder = [this] (juce::File folder)
@@ -97,19 +125,60 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
     }
 
     fileViewComponent.onAudioFileSelected = [this] (juce::File audioFile) { assimil8orEditorComponent.receiveSampleLoadRequest (audioFile); };
+    startTimerHz (5);
 }
 
 void MainComponent::showWaveformWorkspace (bool show)
 {
+    if (showingDesigner != show)
+    {
+        // Reparent the actual list, not a second selector/document. Slot changes
+        // in either workspace use its existing unsaved-preset confirmation.
+        if (show)
+        {
+            presetListEditorSplitter.setComponents (nullptr, &assimil8orEditorComponent);
+            addAndMakeVisible (presetListComponent);
+        }
+        else
+            presetListEditorSplitter.setComponents (&presetListComponent, &assimil8orEditorComponent);
+    }
+    showingDesigner = show;
     if (show)
+    {
         waveformWorkspace.setInitialFolder (juce::File (appProperties.getMostRecentFolder ()));
-    currentFolderComponent.setVisible (! show);
+        waveformWorkspace.refreshAssignmentContext ();
+    }
+    currentFolderComponent.setVisible (true);
     topAndBottomSplitter.setVisible (! show);
     bottomStatusWindow.setVisible (! show);
     waveformWorkspace.setVisible (show);
+    for (auto* component : std::initializer_list<juce::Component*> { &designerPresetLabel, &designerPresetName, &designerSaveState, &designerSave, &designerFolder })
+        component->setVisible (show);
+    updateSharedPresetHeader ();
+    resized ();
     if (onWorkspaceChanged != nullptr)
         onWorkspaceChanged (show);
 }
+
+void MainComponent::updateSharedPresetHeader ()
+{
+    PresetProperties preset (presetSession.getEdit (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+    if (! preset.isValid ()) return;
+    const auto bound { presetSession.snapshot ().has_value () };
+    designerPresetLabel.setText ("Preset " + juce::String (preset.getId ()), juce::dontSendNotification);
+    if (designerPresetName.getText () != preset.getName ()) designerPresetName.setText (preset.getName (), false);
+    designerPresetName.setEnabled (bound);
+    designerSave.setEnabled (bound && presetSession.isDirty ());
+    designerSaveState.setText (! bound ? "Select a preset slot" : presetSession.isDirty () ? "Unsaved changes" : "Saved / unchanged", juce::dontSendNotification);
+    designerSaveState.setColour (juce::Label::textColourId, presetSession.isDirty () ? Theme::accent : Theme::muted);
+    if (displayedRevision != presetSession.getRevision ())
+    {
+        displayedRevision = presetSession.getRevision ();
+        if (showingDesigner) waveformWorkspace.refreshAssignmentContext ();
+    }
+}
+
+void MainComponent::timerCallback () { if (showingDesigner) updateSharedPresetHeader (); }
 
 void MainComponent::restoreLayout ()
 {
@@ -144,7 +213,6 @@ void MainComponent::paint ([[maybe_unused]] juce::Graphics& g)
 
 void MainComponent::resized ()
 {
-    waveformWorkspace.setBounds (getLocalBounds ());
     auto localBounds { getLocalBounds () };
     currentFolderComponent.setBounds (localBounds.removeFromTop (30));
     bottomStatusWindow.setBounds (localBounds.removeFromBottom (toolWindowHeight));
@@ -152,4 +220,19 @@ void MainComponent::resized ()
     topAndBottomSplitter.setBounds (localBounds);
     if (guiProperties.isValid ()) saveLayoutChanges ();
     midiConfigComponent.setBounds (localBounds);
+    if (showingDesigner)
+    {
+        auto designerBounds { getLocalBounds ().withTrimmedTop (34).reduced (6, 0) };
+        presetListComponent.setBounds (designerBounds.removeFromLeft (165));
+        designerBounds.removeFromLeft (8);
+        auto header { designerBounds.removeFromTop (34).reduced (4, 3) };
+        designerPresetLabel.setBounds (header.removeFromLeft (92));
+        designerPresetName.setBounds (header.removeFromLeft (180));
+        header.removeFromLeft (8);
+        designerFolder.setBounds (header.removeFromRight (118));
+        header.removeFromRight (8);
+        designerSave.setBounds (header.removeFromRight (76));
+        designerSaveState.setBounds (header);
+        waveformWorkspace.setBounds (designerBounds);
+    }
 }

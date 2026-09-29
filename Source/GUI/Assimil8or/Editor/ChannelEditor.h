@@ -297,6 +297,9 @@ private:
     CvOffsetTextEditor loopStartModTextEditor; // double
     juce::Label mixLevelLabel;
     DragValueEditorDouble mixLevelTextEditor; // double
+    std::array<SampleProperties, 8> cvSampleStates;
+    bool hasCvContent ();
+    void refreshCvMixControls ();
     CvInputChannelComboBox mixModComboBox; // 0A - 8C
     CvOffsetTextEditor mixModTextEditor; // double
     juce::Label mixModIsFaderLabel; //
