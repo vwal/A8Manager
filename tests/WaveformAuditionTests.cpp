@@ -64,6 +64,131 @@ namespace
                 check (std::isfinite (audio.getSample (channel, frame)) && std::abs (audio.getSample (channel, frame)) <= 0.980001f, "Audition output is finite and safety-bounded");
     }
 
+    void testHardwareTransposeRange ()
+    {
+        auto settings { startingPoint (Mode::oscillator, Shape::sine) };
+        check (WaveformAudition::maximumTransposeSemitones (settings) == 72.0, "48 kHz source permits the A8 total-pitch ceiling of +72 st");
+        settings.sampleRate = 96000.0;
+        check (WaveformAudition::maximumTransposeSemitones (settings) == 60.0, "96 kHz source permits the A8 total-pitch ceiling of +60 st");
+        settings.sampleRate = 192000.0;
+        check (WaveformAudition::maximumTransposeSemitones (settings) == 48.0 && validate (settings).failed (),
+               "The helper documents 192 kHz's +48 st ceiling without silently adding unsupported export rates");
+        settings.sampleRate = std::numeric_limits<double>::quiet_NaN ();
+        check (WaveformAudition::maximumTransposeSemitones (settings) == -48.0, "Invalid source rate cannot grant upward transpose headroom");
+
+        settings.sampleRate = 48000.0;
+        settings.cycleFrames = 8192;
+        const auto source48 { payloadFor (settings) };
+        settings.sampleRate = 96000.0;
+        const auto source96 { payloadFor (settings) };
+        WaveformAudition player;
+        check (player.setTransposeSemitones (72.0).wasOk () && ! player.isActive () && ! player.isPausedForRange (),
+               "A missing payload permits at most the global +72 bound without arming playback");
+        check (player.setTransposeSemitones (std::nextafter (72.0, 100.0)).failed (), "Even without a payload, transpose cannot exceed the global A8 bound");
+        for (const auto deviceRate : { 44100.0, 96000.0 })
+        {
+            for (const auto source : { source48, source96 })
+            {
+                const auto ceiling { WaveformAudition::maximumTransposeSemitones (source->getSettings ()) };
+                player.prepareToPlay (deviceRate);
+                player.setPayload (source);
+                check (player.setTransposeSemitones (ceiling).wasOk () && player.isReady () && player.start ().wasOk (),
+                       "The source-rate hardware ceiling is accepted independently of the output-device rate");
+                collect (player, 12000);
+                const auto output { collect (player, static_cast<int> (deviceRate * 0.5)) };
+                check (std::abs (frequency (output, 0, deviceRate) - 375.0) < 0.03,
+                       "8192-frame cycles produce 375 Hz at +72/48 kHz or +60/96 kHz without changing export data");
+                checkBounded (output);
+                check (player.setTransposeSemitones (std::nextafter (ceiling, 100.0)).failed () && ! player.isPausedForRange (),
+                       "Exceeding the current source-rate A8 ceiling is a hard control rejection, not a resumable frequency pause");
+                collect (player, 2048);
+                check (! player.isActive (), "A hardware-bound rejection fades safely to silence");
+                check (player.setTransposeSemitones (ceiling - 12.0).wasOk () && ! player.isActive (),
+                       "Returning from rejected hardware bounds cannot silently restart audition");
+                check (player.start ().wasOk (), "Explicit start at a lower valid transpose remains available");
+                collect (player, 12000);
+                check (player.setTransposeSemitones (ceiling + 0.01).failed () && player.start ().wasOk (),
+                       "A rejected hardware-overrun does not silently overwrite the last valid transpose");
+                collect (player, 12000);
+                check (std::abs (frequency (collect (player, static_cast<int> (deviceRate * 0.5)), 0, deviceRate) - 187.5) < 0.03,
+                       "Restart after rejected input retains the prior valid pitch, not a silently clamped ceiling");
+            }
+        }
+
+        auto bank { startingPoint (Mode::layers, Shape::sine) };
+        bank.cycleFrames = 8192;
+        bank.voiceCount = 2;
+        bank.voices[0] = { -700.0, 0.0, -1.0, 1.0 };
+        bank.voices[1] = { 350.0, 0.0, 1.0, 1.0 };
+        bank.voices[7].detuneCents = 2400.0; // Unused voices must not consume headroom.
+        check (WaveformAudition::maximumTransposeSemitones (bank) == 68.5, "Positive active-bank detune consumes total-pitch headroom; inactive voices do not");
+        bank.sampleRate = 96000.0;
+        check (WaveformAudition::maximumTransposeSemitones (bank) == 56.5, "Bank headroom is subtracted from the correct source-rate ceiling");
+        const juce::NormalisableRange<double> detuneRange { -2400.0, 2400.0, 0.1 };
+        for (const auto roundedCent : { detuneRange.snapToLegalValue (350.0), 350.00000000000045 })
+        {
+            bank.voices[1].detuneCents = roundedCent;
+            check (WaveformAudition::maximumTransposeSemitones (bank) == 56.5,
+                   "JUCE whole-cent snapping roundoff must not consume an extra transpose cent");
+        }
+        bank.voices[1].detuneCents = 1.00000000000045;
+        check (WaveformAudition::maximumTransposeSemitones (bank) == 59.99,
+               "Whole-cent snap tolerance accounts for full-range subtraction even near zero detune");
+        bank.voices[1].detuneCents = 350.0000001;
+        check (WaveformAudition::maximumTransposeSemitones (bank) == 56.49,
+               "Fractional cents beyond floating-point range-arithmetic error still round the ceiling inward");
+        bank.sampleRate = 48000.0;
+        bank.voices[1].detuneCents = 350.001;
+        check (WaveformAudition::maximumTransposeSemitones (bank) == 68.49, "Fractional-cent bank detune rounds the available 0.01-st ceiling inward");
+        bank.voices[1].detuneCents = 350.0;
+        player.prepareToPlay (48000.0);
+        player.setPayload (payloadFor (bank));
+        check (player.setTransposeSemitones (68.5).wasOk () && player.start ().wasOk (), "A bank starts at its reduced hardware-aware upper bound");
+        collect (player, 12000);
+        const auto bankAudio { collect (player, 24000) };
+        check (std::abs (frequency (bankAudio, 1, 48000.0) - 375.0) < 0.03,
+               "The highest bank voice's detune plus monitor transpose reaches, but never exceeds, the hardware total-pitch limit");
+        check (player.setTransposeSemitones (68.51).failed () && ! player.isPausedForRange (), "A bank-aware bound is enforced by the engine, not just slider presentation");
+        bank.voices[1].detuneCents = -350.0;
+        check (WaveformAudition::maximumTransposeSemitones (bank) == 72.0, "Negative-only banks do not extend the nominal source-rate ceiling");
+        player.setPayload (payloadFor (bank));
+        check (player.setTransposeSemitones (72.0).wasOk () && ! player.isPausedForRange (), "Negative-only bank can use the nominal upper bound after explicit control correction");
+        check (player.start ().wasOk (), "Negative-only bank still requires explicit Start after earlier rejection");
+
+        player.stopImmediately ();
+        player.setPayload (source48);
+        player.setTransposeSemitones (72.0);
+        check (player.start ().wasOk (), "Pending-rate-change fixture starts at +72 on a 48 kHz source");
+        collect (player, 2048);
+        player.setPayload (source96);
+        check (! player.isReady () && player.isPausedForRange (), "Pending 96 kHz publication immediately invalidates +72 before the callback adopts it");
+        collect (player, 2048);
+        check (! player.isActive (), "Hardware-invalid pending source is never adopted for continued playback");
+        player.setPayload (source48);
+        check (player.isReady () && player.isPausedForRange () && ! player.isActive (), "Restoring a compatible source publication alone never resumes audio");
+        check (player.setTransposeSemitones (72.0).wasOk () && player.isPausedForRange () && ! player.isActive (), "Reapplying identical valid controls does not auto-resume a source-change pause");
+        player.setPayload (source96);
+        check (player.start ().failed () && ! player.isPausedForRange (), "Explicit start checks the pending source's hardware cap and cancels failed-start intent");
+        check (player.setTransposeSemitones (60.0).wasOk () && ! player.isActive (), "Correction after a failed pending-rate start remains idle");
+        check (player.start ().wasOk (), "Corrected 96 kHz source can explicitly restart at +60");
+
+        settings = startingPoint (Mode::oscillator, Shape::sine);
+        settings.cycleFrames = 64;
+        player.stopImmediately ();
+        player.setPayload (payloadFor (settings));
+        player.setTransposeSemitones (0.0);
+        check (player.start ().wasOk (), "Short-cycle frequency-safety fixture starts");
+        collect (player, 2048);
+        const auto frequencyLimit { player.setTransposeSemitones (60.0) };
+        check (frequencyLimit.failed () && player.isPausedForRange () && ! player.isReady ()
+               && frequencyLimit.getErrorMessage ().contains ("A8 total-pitch") && frequencyLimit.getErrorMessage ().contains ("48000"),
+               "A larger hardware allowance never bypasses the independent audible/device-Nyquist pause guard");
+        collect (player, 2048);
+        check (player.setTransposeSemitones (24.0).wasOk () && player.isActive () && ! player.isPausedForRange (),
+               "Frequency-only overrun still resumes automatically on a valid transpose change");
+        checkBounded (collect (player, 2048));
+    }
+
     void testRangePause ()
     {
         auto settings { startingPoint (Mode::oscillator, Shape::sine) };
@@ -197,7 +322,7 @@ namespace
         pause (); player.prepareToPlay (std::numeric_limits<double>::quiet_NaN ());
         check (! player.isPausedForRange () && ! player.isReady (), "Invalid/unprepared device state clears range-resume intent");
         player.prepareToPlay (48000.0); remainsStopped ();
-        for (const auto invalid : { std::numeric_limits<double>::quiet_NaN (), std::numeric_limits<double>::infinity (), 49.0, -49.0 })
+        for (const auto invalid : { std::numeric_limits<double>::quiet_NaN (), std::numeric_limits<double>::infinity (), 73.0, -49.0 })
         {
             pause (); check (player.setTransposeSemitones (invalid).failed (), "Invalid controls are rejected, not treated as an audible-range pause"); remainsStopped ();
         }
@@ -220,6 +345,7 @@ namespace
 
 void testWaveformAudition ()
 {
+    testHardwareTransposeRange ();
     testRangePause ();
     using namespace WaveformDesign;
     auto sine { startingPoint (Mode::oscillator, Shape::sine) };

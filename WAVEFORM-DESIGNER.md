@@ -200,14 +200,27 @@ spread rather than just an untransposed individual WAV.
   semitones. Each voice's nominal frequency is
   `source sample rate / cycle frames * 2^(detune cents / 1200 + transpose / 12)`.
   Transposing by +12 doubles all monitored frequencies. It does not change the
-  cycle size, WAV sample rate or exported preset PITCH. Its range is -48 to
-  +48 semitones; it starts at zero. The slider keeps this full range rather than
-  being restricted separately for each waveform or audio device.
+  cycle size, WAV sample rate or exported preset PITCH. It starts at zero, with
+  a fixed lower limit of **−48 semitones**. Its upper limit follows the design's
+  source/export rate: **+72 semitones at 48 kHz**, or **+60 at 96 kHz**. These are
+  the two export rates currently supported by the designer. Positive Layer Bank
+  detune consumes this headroom: a voice detuned +1,200 cents (+12 semitones)
+  reduces the 48 kHz bank's Transpose ceiling to +60. All-negative detunes do not
+  raise the base ceiling. This models combined channel-plus-zone pitch headroom;
+  it is not a claim that one Assimil8or pitch parameter extends beyond +60.
 - The audition continuously repeats the designed cycles even when the exported
   playback choice is **One shot** or **Gated loop**. It is a sound-design monitor,
   not a simulation of external triggers/gates or the complete hardware envelope.
 - Monitor controls are not saved into `design.json` or the generated preset.
   The Samples workspace's audition speed and Keep pitch are separate controls.
+
+Source-rate, mode, recipe and bank changes refresh the Transpose ceiling. If
+the new limit forces its current value down, audition **stops**, rather than
+retaining an automatic-resume request. Review the changed value and press
+**Start audition** when ready. Increasing the available range never starts
+playback by itself. This slider ceiling is separate from the computer-monitor
+frequency check below: a selectable Transpose value can still put a voice
+outside the monitor's permitted frequency range.
 
 Starting designer audition stops any Samples-workspace audition; stopping it
 does not restart the old sample. Starting sample playback takes over the audio
@@ -270,7 +283,15 @@ contains one full cycle, without duplicating its first sample at the end.
   of sine/triangle/saw/trapezoid. Pulse width controls the pulse duty cycle;
   on trapezoid it changes the width of the flattened portion.
 - **Harmonics** sets the partial limit; **Brightness** rolls off higher partials.
-  Harmonics above the waveform's Nyquist limit are omitted.
+  Its whole-number steps use a smooth, gentle logarithmic scale: 1–200 take
+  about 60% of the slider, leaving about 40% for 200–1,024. There is no separate
+  expanded section for 1–5. You can still type an exact integer in the value box;
+  this cutoff selects harmonic numbers, not fractional harmonics. The waveform retains at most
+  `cycle frames / 2 - 1` harmonics: a 512-frame cycle stops at 255, so higher
+  settings sound and look the same. Longer cycles can use values above 300.
+  The control limits existing harmonics; it does not add missing ones, and low
+  Brightness can make the higher partials very quiet. Existing recipes keep
+  their original harmonic settings; only the slider's response has changed.
 - **Drive** rounds/saturates the shape; **Fold** folds it back on itself.
 - **Amplitude**, **Offset**, **Invert**, and bipolar/unipolar selection set the
   final output range. These are percentages of digital full scale, not volts.

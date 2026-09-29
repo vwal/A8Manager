@@ -9,10 +9,11 @@ struct WaveformAuditionRoutingTestAccess
     {
         using State = AudioPlayerProperties::PlayState;
         auto check = [] (bool ok, const char* message) { if (! ok) throw std::runtime_error (message); };
-        auto payloadFor = [&] (int frames)
+        auto payloadFor = [&] (int frames, double sourceRate = 48000.0)
         {
             auto settings { WaveformDesign::startingPoint (WaveformDesign::Mode::oscillator, WaveformDesign::Shape::sine) };
             settings.cycleFrames = frames;
+            settings.sampleRate = sourceRate;
             WaveformDesign::Render rendered;
             check (WaveformDesign::render (settings, rendered).wasOk (), "Render routing fixture");
             WaveformAudition::PayloadPtr payload;
@@ -146,6 +147,26 @@ struct WaveformAuditionRoutingTestAccess
         check (player.setWaveformMonitor (-18.0, 0.0).wasOk (), "Normal controls remain usable after invalid level cancellation");
         drain ();
         check (! player.isWaveformAuditionActive (), "Correcting invalid monitor controls does not silently restart audio");
+        player.setWaveformAuditionPayload (payloadFor (8192, 48000.0));
+        check (player.setWaveformMonitor (-18.0, 72.0).wasOk () && player.startWaveformAudition ().wasOk (),
+               "AudioPlayer permits a 48 kHz source's +72 monitor ceiling on the existing 44.1 kHz device");
+        drain ();
+        player.setWaveformAuditionPayload (payloadFor (8192, 96000.0));
+        check (player.isWaveformAuditionPausedForRange () && ! player.waveformAudition.isReady (),
+               "A pending 96 kHz source immediately lowers the enforced engine ceiling even before audio adoption");
+        drain ();
+        check (player.waveformSelected && ! player.isWaveformAuditionActive () && block.getMagnitude (0, 128) == 0.0f,
+               "Rate-ceiling invalidation keeps the selected designer route silent without returning to a stale sample");
+        player.stopWaveformAudition (); // UI stops before silently adjusting a shrunken slider range.
+        check (player.setWaveformMonitor (-18.0, 60.0).wasOk () && ! player.isWaveformAuditionPausedForRange () && ! player.isWaveformAuditionActive (),
+               "Stop-before-clamp leaves the corrected rate ceiling idle until explicit Start");
+        check (player.startWaveformAudition ().wasOk (), "96 kHz source explicitly restarts at its +60 ceiling");
+        check (player.setWaveformMonitor (-18.0, 60.01).failed () && ! player.isWaveformAuditionPausedForRange (),
+               "AudioPlayer rejects hardware-overrun input rather than silently clamping or preserving resume intent");
+        drain ();
+        player.setWaveformAuditionPayload (payload);
+        check (player.setWaveformMonitor (-18.0, 0.0).wasOk () && ! player.isWaveformAuditionActive (),
+               "Restoring the ordinary source after a rejected rate overrun remains stopped");
         check (player.startWaveformAudition ().wasOk (), "Explicit restart before shutdown test");
         drain ();
         player.setWaveformMonitor (-18.0, -48.0);

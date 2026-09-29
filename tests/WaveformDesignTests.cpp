@@ -52,6 +52,44 @@ namespace
         }
     }
 
+    void checkHarmonicRange ()
+    {
+        auto settings { startingPoint (Mode::oscillator, Shape::saw) };
+        settings.brightness = 1.0; // Avoid a separate brightness roll-off hiding upper partials.
+        settings.harmonics = 255;
+        const auto defaultLimit { generated (settings) };
+        check (settings.cycleFrames == 512, "Default-cycle harmonic-cap regression uses the actual 512-frame starting point");
+        for (const auto requested : { 300, 512, 1024 })
+        {
+            settings.harmonics = requested;
+            const auto aboveLimit { generated (settings) };
+            check (sameAudio (defaultLimit, aboveLimit), "Default 512-frame cycle has identical PCM for requested harmonics above its effective 255 limit");
+            check (aboveLimit.warnings.joinIntoString (" ").contains ("Nyquist"), "A retained request above the cycle's harmonic cap is explained by a Nyquist warning");
+        }
+        check (harmonic (defaultLimit.voices[0], 255) > 0.00001 && harmonic (defaultLimit.voices[0], 256) < 0.000001,
+               "Default cycle keeps harmonic 255 but excludes the Nyquist bin itself");
+
+        settings.cycleFrames = 2048;
+        settings.harmonics = 300;
+        const auto partialRange { generated (settings) };
+        settings.harmonics = 1024;
+        const auto extendedRange { generated (settings) };
+        check (! sameAudio (partialRange, extendedRange)
+               && harmonic (partialRange.voices[0], 400) < 0.000001
+               && harmonic (extendedRange.voices[0], 400) > 0.00001
+               && harmonic (extendedRange.voices[0], 1000) > 0.00001,
+               "Longer cycles retain real spectral content above 300, so the harmonic range must not be truncated to 300");
+        check (harmonic (extendedRange.voices[0], 1024) < 0.000001, "A 2048-frame cycle still excludes its exact Nyquist bin");
+
+        settings.cycleFrames = 4096;
+        const auto fullRequest { generated (settings) };
+        check (harmonic (fullRequest.voices[0], 1024) > 0.00001, "The existing 1024 setting has a real retained partial with a sufficiently long cycle");
+        Settings restored;
+        check (validate (settings).wasOk () && fromJson (juce::JSON::parse (juce::JSON::toString (toJson (settings))), restored).wasOk ()
+               && restored.harmonics == 1024 && sameAudio (fullRequest, generated (restored)),
+               "Existing 1024-harmonic recipes remain valid, recallable and sample-identical");
+    }
+
     void checkPolyBlepSources ()
     {
         using DaisySPPolyBlep::correction;
@@ -167,6 +205,7 @@ void testWaveformDesign ()
     using namespace WaveformDesign;
     checkPolyBlepSources ();
     checkPolyBlepRendering ();
+    checkHarmonicRange ();
     auto sine { startingPoint (Mode::oscillator, Shape::sine) };
     const auto clean { generated (sine) };
     check (clean.frames == 512 && clean.sampleRate == 48000.0 && clean.voices.size () == 1, "Oscillator renders exactly one requested cycle");

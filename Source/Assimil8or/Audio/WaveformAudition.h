@@ -32,6 +32,12 @@ public:
     // band-limited mipmaps. Does not regenerate the design or modify the render.
     static juce::Result preparePayload (const WaveformDesign::Settings& settings,
                                        const WaveformDesign::Render& rendered, PayloadPtr& payload);
+    // A8 total-pitch ceiling for the source/export rate: +72 at 48 kHz, +60
+    // at 96 kHz, +48 at 192 kHz (the designer currently exports 48/96 only).
+    // Reserve the highest positive bank detune and round inward to 0.01 st.
+    // Negative-only banks do not extend the nominal ceiling. Invalid rates or
+    // active-bank metadata return the lower bound; full payload validation is separate.
+    static double maximumTransposeSemitones (const WaveformDesign::Settings& settings) noexcept;
     // Non-audio thread only. nullptr invalidates readiness and ramps playback
     // down; publishing a new valid payload never starts a stopped or range-
     // paused monitor. Only a subsequent valid transpose change can resume it.
@@ -41,7 +47,7 @@ public:
     void setPlaying (bool playing);
     void stopImmediately ();
     void setMonitorGain (double gain); // linear 0..1; default -18 dB
-    juce::Result setTransposeSemitones (double semitones); // monitor-only, -48..48
+    juce::Result setTransposeSemitones (double semitones); // monitor-only, -48..rate/bank ceiling
     bool isActive () const noexcept; // includes the stop ramp
     bool isPausedForRange () const noexcept; // retains intent, even after ramp ends
     bool isReady () const;

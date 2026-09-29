@@ -459,10 +459,10 @@ struct WaveformWorkspace::Impl
     std::unique_ptr<ExpandedPreview> expandedPreview;
     juce::TextButton auditionButton { "Start audition" };
     Control monitorLevel { "Monitor level", "design-monitor-level", -60, 0, 0.1, " dB" };
-    Control monitorTranspose { "Transpose", "design-monitor-transpose", -48, 48, 0.01, " st" };
+    Control monitorTranspose { "Transpose", "design-monitor-transpose", -48, 72, 0.01, " st" };
     WaveformAudition::PayloadPtr auditionPayload;
-    juce::String auditionError, rangePauseReason;
-    bool auditionSuspended { false };
+    juce::String auditionError, rangePauseReason, transposeLimitNotice;
+    bool auditionSuspended { false }, deferredTransposeChange { false };
     juce::Viewport viewport;
     juce::Component content;
     Card tone { "SHAPE & CHARACTER", "Phase is in degrees; tone controls are non-destructive." };
@@ -515,7 +515,6 @@ struct WaveformWorkspace::Impl
         monitorLevel.slider.setValue (-18, juce::dontSendNotification);
         monitorTranspose.slider.setValue (0, juce::dontSendNotification);
         monitorLevel.slider.setTooltip ("Speaker/headphone monitor gain only: -60 to 0 dB, initially -18 dB. Keep your hardware output level low until you have checked it. Does not affect export.");
-        monitorTranspose.slider.setTooltip ("Monitor-only transposition, -48 to +48 semitones. Out-of-range playback pauses; move Transpose back into the monitor frequency range to resume, or press Stop audition to cancel. Does not change the generated cycle, recipe, or preset.");
         auditionButton.setName ("design-audition");
         auditionButton.setEnabled (false);
         styleLabel (status, "Audition starts only when requested. CV mode is always visual-only.", 12.0f);
@@ -582,6 +581,24 @@ struct WaveformWorkspace::Impl
         symmetry = percent (tone, "Symmetry", "design-symmetry", settings.symmetry, 1, 99);
         width = percent (tone, "Pulse width", "design-width", settings.pulseWidth, 1, 99);
         harmonics = add (tone, "Harmonics", "design-harmonics", 1, 1024, 1, "", [this] { return settings.harmonics; }, [this] (double v) { settings.harmonics = juce::roundToInt (v); });
+        // One offset-log curve gives 1..200 about 60% of the travel and leaves
+        // about 40% for 200..1024. The offset avoids spending excessive space
+        // on the first few integer steps, as a strict log(value) scale would.
+        constexpr double harmonicLogOffset { 20.0 };
+        juce::NormalisableRange<double> harmonicRange (1.0, 1024.0,
+            [] (double low, double high, double position)
+            {
+                return juce::jlimit (low, high, (low + harmonicLogOffset)
+                    * std::pow ((high + harmonicLogOffset) / (low + harmonicLogOffset), position) - harmonicLogOffset);
+            },
+            [] (double low, double high, double value)
+            {
+                return std::log ((value + harmonicLogOffset) / (low + harmonicLogOffset))
+                    / std::log ((high + harmonicLogOffset) / (low + harmonicLogOffset));
+            },
+            [] (double low, double high, double value) { return juce::jlimit (low, high, std::round (value)); });
+        harmonicRange.interval = 1.0;
+        harmonics->slider.setNormalisableRange (harmonicRange);
         brightness = percent (tone, "Brightness", "design-brightness", settings.brightness);
         drive = percent (tone, "Drive", "design-drive", settings.drive);
         fold = percent (tone, "Fold", "design-fold", settings.fold);
@@ -602,7 +619,7 @@ struct WaveformWorkspace::Impl
         duration->slider.setTooltip ("Total file duration, not the duration of one step. Tempo/Beats and Match selection replace this only when their buttons are pressed.");
         symmetry->slider.setTooltip ("Position of the half-cycle boundary. 50% is symmetric; changing it stretches the two halves while preserving the full cycle length.");
         width->slider.setTooltip ("Pulse duty cycle, or the flat-top width of a trapezoid. Values near the extremes create narrow features.");
-        harmonics->slider.setTooltip ("Maximum harmonic retained in audio modes, also limited by this cycle's Nyquist limit. Larger values can produce a brighter waveform.");
+        harmonics->slider.setTooltip ("Maximum harmonic retained in audio modes, in whole-number steps. A gentle logarithmic scale gives 1-200 about 60% of the travel and 200-1024 the remaining 40%. The cycle retains at most (frames / 2 - 1) harmonics: 255 for 512 frames. Higher values can matter with longer cycles; type an exact value in the box.");
         brightness->slider.setTooltip ("Spectral brightness in audio modes. Reducing this lowers the higher harmonics.");
         drive->slider.setTooltip ("Nonlinear saturation before harmonic filtering. It can add harmonics; the waveform is normalized before final amplitude/offset.");
         fold->slider.setTooltip ("Wavefolding before harmonic filtering. It reshapes the audio cycle, adding richer harmonics.");
@@ -717,6 +734,8 @@ struct WaveformWorkspace::Impl
         auditionButton.onClick = [this]
         {
             if (settings.mode == Mode::modulation || auditionSuspended) return;
+            transposeLimitNotice.clear ();
+            deferredTransposeChange = false;
             if ((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
             {
                 if (owner.onStopAudition) owner.onStopAudition ();
@@ -742,10 +761,24 @@ struct WaveformWorkspace::Impl
             }
             updateAuditionControls ();
         };
-        auto monitorChanged = [this]
+        auto monitorChanged = [this] (bool transposeChanged)
         {
+            if (applying) return;
             auditionError.clear ();
-            if (settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange)
+            transposeLimitNotice.clear ();
+            // A pending source can have different hardware AND audible bounds.
+            // Apply controls to its matching render, never to the old source.
+            // Only a deliberate pitch gesture on a running (not already
+            // paused) transport may continue through that publication.
+            if (displayedGeneration != generation)
+            {
+                if (transposeChanged && canUpdateLive () && ! isRangePaused ()) deferredTransposeChange = true;
+                updateAuditionControls ();
+                return;
+            }
+            deferredTransposeChange = false;
+            if (settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange
+                && monitorTranspose.slider.getValue () <= WaveformAudition::maximumTransposeSemitones (auditionPayload->getSettings ()))
             {
                 const auto result { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
                 if (isRangePaused ()) rangePauseReason = result.getErrorMessage ();
@@ -757,8 +790,8 @@ struct WaveformWorkspace::Impl
             }
             updateAuditionControls ();
         };
-        monitorLevel.slider.onValueChange = monitorChanged;
-        monitorTranspose.slider.onValueChange = monitorChanged;
+        monitorLevel.slider.onValueChange = [monitorChanged] { monitorChanged (false); };
+        monitorTranspose.slider.onValueChange = [monitorChanged] { monitorChanged (true); };
         mode.box.onChange = [this]
         {
             if (applying) return;
@@ -838,6 +871,21 @@ struct WaveformWorkspace::Impl
     {
         const juce::ScopedValueSetter<bool> guard (applying, true);
         const bool cv { settings.mode == Mode::modulation }, bank { settings.mode == Mode::layers };
+        const auto maximumTranspose { WaveformAudition::maximumTransposeSemitones (settings) };
+        if (monitorTranspose.slider.getValue () > maximumTranspose)
+        {
+            // A rate/recipe/bank edit is not a transpose gesture. Stop before
+            // clamping so this automatic correction cannot resume a pause or
+            // quietly retune a playing monitor. Start remains explicit.
+            clearAudition (false);
+            monitorTranspose.slider.setValue (maximumTranspose, juce::dontSendNotification);
+            transposeLimitNotice = "Transpose reduced to +" + juce::String (maximumTranspose, 2)
+                                 + " st to match A8's pitch limit.\nAudition stopped; press Start audition when ready.";
+        }
+        if (! juce::approximatelyEqual (monitorTranspose.slider.getMaximum (), maximumTranspose))
+            monitorTranspose.slider.setRange (-48, maximumTranspose, 0.01);
+        monitorTranspose.slider.setTooltip ("Monitor-only transposition, -48 to +" + juce::String (maximumTranspose, 2)
+            + " semitones for this design. The upper limit follows the exported sample rate: +72 st at 48 kHz, +60 st at 96 kHz; positive bank detuning uses part of that total A8 pitch range. If a design change lowers the limit below the current value, Transpose is clamped and audition stops. Outside the monitor frequency range, playback pauses until you move Transpose back into range or press Stop. Does not change the generated cycle, recipe, or preset.");
         mode.box.setSelectedId (static_cast<int> (settings.mode) + 1, juce::dontSendNotification);
         shape.box.clear (juce::dontSendNotification); preset.box.clear (juce::dontSendNotification);
         for (int i { 0 }; i <= (cv ? 8 : 4); ++i)
@@ -1080,6 +1128,8 @@ struct WaveformWorkspace::Impl
         }
         auditionError.clear ();
         rangePauseReason.clear ();
+        transposeLimitNotice.clear ();
+        deferredTransposeChange = false;
     }
 
     bool isRangePaused () const
@@ -1103,10 +1153,11 @@ struct WaveformWorkspace::Impl
         auditionButton.setEnabled (! cv && ! auditionSuspended && (active || paused || (auditionPayload && displayedGeneration == generation && owner.onStartAudition)));
         monitorLevel.setEnabled (! cv); monitorTranspose.setEnabled (! cv);
         auditionTitle.setText (cv ? "CV - VISUAL ONLY" : "LIVE AUDITION", juce::dontSendNotification);
-        const auto warn { cv || paused || auditionError.isNotEmpty () };
+        const auto warn { cv || paused || auditionError.isNotEmpty () || transposeLimitNotice.isNotEmpty () };
         Theme::bindColour (auditionHint, juce::Label::textColourId, [warn] { return warn ? Theme::warning : Theme::muted; });
         auditionHint.setText (cv ? "CV speaker audition is disabled. Check DC/slow CV with a suitable meter or scope, not speakers."
                               : paused ? "Audition paused: Transpose is outside the monitor frequency range.\nMove it back into range to resume, or press Stop audition."
+                              : transposeLimitNotice.isNotEmpty () ? transposeLimitNotice
                               : auditionError.isNotEmpty () ? auditionError
                               : active ? "Monitor loops continuously; edits update live. Level and transpose do not affect export."
                               : "Start at low speaker/headphone volume. Monitor loops continuously; level/transpose do not affect export.", juce::dontSendNotification);
@@ -1136,7 +1187,7 @@ struct WaveformWorkspace::Impl
         {
             std::lock_guard<std::mutex> lock (worker->mutex);
             if (worker->completedEpoch == auditionEpoch && worker->completedGeneration > displayedGeneration
-                && (worker->completedGeneration == generation || (worker->preview && canUpdateLive ())))
+                && (worker->completedGeneration == generation || (worker->preview && canUpdateLive () && ! deferredTransposeChange)))
             {
                 displayedGeneration = worker->completedGeneration;
                 completed = worker->preview;
@@ -1163,6 +1214,9 @@ struct WaveformWorkspace::Impl
         if (completed)
         {
             const bool wasAuditioning { owner.isAuditionActive && owner.isAuditionActive () };
+            const bool wasRangePaused { isRangePaused () };
+            const bool applyDeferredTranspose { deferredTransposeChange && displayedGeneration == generation && wasAuditioning && ! wasRangePaused };
+            if (displayedGeneration == generation) deferredTransposeChange = false;
             preview.data = completed;
             auditionPayload = std::move (completedAudition);
             auditionError = preparedError;
@@ -1174,10 +1228,12 @@ struct WaveformWorkspace::Impl
                 // outside the audible range. Surface the host's explanation
                 // immediately, without starting anything or probing a device
                 // for an idle/visual-only workspace.
-                // A paused render must not restart itself by reapplying the
-                // same monitor values. Only a subsequent transpose gesture
-                // may resume; explicit stop/device changes cancel that intent.
-                if (wasAuditioning && ! isRangePaused () && settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange)
+                // A render alone never resumes a pause. A deliberate pitch
+                // gesture deferred from a running transport can, however, be
+                // valid for this new source even if its previous pitch isn't.
+                if (wasAuditioning && ! wasRangePaused && (! isRangePaused () || applyDeferredTranspose)
+                    && displayedGeneration == generation && settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange
+                    && monitorTranspose.slider.getValue () <= WaveformAudition::maximumTransposeSemitones (auditionPayload->getSettings ()))
                 {
                     const auto monitor { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
                     if (monitor.failed ())

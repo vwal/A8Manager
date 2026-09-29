@@ -432,8 +432,8 @@ struct WaveformWorkspaceTestAccess
                    "Inaudible transpose pauses real playback but keeps Stop available after the fade");
         };
         settle (workspace);
-        check (transpose.getMinimum () == -48 && transpose.getMaximum () == 48,
-               "Monitor retains its full transpose range instead of clamping design-dependent limits");
+        check (transpose.getMinimum () == -48 && transpose.getMaximum () == 72,
+               "The 48 kHz monitor exposes hardware pitch headroom without narrowing to its current audible range");
         click (workspace, "Start audition");
         control<juce::ComboBox> (workspace, "design-shape").setSelectedId (3, juce::sendNotificationSync);
         settle (workspace);
@@ -514,6 +514,204 @@ struct WaveformWorkspaceTestAccess
         settle (workspace);
         cancelWith ([&] { click (workspace, "Supersaw (7 voices)"); });
         std::cout << "PASS: real waveform transpose range pause/resume, live cycle changes, retained Stop and lifecycle cancellation\n";
+    }
+
+    static void hardwareTransposeRangeWorkflow ()
+    {
+        WaveformAudition engine;
+        engine.prepareToPlay (48000.0);
+        int starts { 0 };
+        double forwardedTranspose { 0 };
+        WaveformWorkspace workspace;
+        workspace.setSize (975, 732);
+        workspace.onAuditionPayload = [&] (auto payload) { engine.setPayload (std::move (payload)); };
+        workspace.onStartAudition = [&] { ++starts; return engine.start (); };
+        workspace.onStopAudition = [&] { engine.setPlaying (false); };
+        workspace.onAuditionMonitorChange = [&] (double db, double semitones)
+        {
+            forwardedTranspose = semitones;
+            engine.setMonitorGain (juce::Decibels::decibelsToGain (db));
+            return engine.setTransposeSemitones (semitones);
+        };
+        workspace.isAuditionActive = [&] { return engine.isActive (); };
+        workspace.isAuditionPausedForRange = [&] { return engine.isPausedForRange (); };
+        auto& transpose { control<juce::Slider> (workspace, "design-monitor-transpose-value") };
+        auto& rate { control<juce::ComboBox> (workspace, "design-rate") };
+        auto& frames { control<juce::ComboBox> (workspace, "design-frames") };
+        auto& mode { control<juce::ComboBox> (workspace, "design-mode") };
+        auto& audition { control<juce::Button> (workspace, "design-audition") };
+        auto& hint { control<juce::Label> (workspace, "design-audition-hint") };
+        auto render = [&]
+        {
+            juce::AudioBuffer<float> output (2, 4096);
+            output.clear ();
+            engine.process ({ &output, 0, output.getNumSamples () });
+            workspace.timerCallback ();
+        };
+        auto stopped = [&]
+        {
+            settle (workspace);
+            render ();
+            check (! engine.isActive () && ! engine.isPausedForRange () && audition.getButtonText () == "Start audition",
+                   "A hardware-range clamp stops audition and cancels automatic-resume intent");
+        };
+        frames.setSelectedId (8192, juce::sendNotificationSync);
+        settle (workspace);
+        check (transpose.getMinimum () == -48 && transpose.getMaximum () == 72 && transpose.getInterval () == 0.01,
+               "48 kHz source exposes -48 through +72 semitones at hundredth-semitone precision");
+        transpose.setValue (72, juce::sendNotificationSync);
+        check (! engine.isActive (), "Selecting extended hardware headroom does not start idle audition");
+        click (workspace, "Start audition");
+        render ();
+        check (engine.isActive () && starts == 1, "An 8192-frame 48 kHz cycle really auditions at +72 semitones");
+
+        rate.setSelectedId (2, juce::sendNotificationSync);
+        check (transpose.getMaximum () == 60 && transpose.getValue () == 60,
+               "Changing to 96 kHz immediately clamps the displayed monitor transpose to +60");
+        stopped ();
+        check (hint.getText ().contains ("Transpose reduced to +60.00") && hint.getText ().contains ("Audition stopped"),
+               "The clamp explanation survives the replacement render and explains that Start is required");
+        snapshot (workspace, "waveform-workspace-transpose-clamped");
+        rate.setSelectedId (1, juce::sendNotificationSync);
+        stopped ();
+        check (transpose.getMaximum () == 72 && transpose.getValue () == 60 && starts == 1,
+               "Restoring the 48 kHz range does not restore the old high value or restart playback");
+        transpose.setValue (72, juce::sendNotificationSync);
+        check (! engine.isActive (), "A deliberate transpose edit after a range clamp still requires explicit Start");
+        click (workspace, "Start audition");
+        render ();
+        transpose.setValue (36, juce::sendNotificationSync);
+        rate.setSelectedId (2, juce::sendNotificationSync);
+        settle (workspace);
+        render ();
+        check (transpose.getMaximum () == 60 && transpose.getValue () == 36 && engine.isActive () && starts == 2,
+               "A rate edit retaining an already-valid transpose continues live without a fresh Start");
+
+        rate.setSelectedId (1, juce::sendNotificationSync);
+        transpose.setValue (72, juce::sendNotificationSync);
+        check (transpose.getMaximum () == 72 && forwardedTranspose == 36 && engine.isActive () && ! engine.isPausedForRange ()
+               && starts == 2 && ! hint.getText ().contains ("unavailable"),
+               "Newly available headroom is not sent to the older restrictive payload while its replacement is pending");
+        settle (workspace);
+        render ();
+        check (forwardedTranspose == 72 && engine.isActive () && ! engine.isPausedForRange () && starts == 2,
+               "The newly rendered 48 kHz payload applies the pending high transpose without a false stop or restart");
+        transpose.setValue (36, juce::sendNotificationSync);
+        rate.setSelectedId (2, juce::sendNotificationSync);
+        settle (workspace);
+        render ();
+
+        transpose.setValue (-48, juce::sendNotificationSync);
+        render ();
+        rate.setSelectedId (1, juce::sendNotificationSync);
+        settle (workspace);
+        render ();
+        check (transpose.getMaximum () == 72 && engine.isPausedForRange () && ! engine.isActive (),
+               "Increasing hardware headroom cannot consume a monitor-frequency pause");
+        click (workspace, "Stop audition");
+
+        mode.setSelectedId (3, juce::sendNotificationSync);
+        rate.setSelectedId (2, juce::sendNotificationSync);
+        frames.setSelectedId (8192, juce::sendNotificationSync);
+        auto& voices { control<juce::Slider> (workspace, "design-voices-value") };
+        auto& firstDetune { control<juce::Slider> (workspace, "design-voice-1-0-value") };
+        auto& secondDetune { control<juce::Slider> (workspace, "design-voice-2-0-value") };
+        voices.setValue (2, juce::sendNotificationSync);
+        firstDetune.setValue (-700, juce::sendNotificationSync);
+        secondDetune.setValue (350, juce::sendNotificationSync);
+        settle (workspace);
+        check (std::abs (transpose.getMaximum () - 56.5) < 1.0e-9,
+               ("The highest positive active voice detune reserves bank headroom at 96 kHz: actual "
+                + juce::String (transpose.getMaximum (), 12) + ", rate " + juce::String (workspace.getSettings ().sampleRate, 0)
+                + ", detunes " + juce::String (workspace.getSettings ().voices[0].detuneCents, 12) + ", "
+                + juce::String (workspace.getSettings ().voices[1].detuneCents, 12)).toRawUTF8 ());
+        transpose.setValue (56.5, juce::sendNotificationSync);
+        click (workspace, "Start audition");
+        render ();
+        check (engine.isActive (), "A detuned bank auditions at its hardware-aware common transpose ceiling");
+        secondDetune.setValue (350.1, juce::sendNotificationSync);
+        check (std::abs (transpose.getMaximum () - 56.49) < 1.0e-9 && std::abs (transpose.getValue () - 56.49) < 1.0e-9,
+               "Fractional positive detune rounds the UI ceiling inward before clamping the current value");
+        stopped ();
+        secondDetune.setValue (-100, juce::sendNotificationSync);
+        stopped ();
+        check (transpose.getMaximum () == 60, "Negative-only bank detuning does not extend the nominal source-rate ceiling");
+        voices.setValue (1, juce::sendNotificationSync);
+        secondDetune.setValue (1200, juce::sendNotificationSync);
+        check (transpose.getMaximum () == 60, "Inactive bank voices do not consume transpose headroom");
+        voices.setValue (2, juce::sendNotificationSync);
+        check (transpose.getMaximum () == 48 && transpose.getValue () == 48,
+               "Enabling a higher-detuned voice immediately reserves its hardware headroom");
+        rate.setSelectedId (1, juce::sendNotificationSync);
+        check (transpose.getMaximum () == 60, "The same +12-semitone bank offset is deducted from the 48 kHz ceiling");
+        secondDetune.setValue (-100, juce::sendNotificationSync);
+        check (transpose.getMaximum () == 72, "Negative-only bank headroom remains capped at +72 for 48 kHz");
+
+        rate.setSelectedId (2, juce::sendNotificationSync);
+        secondDetune.setValue (350, juce::sendNotificationSync);
+        mode.setSelectedId (1, juce::sendNotificationSync);
+        settle (workspace);
+        transpose.setValue (72, juce::sendNotificationSync);
+        click (workspace, "Start audition");
+        render ();
+        mode.setSelectedId (3, juce::sendNotificationSync);
+        check (std::abs (transpose.getMaximum () - 56.5) < 1.0e-9 && std::abs (transpose.getValue () - 56.5) < 1.0e-9,
+               "Restoring a cached 96 kHz bank recomputes and clamps its own detune-aware range");
+        stopped ();
+        mode.setSelectedId (2, juce::sendNotificationSync);
+        const auto startsBeforeCv { starts };
+        audition.onClick (); // A queued action must retain the CV safety guard.
+        check (! transpose.isEnabled () && ! audition.isEnabled () && starts == startsBeforeCv && ! engine.isActive (),
+               "The extended range never enables CV monitoring or a stale CV audition request");
+        mode.setSelectedId (1, juce::sendNotificationSync);
+        stopped ();
+        check (transpose.getMaximum () == 72, "Returning to the cached audio source restores its hardware ceiling without playback");
+
+        frames.setSelectedId (64, juce::sendNotificationSync);
+        rate.setSelectedId (2, juce::sendNotificationSync);
+        settle (workspace);
+        transpose.setValue (0, juce::sendNotificationSync);
+        click (workspace, "Start audition");
+        render ();
+        const auto startsBeforePendingTranspose { starts };
+        rate.setSelectedId (1, juce::sendNotificationSync);
+        transpose.setValue (48, juce::sendNotificationSync);
+        check (std::abs (forwardedTranspose) < 1.0e-9 && engine.isActive () && ! engine.isPausedForRange (),
+               ("A pending 48 kHz transpose gesture cannot apply an ultrasonic 24 kHz pitch to the old 96 kHz short cycle: forwarded "
+                + juce::String (forwardedTranspose, 16) + ", active " + juce::String (static_cast<int> (engine.isActive ()))
+                + ", paused " + juce::String (static_cast<int> (engine.isPausedForRange ()))).toRawUTF8 ());
+        settle (workspace);
+        render ();
+        check (workspace.getSettings ().sampleRate == 48000 && forwardedTranspose == 48
+               && engine.isActive () && ! engine.isPausedForRange () && starts == startsBeforePendingTranspose,
+               "Publishing the 48 kHz short cycle applies its valid 12 kHz gesture without a false pause or fresh Start");
+        rate.setSelectedId (2, juce::sendNotificationSync);
+        transpose.setValue (0, juce::sendNotificationSync);
+        check (forwardedTranspose == 48 && engine.isActive () && ! engine.isPausedForRange (),
+               "The reverse pending source change retains the old safe pitch until its requested transpose can be applied coherently");
+        settle (workspace);
+        render ();
+        check (workspace.getSettings ().sampleRate == 96000 && std::abs (forwardedTranspose) < 1.0e-9
+               && engine.isActive () && ! engine.isPausedForRange () && starts == startsBeforePendingTranspose,
+               "A deliberate pending transpose gesture avoids a transient range pause when the new source invalidates the previous pitch");
+        rate.setSelectedId (1, juce::sendNotificationSync);
+        transpose.setValue (48, juce::sendNotificationSync);
+        click (workspace, "Stop audition");
+        stopped ();
+        check (starts == startsBeforePendingTranspose && transpose.getValue () == 48,
+               "Explicit Stop cancels a deferred transpose gesture even when its matching render arrives later");
+        transpose.setValue (0, juce::sendNotificationSync);
+        check (! engine.isActive () && ! engine.isPausedForRange (),
+               "Later monitor edits cannot revive the explicitly stopped pending gesture");
+        click (workspace, "Start audition");
+        render ();
+        transpose.setValue (72, juce::sendNotificationSync);
+        render ();
+        check (transpose.getMaximum () == 72 && engine.isPausedForRange () && ! engine.isActive () && audition.getButtonText () == "Stop audition",
+               "The independent monitor-frequency guard still pauses an ultrasonic short cycle within hardware headroom");
+        transpose.setValue (0, juce::sendNotificationSync);
+        check (engine.isActive () && ! engine.isPausedForRange (), "A safe transpose gesture can resume that frequency pause");
+        std::cout << "PASS: hardware-aware UI transpose ranges, sample-rate and bank headroom, safe clamps, cached modes and independent monitor guard\n";
     }
 
     static void auditionAndExpandedPreview ()
@@ -775,6 +973,56 @@ struct WaveformWorkspaceTestAccess
         settle (workspace);
         check (workspace.getSettings ().mode == Mode::oscillator && validate (workspace.getSettings ()).wasOk (), "Audio-cycle workspace starts with a valid design");
         check (control<juce::Label> (workspace, "design-summary").getText ().contains ("Base"), "Actual background render publishes duration/base note");
+        auto& harmonics { control<juce::Slider> (workspace, "design-harmonics-value") };
+        const auto beforeHarmonics { juce::JSON::toString (toJson (workspace.getSettings ())) };
+        const auto originalHarmonics { harmonics.getValue () };
+        check (harmonics.getMinimum () == 1 && harmonics.getMaximum () == 1024 && harmonics.getInterval () == 1,
+               "Nonlinear harmonics gesture preserves the full integer recipe range");
+        struct HarmonicAnchor { double value, position; };
+        const HarmonicAnchor anchors[] {
+            { 1, 0.0 }, { 2, 0.011908994948754494 }, { 3, 0.023288522850766418 },
+            { 4, 0.034183666074970635 }, { 5, 0.04463398342557704 },
+            { 20, 0.1649536086491215 }, { 50, 0.3082136978991229 },
+            { 100, 0.44619530682634206 }, { 200, 0.6013643910250979 },
+            { 300, 0.6972848746240374 }, { 512, 0.8274140228064236 }, { 1024, 1.0 }
+        };
+        for (const auto& anchor : anchors)
+        {
+            check (std::abs (harmonics.valueToProportionOfLength (anchor.value) - anchor.position) < 1.0e-10
+                   && std::abs (harmonics.proportionOfLengthToValue (anchor.position) - anchor.value) < 1.0e-10,
+                   "The whole harmonic range follows the offset-logarithmic curve, including its exact endpoints");
+        }
+        auto previous { 0.0 };
+        for (int step { 0 }; step <= 1000; ++step)
+        {
+            const auto position { step / 1000.0 };
+            const auto value { harmonics.proportionOfLengthToValue (position) };
+            check (std::isfinite (value) && value > previous && value >= 1 && value <= 1024
+                   && std::abs (harmonics.valueToProportionOfLength (value) - position) < 1.0e-10,
+                   "Harmonic mapping is bounded, continuous, monotonic and invertible over its whole travel");
+            previous = value;
+        }
+        const auto lowerTravel { harmonics.valueToProportionOfLength (200) };
+        check (harmonics.valueToProportionOfLength (5) > 0.04 && harmonics.valueToProportionOfLength (5) < 0.05,
+               "Harmonics one through five use less than five percent of travel, without a separate coarse segment");
+        check (lowerTravel > 0.60 && lowerTravel < 0.61 && 1.0 - lowerTravel > 0.39 && 1.0 - lowerTravel < 0.40,
+               "Harmonics one through 200 receive about sixty percent of travel while the upper range keeps about forty percent");
+        for (const auto value : { 1, 2, 3, 4, 5, 20, 100, 200, 300, 511, 1024 })
+        {
+            harmonics.setValue (value, juce::sendNotificationSync);
+            check (workspace.getSettings ().harmonics == value && harmonics.getValue () == value,
+                   "Exact harmonic values still update the generation model without reinterpretation or clamping");
+        }
+        for (const auto value : { 1.2, 4.6, 99.8, 199.6, 511.2, 1023.8 })
+        {
+            harmonics.setValue (value, juce::sendNotificationSync);
+            const auto expected { std::round (value) };
+            check (harmonics.getValue () == expected && workspace.getSettings ().harmonics == static_cast<int> (expected),
+                   "Fractional harmonic gestures still snap to integer values across the logarithmic range");
+        }
+        harmonics.setValue (originalHarmonics, juce::sendNotificationSync);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == beforeHarmonics,
+               "Slider mapping alone does not alter any saved design parameters");
         control<juce::Slider> (workspace, "design-amplitude-value").setValue (65, juce::sendNotificationSync);
         control<juce::Slider> (workspace, "design-offset-value").setValue (-10, juce::sendNotificationSync);
         control<juce::Slider> (workspace, "design-phase-value").setValue (45, juce::sendNotificationSync);
@@ -871,6 +1119,7 @@ void testWaveformWorkspace ()
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
     WaveformWorkspaceTestAccess::rangePauseWorkflow ();
+    WaveformWorkspaceTestAccess::hardwareTransposeRangeWorkflow ();
     WaveformWorkspaceTestAccess::assignmentWorkflow ();
     WaveformWorkspaceTestAccess::recallWorkflow ();
 }

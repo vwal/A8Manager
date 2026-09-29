@@ -747,9 +747,16 @@ Use **Start audition** to hear an Audio Cycle or the complete Layer Bank while
 shaping it. Bank audition includes each voice's detune, phase, pan and level.
 Monitor level and transpose affect listening only, not exported WAVs or presets;
 the monitor repeats continuously regardless of the export playback mode.
-Transpose keeps its full −48 to +48 semitone range. During playback, moving it
-outside the monitor's frequency limits **pauses** the whole bank; returning it
-into range resumes automatically. **Stop audition** cancels that pending resume.
+Transpose runs from −48 semitones to a source-rate-dependent ceiling: +72 at
+48 kHz or +60 at 96 kHz, reduced by positive Layer Bank detuning. These are
+monitor-only combined-pitch limits, not changes to the exported preset. If a
+rate/recipe/mode/bank change lowers the ceiling below the current value, the
+control is clamped and audition stops; press Start explicitly afterward.
+Increasing the range never starts playback by itself.
+
+During playback, moving Transpose outside the monitor's frequency limits
+**pauses** the whole bank; returning it into range resumes automatically.
+**Stop audition** cancels that pending resume.
 Changing mode/shape or starting point, recalling a design,
 leaving the designer, changing audio device or starting Samples playback also
 cancels it. Adjusting Transpose while already stopped never starts sound.

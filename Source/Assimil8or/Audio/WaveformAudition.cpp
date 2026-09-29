@@ -67,7 +67,9 @@ struct WaveformAudition::State
         // Compare in semitones so a caller using the exact computed boundary
         // gets an inclusive 20 Hz floor and an exclusive upper limit, without
         // exp2/log2 roundoff accidentally admitting Nyquist.
-        return std::isfinite (semitones) && transposeRange (payload, lower, upper) && semitones >= lower && semitones < upper;
+        return std::isfinite (semitones) && payload != nullptr && semitones >= -48.0
+            && semitones <= WaveformAudition::maximumTransposeSemitones (payload->settings)
+            && transposeRange (payload, lower, upper) && semitones >= lower && semitones < upper;
     }
 
     juce::String rangeError () const
@@ -75,15 +77,21 @@ struct WaveformAudition::State
         juce::String message { pausedForRange.load () ? "Audition paused: " : "Audition unavailable: " };
         message << "every voice must be at least 20 Hz and below " << juce::String (std::min (20000.0, rate * 0.5), 0)
                 << " Hz (the lower of 20 kHz and device Nyquist).";
+        const auto* payload { candidate () };
+        const auto hardwareMaximum { payload != nullptr ? WaveformAudition::maximumTransposeSemitones (payload->settings) : 72.0 };
+        if (payload != nullptr)
+            message << " The A8 total-pitch limit permits monitor transpose up to +" << juce::String (hardwareMaximum, 2)
+                    << " st for this " << juce::String (payload->settings.sampleRate, 0) << " Hz source, including positive bank detune.";
         double lower {}, upper {};
         if (transposeRange (candidate (), lower, upper))
         {
             // Round inward to give genuinely permitted 0.01-st settings.
             const auto minimum { std::max (-48.0, std::ceil (lower * 100.0) / 100.0) };
-            const auto maximum { std::min (48.0, (std::ceil (upper * 100.0) - 1.0) / 100.0) };
+            const auto maximum { std::min (hardwareMaximum, (std::ceil (upper * 100.0) - 1.0) / 100.0) };
             if (minimum <= maximum)
                 message << " At 0.01 st steps, use " << juce::String (minimum, 2) << " to " << juce::String (maximum, 2) << " st for this design.";
-            else message << " No transpose within -48..48 st puts every voice in range; adjust cycle length or bank detuning.";
+            else message << " No transpose within -48..+" << juce::String (hardwareMaximum, 2)
+                         << " st puts every voice in range; adjust cycle length or bank detuning.";
         }
         if (pausedForRange.load ()) message << " Moving transpose back into range resumes audition; Stop cancels this.";
         return message;
@@ -191,6 +199,37 @@ struct WaveformAudition::State
 
 WaveformAudition::WaveformAudition () : state (std::make_unique<State> ()) {}
 WaveformAudition::~WaveformAudition () = default;
+
+double WaveformAudition::maximumTransposeSemitones (const WaveformDesign::Settings& settings) noexcept
+{
+    const auto ceiling { settings.sampleRate == 48000.0 ? 72.0 : settings.sampleRate == 96000.0 ? 60.0
+                        : settings.sampleRate == 192000.0 ? 48.0 : -48.0 };
+    if (ceiling < 0.0) return -48.0;
+    double highestPositiveDetune { 0.0 };
+    if (settings.mode == WaveformDesign::Mode::layers)
+    {
+        if (settings.voiceCount < 1 || settings.voiceCount > static_cast<int> (settings.voices.size ())) return -48.0;
+        for (int index { 0 }; index < settings.voiceCount; ++index)
+        {
+            const auto detune { settings.voices[static_cast<size_t> (index)].detuneCents };
+            if (! std::isfinite (detune)) return -48.0;
+            highestPositiveDetune = std::max (highestPositiveDetune, detune);
+        }
+    }
+    // JUCE's 0.1-cent control spans -2400..2400. Its range arithmetic (and
+    // fused multiply/add on some builds) can leave a nominal whole cent a few
+    // ulps above the integer, including near zero after subtracting the range
+    // start. Only absorb roundoff at that arithmetic scale; real fractional
+    // cents still reserve the next entire 0.01-st transpose step.
+    constexpr double controlSpan { 4800.0 };
+    constexpr double roundoffTolerance { 8.0 * std::numeric_limits<double>::epsilon () * controlSpan };
+    const auto nearestCent { std::round (highestPositiveDetune) };
+    if (std::abs (highestPositiveDetune - nearestCent) <= roundoffTolerance)
+        highestPositiveDetune = nearestCent;
+    // One transpose step is one cent. Round the reserved detune up so the
+    // available transpose rounds inward for an actual fractional-cent voice.
+    return std::max (-48.0, (ceiling * 100.0 - std::ceil (highestPositiveDetune)) / 100.0);
+}
 
 juce::Result WaveformAudition::preparePayload (const WaveformDesign::Settings& settings,
                                               const WaveformDesign::Render& rendered, PayloadPtr& payload)
@@ -337,10 +376,15 @@ void WaveformAudition::setMonitorGain (double gain)
 juce::Result WaveformAudition::setTransposeSemitones (double semitones)
 {
     const juce::ScopedLock guard (state->lock);
-    if (! std::isfinite (semitones) || semitones < -48.0 || semitones > 48.0)
+    const auto* payload { state->candidate () };
+    const auto maximum { payload != nullptr ? maximumTransposeSemitones (payload->settings) : 72.0 };
+    if (! std::isfinite (semitones) || semitones < -48.0 || semitones > maximum)
     {
         state->stopWithRamp ();
-        return juce::Result::fail ("Monitor transpose must be finite and within -48..48 semitones.");
+        auto message { "Monitor transpose must be finite and within -48..+" + juce::String (maximum, 2) + " semitones." };
+        if (payload != nullptr)
+            message << " This " << juce::String (payload->settings.sampleRate, 0) << " Hz source's A8 total-pitch limit includes positive bank detune.";
+        return juce::Result::fail (message);
     }
     const auto changed { state->transpose != semitones };
     state->transpose = semitones;

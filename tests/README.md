@@ -294,7 +294,8 @@ audio devices or hardware are used.
 - **WaveformDesignRegression** checks the DaisySP PolyBLEP polynomial's edge
   conventions and source alias-energy reduction against naive saw/pulse shapes,
   corrected audio phase/polarity, layer consistency and unchanged sharp CV levels.
-  It also checks all audio shapes, harmonic filtering after
+  It also checks the 255-partial cap for 512-frame cycles, useful partials above
+  300 on longer cycles, unchanged 1,024-harmonic recipe recall, and harmonic filtering after
   drive/fold, phase/gain, layer metadata separation, deterministic CV/random
   curves, preserved DC/unipolar offsets, clipping and boundary statistics,
   envelope timing, drawn interpolation, validation and recipe round-trips.
@@ -316,10 +317,21 @@ audio devices or hardware are used.
   `A8MANAGER_TEST_ARTIFACTS` (`cv-zone-audition-disabled.png`).
 - **WaveformWorkspaceRegression** drives the designer's real controls and
   background preview, including CV matching, curve editing and layer settings.
+  The harmonic slider uses one gentle logarithmic mapping, with approximately
+  60% of travel for 1–200 and 40% for 200–1,024. Tests check its anchors,
+  monotonic round-trip, exact integer entry and preserved 1–1,024 range.
   A fake audio host checks explicit start/stop, monitor-only controls, live
   updates during continuous dragging, bank payloads, CV exclusion and workspace
   lifecycle. A second path connects the real monitor engine to the workspace:
-  the full ±48-semitone slider remains available, out-of-range playback pauses,
+  the slider retains its −48-semitone floor and uses a source-rate-dependent
+  ceiling (+72 at 48 kHz, +60 at 96 kHz), reduced by positive active-bank detune.
+  Rate, mode and bank changes refresh that ceiling; forced downward
+  clamps stop playback, preserve their explanation across renders and require
+  an explicit Start. Expanding the range cannot start idle or paused audio.
+  Pending render checks apply deliberate Transpose changes to their matching
+  source, not an older source with different pitch/frequency bounds, without
+  reviving a previously stopped or paused monitor. Independently,
+  out-of-frequency-range playback pauses,
   Stop remains accessible after the fade, and an intentional valid Transpose
   change resumes. Gain-only edits and newly valid renders cannot restart it;
   failed Start never arms it. Shape/starting-point, mode, navigation and device
@@ -328,7 +340,13 @@ audio devices or hardware are used.
   optional offscreen screenshots use `A8MANAGER_TEST_ARTIFACTS`.
 - **WaveformAuditionRegression** checks the production monitor's generated audio
   blocks, including tuning, layered voice mixing, rate conversion, DC removal,
-  fades, live updates, bounded output and invalid/CV rejection. Range-pause tests
+  fades, live updates, bounded output and invalid/CV rejection. Hardware-pitch
+  checks enforce source-rate ceilings independently of device rate, reserve
+  positive bank detune (rounded inward to the control's 0.01-semitone steps),
+  exclude inactive voices and do not increase the ceiling for negative-only
+  banks. They check real output frequency at the extended limits and explicit
+  restart after rejected controls. The 192 kHz helper case does not enable that
+  unsupported generator export rate. Range-pause tests
   check the inclusive 20 Hz floor, exclusive 20 kHz/device-Nyquist ceiling,
   both detuned-bank extremes, full silence after the fade, smooth quick returns
   and resumption at the intended pitch. Idle edits, failed starts, explicit
