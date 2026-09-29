@@ -287,20 +287,26 @@ Nudge and Match Opposite Boundary remain submenus below a separator:
   this makes the last audible frame the one closest to zero. At high zoom, the
   end handle therefore appears one frame after the chosen zero/near-zero sample.
   If none exists, the marker stays put and the footer explains why. A zero crossing
-  can help a join but does not guarantee a click-free loop.
+  can help a join but does not guarantee a click-free loop. Moves over **50 ms**
+  require confirmation, just like boundary matching below. In Loop **Length**
+  mode, nudging Loop Start also moves Loop End to preserve the length; in **End**
+  mode, Loop End stays fixed. The confirmation explains this before a large move.
 - **Match Opposite Boundary:** move a chosen sample/loop START to match its END,
   or END to match its START, **even when that amplitude is not zero**. For example,
   **Loop End to Start** keeps Loop Start fixed and adjusts only Loop End. Each
   of the four marker choices has **Left <<** and **Right >>** options: Left
-  searches earlier in the file; Right searches later. The search covers the
-  **whole valid marker range in the chosen direction**, using the displayed L/R
-  side. To retain material near an edge, move a START left or an END right
-  rather than trimming inward. It
-  chooses the smallest amplitude difference between the first and last audible
-  frames; equally good matches favour the nearest position. If the existing join
-  is already matched, or no improvement exists in the chosen direction, nothing
-  moves and the footer reports this; the search never falls back to the other
-  direction. Moves of **50 ms or less** happen immediately. Larger moves show a
+  searches earlier in the file; Right searches later. The search stops at the
+  **nearest crossing of the opposite boundary's amplitude** in the chosen
+  direction, using the displayed L/R side. When that level falls between two
+  samples, it chooses the sample whose amplitude is closer to the target;
+  equally good samples favour the nearer position. It does **not** skip a nearby
+  crossing to chase a slightly better match seconds away. If this nearest
+  crossing would not improve the join, the best sample is outside the allowed
+  movement, the join is already exact, or there is no crossing, nothing moves.
+  The search never falls back to the other direction or to a globally best match.
+  To retain material near an edge, move a START left or an END right rather than
+  trimming inward. There is no artificial maximum search distance beyond the
+  marker's valid range. Moves of **50 ms or less** happen immediately. Larger moves show a
   **Yes/No confirmation** naming the marker, direction and distance; No leaves
   the markers untouched. The distance is measured at the source sample rate,
   independent of PITCH OFFSET and audition speed. Confirmation is discarded if
@@ -312,6 +318,11 @@ Nudge and Match Opposite Boundary remain submenus below a separator:
   a perfectly smooth-looking join is not a guarantee of a click-free loop.
 - **Set Marker Here** (right-click menu only): place a chosen marker at the
   right-clicked source position, clamped to its valid limits.
+
+The same **50 ms confirmation rule** applies to both matching and zero-crossing
+nudges. Zero crossings are often nearby in audio, but slow or offset waveforms
+can have distant crossings or none at all. **No**, Enter or Escape cancels a
+prompted move without changing the markers.
 
 A right-click without movement opens the menu; right-button dragging continues
 to zoom. Placing, nudging or matching a marker selects its Sample/Loop pair. A menu opened

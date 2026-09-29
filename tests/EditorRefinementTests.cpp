@@ -102,16 +102,19 @@ namespace
         check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 162, "Nonzero END join matches START 38 frames earlier, with exclusive-end offset");
         check (WaveformPresentation::zeroCrossing (data, 0, 200, 24, 400, false, true) == 175, "True zero nudge remains distinct from amplitude matching");
         check (matchBoundary (data, 1, 200, 20, 24, 400, 1000, true, false) == 186, "Join matching uses the displayed stereo side");
+        for (auto i { 21 }; i < 31; ++i) data.setSample (0, i, -0.25f);
         check (matchBoundary (data, 0, 20, 200, 0, 196, 1000, false, true) == 31, "START can match the fixed END's last audible frame");
         check (matchBoundary (data, 0, 20, 200.5, 0, 196, 1000, false, true) == 31, "Fractional fixed END uses the same final frame as the join preview");
         check (! matchBoundary (data, 0, 162, 20, 24, 400, 1000, true, false), "An already matched boundary stays put");
         check (! matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false), "Do not move outside legal marker limits");
         check (matchBoundary (data, 0, 200, 20, 24, 400, 500, true, false) == 162, "Matches beyond 50 ms are no longer excluded");
         data.setSample (0, 198, -0.24f);
-        check (matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false) == 199, "Choose a closer amplitude even when no exact match exists");
+        check (! matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false), "A local minimum that never reaches the target amplitude is not a crossing");
+        data.setSample (0, 197, -0.40f);
+        check (matchBoundary (data, 0, 200, 20, 170, 210, 1000, true, false) == 199, "Choose the better bracketing frame at the nearest target crossing");
         data.setSample (0, 204, -0.25f);
         check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, true) == 205, "Rightward END matching chooses a match on the requested side");
-        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 162, "Leftward END matching ignores an equally good closer rightward match");
+        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 199, "A nearby approximate crossing beats a distant exact match");
         data.setSample (0, 399, -0.25f);
         check (matchBoundary (data, 0, 390, 20, 24, 400, 1000, true, true) == 400, "Matching an exclusive EOF is safe");
         data.setSample (0, 0, -0.25f);
@@ -119,7 +122,7 @@ namespace
         const auto nan { std::numeric_limits<float>::quiet_NaN () };
         data.setSample (0, 204, nan);
         data.setSample (0, 199, nan);
-        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 162, "Nonfinite candidates are skipped and a nonfinite current boundary can be repaired");
+        check (matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, false) == 199, "A real finite crossing can repair a nonfinite current boundary");
         data.setSample (0, 20, nan);
         check (! matchBoundary (data, 0, 200, 20, 24, 400, 1000, true, true), "Nonfinite opposite endpoint cannot be matched");
         check (! matchBoundary (data, 2, 200, 20, 24, 400, 1000, true, false) &&
@@ -137,10 +140,10 @@ namespace
         {
             const auto offset { endBoundary ? 1 : 0 };
             const auto opposite { endBoundary ? 20.0 : 390.0 };
-            auto reset = [&]
+            auto reset = [&] (float scale = 1.0f)
             {
-                for (auto i { 0 }; i < 400; ++i) data.setSample (0, i, 0.6f);
-                data.setSample (0, endBoundary ? 20 : 389, -0.25f);
+                for (auto i { 0 }; i < 400; ++i) data.setSample (0, i, 0.6f * scale);
+                data.setSample (0, endBoundary ? 20 : 389, -0.25f * scale);
             };
             auto candidate = [&] (int marker, float value) { data.setSample (0, marker - offset, value); };
             auto match = [&] (double moving, bool right, juce::int64 minimum = 0, juce::int64 maximum = 400, double rate = 1000.0)
@@ -149,16 +152,53 @@ namespace
                                       std::min (maximum, juce::int64 { endBoundary ? 400 : 386 }), rate, endBoundary, right);
             };
 
+            for (const auto right : { false, true })
+            {
+                const auto direction { right ? 1 : -1 };
+                const auto near { 200 + direction * 5 };
+                const auto far { 200 + direction * 100 };
+                for (const auto scale : { 1.0f, 0.00001f })
+                {
+                    reset (scale);
+                    candidate (near, -0.24f * scale);
+                    candidate (near + direction, -0.40f * scale);
+                    candidate (far, -0.25f * scale);
+                    candidate (200 - direction, -0.25f * scale);
+                    check (match (200, right) == near, "Nearest crossing beats exact matches farther away or on the wrong side, even in quiet audio");
+                }
+
+                reset ();
+                candidate (near, 0.0f); candidate (near + direction, -0.5f);
+                check (match (200, right) == near, "Equal-error bracketing frames choose the nearer marker in either direction");
+                candidate (near, -0.1f); candidate (near + direction, -0.30f);
+                check (match (200, right) == near + direction, "The farther bracketing frame wins when its amplitude matches better");
+
+                reset ();
+                candidate (near, -0.20f); candidate (far, -0.25f);
+                check (match (200, right) == far, "A local amplitude minimum is skipped when it never crosses the target");
+                candidate (far, -0.20f);
+                check (! match (200, right), "No target crossing produces no move, even with closer amplitude minima");
+
+                reset ();
+                candidate (200, -0.24f); candidate (near, -0.20f);
+                candidate (near + direction, -0.40f); candidate (far, -0.25f);
+                check (! match (200, right), "A nearest crossing that worsens the join is not skipped to hunt a distant exact match");
+                candidate (200 + direction, -0.40f);
+                check (! match (200, right), "When the current frame is the better bracket, keep it instead of jumping farther");
+
+                reset ();
+                candidate (200, -0.10f); candidate (200 + direction, -0.30f);
+                check (match (200, right) == 200 + direction, "Crossing between the current frame and next legal frame can improve the join");
+
+                reset ();
+                candidate (near, nan); candidate (near + direction, -0.40f);
+                candidate (near + direction * 2, nan); candidate (far, -0.25f);
+                check (match (200, right) == far, "Nonfinite neighbours never create false crossings");
+            }
+
             reset ();
-            candidate (160, -0.25f); candidate (180, -0.20f);
-            candidate (220, -0.20f); candidate (240, -0.25f);
-            check (match (200, false) == 160 && match (200, true) == 240, "Both endpoint kinds choose the best amplitude before distance in the requested direction");
             candidate (180, -0.25f); candidate (220, -0.25f);
-            check (match (200, false) == 180 && match (200, true) == 220, "Equal-quality candidates on each requested side favour the nearer marker");
-            candidate (160, -0.20f); candidate (180, -0.20f);
-            check (match (200, false) == 180, "Left matching ignores better matches on the right");
-            candidate (160, -0.25f); candidate (220, -0.20f); candidate (240, -0.20f);
-            check (match (200, true) == 220, "Right matching ignores better matches on the left");
+            check (match (200, false) == 180 && match (200, true) == 220, "Both endpoint kinds choose the nearest exact point on the requested side");
             check (! match (200, false, 200, 400) && ! match (200, true, 0, 200), "Legal limits cannot cause a search to cross to the other direction");
             candidate (200, -0.25f);
             check (! match (200, false) && ! match (200, true), "An exact current match stays put even with matches in both directions");
@@ -177,10 +217,22 @@ namespace
             candidate (199, -0.25f); candidate (201, -0.25f);
             check (match (200.5, false) == 199 && match (200.5, true) == 201, "Fractional boundaries search strictly left and right in marker coordinates");
             candidate (199, 0.6f); candidate (200, -0.20f);
-            check (match (199.5, true) == 201, "A rightward fractional search can pass a nearer inferior candidate");
-            candidate (201, 0.6f); candidate (199, 0.6f);
+            check (match (199.5, true) == 201, "A rightward fractional search skips noncrossing amplitude minima");
+            candidate (201, -0.40f);
             check (match (199.5, true) == 200, "Rightward fractional matching includes the immediately following integer marker");
             check (! match (200.5, false), "A fractional marker does not move to its current audible frame without amplitude improvement");
+
+            reset ();
+            candidate (200, -0.20f);
+            for (auto marker { 201 }; marker < 220; ++marker) candidate (marker, -0.40f);
+            candidate (220, -0.25f);
+            check (match (200.5, true) == 220, "A crossing at 200.25 is behind a fractional rightward search and cannot stop it");
+            check (! match (200.1, true), "An eligible crossing whose better frame is behind the moving marker remains unchanged");
+            reset ();
+            for (auto marker { 181 }; marker <= 200; ++marker) candidate (marker, -0.40f);
+            candidate (201, -0.20f); candidate (180, -0.25f);
+            check (match (200.5, false) == 180, "A crossing at 200.75 is behind a fractional leftward search and cannot stop it");
+            check (! match (200.9, false), "A leftward fractional search cannot choose the better bracket on its right");
 
             reset ();
             candidate (198, -0.25f); candidate (202, -0.25f);
@@ -211,6 +263,20 @@ namespace
         longAudio.setSample (0, 1000, -0.25f);
         WaveformPresentation::BoundaryMatchSearch nearest (longAudio, 0, 1000, 100, 104, 200000, 48000, true, true);
         check (nearest.advance (1) && nearest.result () == 1001, "Nearest exact match terminates without scanning the remaining file");
+
+        longAudio.setSample (0, 1000, 0.5f);
+        longAudio.setSample (0, 1004, -0.24f);
+        longAudio.setSample (0, 1005, -0.40f);
+        longAudio.setSample (0, 2999, -0.25f);
+        check (matchBoundary (longAudio, 0, 1000, 100, 104, 200000, 1000, true, true) == 1005,
+               "A useful crossing 5 ms away beats a mathematically exact match 2000 ms away");
+        WaveformPresentation::BoundaryMatchSearch splitCrossing (longAudio, 0, 1000, 100, 104, 200000, 1000, true, true);
+        check (! splitCrossing.advance (0) && ! splitCrossing.advance (5) && ! splitCrossing.result (),
+               "A crossing spanning the next batch is not replaced by an unfinished local-minimum result");
+        check (splitCrossing.advance (1) && splitCrossing.result () == 1005,
+               "A crossing across a batch boundary retains its better preceding frame");
+        check (splitCrossing.advance (1) && splitCrossing.result () == 1005,
+               "Advancing a finished search cannot replace the nearby crossing with a distant exact match");
     }
 }
 

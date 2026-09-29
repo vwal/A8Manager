@@ -119,7 +119,9 @@ context versus gear menus (top-level command order, section headings, shortcut
 column and read-only guards), marker placement, all eight directional boundary-matching actions
 (including fixed fractional loop ends in Length mode, opposite-side exclusion,
 no-op/disabled guards and confirmation for matches farther than 50 ms),
-accepted/canceled/stale approvals, the exact 50 ms threshold, and queued
+nearby inexact crossings winning over distant exact matches, all eight
+zero-crossing nudges with confirmation (including fixed-length loop movement),
+accepted/canceled/stale approvals, mutual command supersession, the exact 50 ms threshold, and queued
 large-file searches canceled by source unload or view destruction. Confirmation
 callbacks are exercised without opening a native dialog.
 It also checks Length/End behaviour, Sample/Loop
@@ -138,7 +140,9 @@ application or change their presets/preferences.
 **EditorRefinementRegression** checks quieter-side and exact-zero nudges,
 exclusive end markers, bounds and stereo-side selection. Boundary-matching checks
 cover nonzero joins versus true zeros, strict left/right searches for both endpoints,
-unrestricted distance within legal bounds, nearest equal-quality matches, imperfect improvements, fractional
+nearest target-level crossings instead of global amplitude optimisation, unchanged
+markers when the first crossing cannot improve the join, unrestricted distance
+within legal bounds, quiet scaled signals, fractional
 ends, EOF/frame zero, silence, nonfinite samples and invalid inputs. Temporary files exercise
 overlong-name recovery, extension preservation, invalid names, missing sources
 and collision protection. Preset fixtures check middle/last/only-zone purging,

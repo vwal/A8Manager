@@ -108,9 +108,11 @@ private:
     void setMarker (int marker, double position, bool keepOppositeBoundary = false);
     void nudgeMarker (int marker, bool right);
     void matchMarker (int marker, bool right);
-    struct BoundaryMatchRequest;
-    bool isCurrentMatch (const BoundaryMatchRequest& request);
-    void continueBoundaryMatch (std::shared_ptr<BoundaryMatchRequest> request);
+    struct BoundaryMoveRequest;
+    void beginBoundaryMove (int marker, bool right, bool matching);
+    bool isCurrentMove (const BoundaryMoveRequest& request);
+    void continueBoundaryMatch (std::shared_ptr<BoundaryMoveRequest> request);
+    void finishBoundaryMove (std::shared_ptr<BoundaryMoveRequest> request, juce::int64 position);
     std::function<void (std::function<void ()>)> scheduleBoundaryMatch;
     std::function<void (const juce::String&, std::function<void (bool)>)> confirmBoundaryMatch;
     double markerPosition (int marker);

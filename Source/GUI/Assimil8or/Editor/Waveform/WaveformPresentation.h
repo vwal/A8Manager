@@ -71,9 +71,10 @@ namespace WaveformPresentation
         return {};
     }
 
-    // Search outwards without a time cap. Exact matches stop the search at the
-    // nearest match; otherwise choose the best amplitude improvement, breaking
-    // ties by distance. Small batches let the UI yield between large-file scans.
+    // Find the first crossing of the opposite boundary's amplitude, not the
+    // globally smallest amplitude error. Choose the closer of its two PCM
+    // frames; never skip a nearby join to chase a more exact distant match.
+    // Small batches let the UI yield between large-file scans without a time cap.
     // The caller must keep the buffer alive and unchanged between advance calls.
     class BoundaryMatchSearch
     {
@@ -96,11 +97,15 @@ namespace WaveformPresentation
             data = audio.getReadPointer (side);
             target = data[targetFrame];
             if (! std::isfinite (target)) return;
-            bestError = std::isfinite (data[frame]) ? std::abs (static_cast<double> (data[frame]) - target)
-                                                   : std::numeric_limits<double>::infinity ();
-            if (bestError == 0.0) return;
+            originalError = std::isfinite (data[frame]) ? std::abs (static_cast<double> (data[frame]) - target)
+                                                       : std::numeric_limits<double>::infinity ();
+            if (originalError == 0.0) return;
             minimum = std::max (minimum, static_cast<juce::int64> (offset));
             maximum = std::min (maximum, static_cast<juce::int64> (count - 1 + offset));
+            legalMinimum = minimum;
+            legalMaximum = maximum;
+            movingPosition = moving;
+            sampleCount = count;
             if (right) minimum = std::max (minimum, static_cast<juce::int64> (std::floor (moving)) + 1);
             else maximum = std::min (maximum, static_cast<juce::int64> (std::ceil (moving)) - 1);
             position = right ? minimum : maximum;
@@ -117,15 +122,44 @@ namespace WaveformPresentation
                 if (std::isfinite (value))
                 {
                     const auto error { std::abs (value - target) };
-                    // The outward traversal encounters the nearest equal-quality
-                    // candidate first. Never move without amplitude improvement.
-                    if (error < bestError)
+                    if (error == 0.0)
                     {
                         best = position;
-                        bestError = error;
+                        complete = true;
+                        return true;
+                    }
+                    const auto inward { position - step };
+                    if (inward >= offset && inward - offset < sampleCount)
+                    {
+                        const auto neighbour { static_cast<double> (data[inward - offset]) };
+                        if (std::isfinite (neighbour) &&
+                            ((value < target && neighbour > target) || (value > target && neighbour < target)))
+                        {
+                            const auto crossing { inward + (target - neighbour) / (value - neighbour) * step };
+                            // The first pair may straddle the current fractional
+                            // marker or a legal limit. The crossing itself must be
+                            // on the requested side and inside the valid range.
+                            if (crossing >= legalMinimum && crossing <= legalMaximum &&
+                                (step > 0 ? crossing > movingPosition : crossing < movingPosition))
+                            {
+                                const auto neighbourError { std::abs (neighbour - target) };
+                                const auto candidate { error < neighbourError ? position :
+                                    error > neighbourError ? inward :
+                                    std::abs (position - movingPosition) < std::abs (inward - movingPosition) ? position : inward };
+                                // If the better frame is the current frame (or
+                                // outside the legal/directional range), leave the
+                                // marker alone. Do not hunt a farther crossing.
+                                if (candidate >= legalMinimum && candidate <= legalMaximum &&
+                                    (step > 0 ? candidate > movingPosition : candidate < movingPosition) &&
+                                    std::min (error, neighbourError) < originalError)
+                                    best = candidate;
+                                complete = true;
+                                return true;
+                            }
+                        }
                     }
                 }
-                complete = bestError == 0.0 || position == limit;
+                complete = position == limit;
                 position += step;
             }
             return complete;
@@ -134,9 +168,9 @@ namespace WaveformPresentation
 
     private:
         const float* data { nullptr };
-        double target { 0.0 }, bestError { 0.0 };
-        juce::int64 position { 0 }, limit { 0 };
-        int offset { 0 }, step { 1 };
+        double target { 0.0 }, originalError { 0.0 }, movingPosition { 0.0 };
+        juce::int64 position { 0 }, limit { 0 }, legalMinimum { 0 }, legalMaximum { 0 };
+        int offset { 0 }, step { 1 }, sampleCount { 0 };
         bool complete { true };
         std::optional<juce::int64> best;
     };

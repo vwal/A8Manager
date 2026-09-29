@@ -297,22 +297,24 @@ struct WaveformTestAccess
                     const auto moving { original[static_cast<size_t> (marker)] };
                     const auto leftMatch { static_cast<int> (std::floor (moving)) - 20 };
                     const auto rightMatch { static_cast<int> (std::ceil (moving)) + 20 };
-                    const auto chosenMatch { rightward ? rightMatch : leftMatch };
+                    const auto chosenMatch { static_cast<int> (moving) + (rightward ? 7 : -7) };
                     for (auto side { 0 }; side < 2; ++side)
                         for (auto frame { 0 }; frame < audio.getNumSamples (); ++frame) audio.setSample (side, frame, 0.6f);
                     const auto side { marker % 2 };
                     audio.setSample (side, static_cast<int> (std::floor (original[static_cast<size_t> (opposite)])) - (1 - offset), -0.25f);
                     audio.setSample (side, leftMatch - offset, -0.25f);
                     audio.setSample (side, rightMatch - offset, -0.25f);
-                    // A nearer improvement must not win over the better match.
-                    audio.setSample (side, static_cast<int> (moving) + (rightward ? 7 : -7) - offset, -0.1f);
+                    // Cross the target amplitude nearby without hitting it
+                    // exactly. A distant perfect match must not win instead.
+                    audio.setSample (side, chosenMatch - offset, -0.3f);
                     view.applyMenuAction (40 + marker * 2 + (rightward ? 1 : 0), {});
-                    check (view.markerPosition (marker) == chosenMatch, "All eight menu actions match only in the requested direction on the selected stereo side");
+                    check (view.markerPosition (marker) == chosenMatch, "All eight menu actions prefer the nearest useful crossing over a farther perfect match on the selected stereo side");
                     for (auto other { 0 }; other < 4; ++other)
                         if (other != marker)
                             check (view.markerPosition (other) == original[static_cast<size_t> (other)], "Directional matching leaves every other boundary fixed, including fractional Loop End");
                     check (selectedLoop == (marker >= 2) && channel.getLoopLengthIsEnd () == endMode,
                            "Directional matching selects the edited pair without changing Length/End mode");
+                    audio.setSample (side, chosenMatch - offset, -0.25f);
                     const auto alreadyMatched { view.zoneProperties.getValueTree ().createCopy () };
                     view.applyMenuAction (40 + marker * 2 + (rightward ? 1 : 0), {});
                     check (view.zoneProperties.getValueTree ().isEquivalentTo (alreadyMatched) && view.durationInfo.getText ().contains ("unchanged"),
@@ -322,6 +324,22 @@ struct WaveformTestAccess
         }
         view.zoneProperties.setSide (0, true);
         channel.setLoopLengthIsEnd (false, true);
+
+        // The first target-amplitude crossing is not always an improvement.
+        // Do not skip over it to a farther crossing which trims more material.
+        for (const auto rightward : { false, true })
+        {
+            view.zoneProperties.setSampleStart (300, true);
+            view.zoneProperties.setSampleEnd (600, true);
+            for (auto frame { 0 }; frame < audio.getNumSamples (); ++frame) audio.setSample (0, frame, 0.6f);
+            audio.setSample (0, 300, 0.0f);
+            audio.setSample (0, 599, 0.1f);
+            audio.setSample (0, 599 + (rightward ? 10 : -10), -0.5f);
+            audio.setSample (0, 599 + (rightward ? 30 : -30), 0.0f);
+            view.applyMenuAction (rightward ? 43 : 42, {});
+            check (view.markerPosition (1) == 600 && view.durationInfo.getText ().contains ("unchanged"),
+                   "An unhelpful nearest crossing does not cause a jump to a more distant perfect match");
+        }
 
         // Headless confirmation seam: invoke the same guarded completion used
         // by the real Yes/No dialog, without opening a native window in tests.
@@ -454,6 +472,160 @@ struct WaveformTestAccess
         }
         destroyedAnswer (true);
         check (view.markerPosition (1) == 600, "Closing a waveform view invalidates its pending approval safely");
+
+        // Zero-crossing nudges use the same distance approval and stale-state
+        // guards, but retain normal Loop Start / Length mode editing semantics.
+        auto prepareNudge = [&] (int marker, bool rightward, int distance = 100)
+        {
+            view.zoneProperties.setSampleStart (300, true);
+            view.zoneProperties.setSampleEnd (600, true);
+            view.zoneProperties.setLoopStart (350, true);
+            view.zoneProperties.setLoopLength (300.5, true);
+            view.zoneProperties.setSide (marker % 2, true);
+            view.sampleProperties.setSampleRate (1000, true);
+            for (auto side { 0 }; side < 2; ++side)
+                for (auto frame { 0 }; frame < audio.getNumSamples (); ++frame) audio.setSample (side, frame, 0.6f);
+            const auto candidate { static_cast<int> (view.markerPosition (marker)) + (rightward ? distance : -distance) };
+            audio.setSample (marker % 2, candidate - marker % 2, 0.0f);
+            return candidate;
+        };
+        for (const auto endMode : { false, true })
+        {
+            channel.setLoopLengthIsEnd (endMode, true);
+            for (auto marker { 0 }; marker < 4; ++marker)
+            {
+                for (const auto rightward : { false, true })
+                {
+                    const auto candidate { prepareNudge (marker, rightward) };
+                    view.setLoopSelected (marker < 2);
+                    const auto beforePrompt { view.zoneProperties.getValueTree ().createCopy () };
+                    const auto oldPrompts { prompts };
+                    view.applyMenuAction (20 + marker * 2 + (rightward ? 1 : 0), {});
+                    check (prompts == oldPrompts + 1 && view.zoneProperties.getValueTree ().isEquivalentTo (beforePrompt),
+                           "Every distant zero-crossing action waits for approval without editing markers");
+                    check (promptText.contains (markerNames[static_cast<size_t> (marker)]) && promptText.contains ("zero crossing") &&
+                           promptText.contains (rightward ? "right" : "left") && promptText.contains ("ms"),
+                           "Zero-crossing prompt identifies marker, source-time displacement and direction");
+                    check (marker != 2 || endMode || promptText.containsIgnoreCase ("length"),
+                           "Loop Start prompt explains the preserved loop length when its end also moves");
+                    answer (false);
+                    check (view.zoneProperties.getValueTree ().isEquivalentTo (beforePrompt), "Canceling a long zero crossing preserves all markers");
+                    answer (true);
+                    check (view.zoneProperties.getValueTree ().isEquivalentTo (beforePrompt), "A canceled zero-crossing approval cannot be reused");
+                    view.applyMenuAction (20 + marker * 2 + (rightward ? 1 : 0), {});
+                    std::array<double, 4> original;
+                    for (auto i { 0 }; i < 4; ++i) original[static_cast<size_t> (i)] = view.markerPosition (i);
+                    answer (true);
+                    check (view.markerPosition (marker) == candidate, "Approval applies each long directional zero-crossing candidate");
+                    for (auto i { 0 }; i < 4; ++i)
+                    {
+                        if (i == marker) continue;
+                        const auto expected { original[static_cast<size_t> (i)] +
+                            (marker == 2 && i == 3 && ! endMode ? candidate - original[2] : 0.0) };
+                        check (view.markerPosition (i) == expected, "Zero crossing preserves unrelated boundaries and moves Loop End only for Loop Start in Length mode");
+                    }
+                    check (selectedLoop == (marker >= 2) && channel.getLoopLengthIsEnd () == endMode,
+                           "Approved zero crossing selects the edited pair without changing Length/End mode");
+                    const auto afterApproval { view.zoneProperties.getValueTree ().createCopy () };
+                    answer (true);
+                    check (view.zoneProperties.getValueTree ().isEquivalentTo (afterApproval), "A successful zero-crossing approval is single-use");
+                }
+            }
+        }
+        channel.setLoopLengthIsEnd (false, true);
+        for (const auto distance : { 49, 50, 51 })
+        {
+            const auto candidate { prepareNudge (1, true, distance) };
+            const auto oldPrompts { prompts };
+            view.applyMenuAction (23, {});
+            check (prompts == oldPrompts + (distance > 50 ? 1 : 0), "Zero crossings prompt only for source-time displacements strictly above 50 ms");
+            if (distance > 50)
+            {
+                check (view.markerPosition (1) == 600, "51 ms zero crossing does not move before approval");
+                answer (true);
+            }
+            check (view.markerPosition (1) == candidate, "Threshold-adjacent zero crossings apply the exact candidate");
+        }
+        prepareNudge (1, false, 50);
+        view.sampleProperties.setSampleRate (999.9, true);
+        const auto fractionalZeroPrompts { prompts };
+        view.applyMenuAction (22, {});
+        check (prompts == fractionalZeroPrompts + 1 && view.markerPosition (1) == 600,
+               "Zero crossing uses unrounded source-time distance above 50 ms");
+        answer (false);
+        prepareNudge (3, false, 50);
+        const auto fractionalEndPrompts { prompts };
+        view.applyMenuAction (26, {});
+        check (prompts == fractionalEndPrompts + 1 && view.markerPosition (3) == 650.5,
+               "Fractional loop endpoint displacement of 50.5 frames prompts at 1000 Hz");
+        answer (true);
+        check (view.markerPosition (3) == 600, "Approved fractional end nudge retains exclusive-end accuracy");
+        prepareNudge (3, false, 50);
+        view.sampleProperties.setSampleRate (1010, true);
+        const auto exactFractionalPrompts { prompts };
+        view.applyMenuAction (26, {});
+        check (prompts == exactFractionalPrompts && view.markerPosition (3) == 600,
+               "Exactly 50 ms including fractional endpoint movement requires no confirmation");
+
+        auto checkStaleNudge = [&] (std::function<void ()> change)
+        {
+            prepareNudge (1, true);
+            view.applyMenuAction (23, {});
+            check (view.markerPosition (1) == 600, "Stale zero-crossing fixture starts with an unapplied move");
+            change ();
+            const auto changed { view.zoneProperties.getValueTree ().createCopy () };
+            answer (true);
+            check (view.zoneProperties.getValueTree ().isEquivalentTo (changed), "Stale zero-crossing approval cannot alter changed editor state");
+        };
+        checkStaleNudge ([&] { view.zoneProperties.setSampleEnd (610, true); view.zoneProperties.setSampleEnd (600, true); });
+        checkStaleNudge ([&] { view.zoneProperties.setLoopLength (290, true); });
+        checkStaleNudge ([&] { view.zoneProperties.setSide (0, true); view.zoneProperties.setSide (1, true); });
+        checkStaleNudge ([&] { view.setEnabled (false); view.setEnabled (true); });
+        checkStaleNudge ([&] { channel.setLoopLengthIsEnd (true, true); channel.setLoopLengthIsEnd (false, true); });
+        checkStaleNudge ([&] { view.sampleProperties.setSampleRate (2000, true); view.sampleProperties.setSampleRate (1000, true); });
+        checkStaleNudge ([&] { view.sampleProperties.setStatus (SampleStatus::doesNotExist, true); view.sampleProperties.setStatus (SampleStatus::exists, true); });
+        checkStaleNudge ([&] { const auto file { view.zoneProperties.getSample () }; view.zoneProperties.setSample ("replaced.wav", true); view.zoneProperties.setSample (file, true); });
+        checkStaleNudge ([&] { view.setZone (2); view.setZone (1); });
+        prepareNudge (1, true);
+        view.applyMenuAction (23, {});
+        const auto previousZeroAnswer { answer };
+        view.applyMenuAction (23, {});
+        previousZeroAnswer (true);
+        check (view.markerPosition (1) == 600, "A new zero-crossing request invalidates its previous outstanding approval");
+        answer (false);
+        for (const auto matchFirst : { false, true })
+        {
+            prepareMatch (1, true);
+            view.applyMenuAction (matchFirst ? 43 : 23, {});
+            const auto supersededAnswer { answer };
+            const auto beforeReplacement { prompts };
+            view.applyMenuAction (matchFirst ? 23 : 43, {});
+            check (prompts == beforeReplacement + 1, "Replacing match with nudge, or nudge with match, starts a new confirmation");
+            supersededAnswer (true);
+            check (view.markerPosition (1) == 600, "Boundary matching and zero-crossing requests supersede one another's approvals");
+            answer (false);
+        }
+        prepareNudge (1, true);
+        std::function<void (bool)> destroyedZeroAnswer;
+        {
+            auto temporary { std::make_unique<WaveformDisplay> () };
+            temporary->init (channelTree, root);
+            temporary->setZone (1);
+            temporary->confirmBoundaryMatch = [&] (const juce::String&, std::function<void (bool)> callback) { destroyedZeroAnswer = std::move (callback); };
+            temporary->applyMenuAction (23, {});
+            check (static_cast<bool> (destroyedZeroAnswer), "Destruction fixture obtains a zero-crossing confirmation");
+        }
+        destroyedZeroAnswer (true);
+        check (view.markerPosition (1) == 600, "Destroyed waveform views safely discard zero-crossing approvals");
+        view.setEnabled (false);
+        const auto disabledNudge { view.zoneProperties.getValueTree ().createCopy () };
+        const auto disabledPrompts { prompts };
+        for (auto action { 20 }; action < 28; ++action) view.applyMenuAction (action, {});
+        check (prompts == disabledPrompts && view.zoneProperties.getValueTree ().isEquivalentTo (disabledNudge),
+               "Disabled stereo-right editing neither prompts for nor applies zero crossings");
+        view.setEnabled (true);
+        view.zoneProperties.setSide (0, true);
+        view.sampleProperties.setSampleRate (1000, true);
 
         view.zoneProperties.setSampleStart (200, true);
         view.zoneProperties.setSampleEnd (400, true);

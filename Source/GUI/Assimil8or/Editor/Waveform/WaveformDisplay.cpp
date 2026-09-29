@@ -522,62 +522,67 @@ void WaveformDisplay::applyMenuAction (int action, std::optional<double> clicked
 
 void WaveformDisplay::nudgeMarker (int marker, bool right)
 {
-    if (! hasSample () || ! isEnabled ()) return;
-    const auto* buffer { sampleProperties.getAudioBufferPtr () };
-    if (buffer == nullptr) return;
-    const auto minimum { static_cast<juce::int64> (constrainMarker (marker, 0.0)) };
-    const auto maximum { static_cast<juce::int64> (constrainMarker (marker, static_cast<double> (getSampleLength ()))) };
-    if (const auto crossing { WaveformPresentation::zeroCrossing (*buffer, getDisplayChannel (), markerPosition (marker), minimum, maximum, right, marker == kSampleEnd || marker == kLoopEnd) })
-    {
-        setMarker (marker, static_cast<double> (*crossing));
-        jumpToMarker (marker);
-    }
-    else
-        durationInfo.setText ("No zero crossing " + juce::String (right ? "to the right" : "to the left") + " within this marker's valid range.", juce::dontSendNotification);
+    beginBoundaryMove (marker, right, false);
 }
 
-struct WaveformDisplay::BoundaryMatchRequest
+void WaveformDisplay::matchMarker (int marker, bool right)
 {
-    WaveformPresentation::BoundaryMatchSearch search;
+    beginBoundaryMove (marker, right, true);
+}
+
+struct WaveformDisplay::BoundaryMoveRequest
+{
     unsigned int generation, source;
     const AudioBufferType* buffer;
     double rate, original;
     int marker, side;
-    bool right, endMode;
+    bool right, endMode, matching;
+    std::optional<WaveformPresentation::BoundaryMatchSearch> search;
 };
 
-bool WaveformDisplay::isCurrentMatch (const BoundaryMatchRequest& request)
+bool WaveformDisplay::isCurrentMove (const BoundaryMoveRequest& request)
 {
     return isEnabled () && hasSample () && matchGeneration == request.generation && sourceGeneration == request.source &&
         sampleProperties.getAudioBufferPtr () == request.buffer && sampleProperties.getSampleRate () == request.rate &&
         getDisplayChannel () == request.side && channelProperties.getLoopLengthIsEnd () == request.endMode;
 }
 
-void WaveformDisplay::matchMarker (int marker, bool right)
+void WaveformDisplay::beginBoundaryMove (int marker, bool right, bool matching)
 {
     if (! hasSample () || ! isEnabled () || marker < kSampleStart || marker > kLoopEnd) return;
     const auto* buffer { sampleProperties.getAudioBufferPtr () };
     if (buffer == nullptr) return;
-    const auto endBoundary { marker == kSampleEnd || marker == kLoopEnd };
-    const auto minimum { static_cast<juce::int64> (constrainMarker (marker, 0.0, true)) };
-    const auto maximum { static_cast<juce::int64> (constrainMarker (marker, static_cast<double> (getSampleLength ()), true)) };
+    // Starting either command supersedes pending matches and nudge approvals,
+    // even if this search finds nothing or the source metadata is unusable.
+    const auto generation { ++matchGeneration };
     const auto rate { sampleProperties.getSampleRate () };
+    if (! std::isfinite (rate) || rate <= 0.0) return;
+    const auto endBoundary { marker == kSampleEnd || marker == kLoopEnd };
+    const auto minimum { static_cast<juce::int64> (constrainMarker (marker, 0.0, matching)) };
+    const auto maximum { static_cast<juce::int64> (constrainMarker (marker, static_cast<double> (getSampleLength ()), matching)) };
     const auto original { markerPosition (marker) };
-    auto request { std::make_shared<BoundaryMatchRequest> (BoundaryMatchRequest {
-        WaveformPresentation::BoundaryMatchSearch (*buffer, getDisplayChannel (), original,
-            markerPosition (endBoundary ? marker - 1 : marker + 1), minimum, maximum, rate, endBoundary, right),
-        ++matchGeneration, sourceGeneration, buffer, rate, original, marker, getDisplayChannel (), right,
-        channelProperties.getLoopLengthIsEnd () }) };
-    continueBoundaryMatch (std::move (request));
+    auto request { std::make_shared<BoundaryMoveRequest> (BoundaryMoveRequest {
+        generation, sourceGeneration, buffer, rate, original, marker, getDisplayChannel (), right,
+        channelProperties.getLoopLengthIsEnd (), matching, {} }) };
+    if (matching)
+    {
+        request->search.emplace (*buffer, request->side, original,
+            markerPosition (endBoundary ? marker - 1 : marker + 1), minimum, maximum, rate, endBoundary, right);
+        continueBoundaryMatch (std::move (request));
+    }
+    else if (const auto crossing { WaveformPresentation::zeroCrossing (*buffer, request->side, original, minimum, maximum, right, endBoundary) })
+        finishBoundaryMove (std::move (request), *crossing);
+    else
+        durationInfo.setText ("No zero crossing " + juce::String (right ? "to the right" : "to the left") + " within this marker's valid range.", juce::dontSendNotification);
 }
 
-void WaveformDisplay::continueBoundaryMatch (std::shared_ptr<BoundaryMatchRequest> request)
+void WaveformDisplay::continueBoundaryMatch (std::shared_ptr<BoundaryMoveRequest> request)
 {
     // SampleManager mutates/unloads on this thread. Revalidate before every
     // bounded batch: no worker can retain or dereference a freed sample buffer.
-    if (! isCurrentMatch (*request)) return;
+    if (! isCurrentMove (*request) || ! request->search) return;
     auto safe = juce::Component::SafePointer<WaveformDisplay> (this);
-    if (! request->search.advance (65536))
+    if (! request->search->advance (65536))
     {
         durationInfo.setText ("Searching for a boundary match to the " + juce::String (request->right ? "right" : "left") + "...", juce::dontSendNotification);
         scheduleBoundaryMatch ([safe, request] ()
@@ -586,30 +591,41 @@ void WaveformDisplay::continueBoundaryMatch (std::shared_ptr<BoundaryMatchReques
         });
         return;
     }
-    const auto match { request->search.result () };
+    const auto match { request->search->result () };
     if (! match)
     {
-        durationInfo.setText ("No closer amplitude match to the " + juce::String (request->right ? "right" : "left") +
-                              " within this marker's valid range; marker unchanged.", juce::dontSendNotification);
+        durationInfo.setText ("No improving nearest target-level crossing to the " + juce::String (request->right ? "right" : "left") +
+                              "; marker unchanged.", juce::dontSendNotification);
         return;
     }
-    auto apply = [safe, request, position = *match] (bool approved)
+    finishBoundaryMove (std::move (request), *match);
+}
+
+void WaveformDisplay::finishBoundaryMove (std::shared_ptr<BoundaryMoveRequest> request, juce::int64 position)
+{
+    if (! isCurrentMove (*request)) return;
+    auto safe = juce::Component::SafePointer<WaveformDisplay> (this);
+    auto apply = [safe, request, position] (bool approved)
     {
-        if (safe == nullptr || ! safe->isCurrentMatch (*request)) return;
+        if (safe == nullptr || ! safe->isCurrentMove (*request)) return;
         // A callback is single-use, including cancellation.
         ++safe->matchGeneration;
         if (! approved) { safe->updateDurations (); return; }
-        safe->setMarker (request->marker, static_cast<double> (position), true);
+        safe->setMarker (request->marker, static_cast<double> (position), request->matching);
         safe->jumpToMarker (request->marker);
     };
-    const auto distance { std::abs (static_cast<double> (*match) - request->original) };
+    const auto distance { std::abs (static_cast<double> (position) - request->original) };
     if (distance <= request->rate * 0.05) apply (true);
     else
     {
         const auto milliseconds { distance * 1000.0 / request->rate };
-        const auto message { "The best boundary match for " + WaveformPresentation::markerNames[static_cast<size_t> (request->marker)] +
+        const auto explanation { ! request->matching && request->marker == kLoopStart && ! request->endMode
+            ? "Loop End will move with Loop Start to preserve the loop length."
+            : "The opposite boundary will stay fixed." };
+        const auto message { juce::String (request->matching ? "The nearest boundary match for " : "The nearest zero crossing for ") +
+            WaveformPresentation::markerNames[static_cast<size_t> (request->marker)] +
             " is " + juce::String (milliseconds, milliseconds < 100.0 ? 2 : 1) + " ms to the " +
-            juce::String (request->right ? "right" : "left") + ".\n\nDo you want to proceed?\nThe opposite boundary will stay fixed." };
+            juce::String (request->right ? "right" : "left") + ".\n\nDo you want to proceed?\n" + explanation };
         confirmBoundaryMatch (message, std::move (apply));
     }
 }
