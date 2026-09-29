@@ -23,12 +23,22 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers thirty-four tests, with 60- or 90-second timeouts. Use `ctest --test-dir
+CTest registers thirty-six tests, with 60- or 90-second timeouts. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
 
 Both test executables use the same required C++20 dialect as the application.
+**HardwareTestOutputRegression** checks the actual isolated test-package exporter:
+built-in audio/CV samples and reference timing, PCM24 readback, purpose tags,
+parsed preset routing and Mix Off, preserved current designs, input rejection and
+non-overwriting publication. **HardwareTestOutputUiRegression** checks explicit
+safety acknowledgement, settings snapshots, busy controls and export-only UI.
+WaveformWorkspaceRegression also verifies that entering this workflow stops
+computer audition without assigning a preset or modifying the current design.
+These software tests do not establish actual output volts, hardware channel
+synchronization, or the interpretation of Mix Off on a particular module.
+
 EditorRefinementRegression checks the fixed header layout from the minimum
 800-pixel window width through wide layouts, including non-overlapping Audio
 Settings, UI size, Quick help, live output status, appearance and workspace controls. StereoChannelUiRegression

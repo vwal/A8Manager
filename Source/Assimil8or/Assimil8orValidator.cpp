@@ -541,9 +541,14 @@ std::tuple<uint64_t, std::optional<std::map<juce::String, uint64_t>>> Assimil8or
         const auto sidecar { WaveformDesignSidecars::identify (file) };
         if (sidecar != WaveformDesignSidecars::Kind::unknown)
         {
-            validatorResultProperties.update (ValidatorResultProperties::ResultTypeInfo,
-                sidecar == WaveformDesignSidecars::Kind::recipe ? "A8Manager waveform design recipe (desktop-only; not a hardware preset)"
-                                                              : "A8Manager waveform export instructions (desktop-only)", false);
+            const auto description { sidecar == WaveformDesignSidecars::Kind::recipe
+                ? "A8Manager waveform design recipe (desktop-only; not a hardware preset)"
+                : sidecar == WaveformDesignSidecars::Kind::testManifest
+                    ? "A8Manager hardware test manifest (desktop-only; not a hardware preset)"
+                    : sidecar == WaveformDesignSidecars::Kind::testInstructions
+                        ? "A8Manager hardware test instructions (desktop-only)"
+                        : "A8Manager waveform export instructions (desktop-only)" };
+            validatorResultProperties.update (ValidatorResultProperties::ResultTypeInfo, description, false);
         }
         else
         {

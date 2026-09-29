@@ -67,6 +67,8 @@ set(ASSIMIL8OR_FILES
     Source/Assimil8or/PresetManagerProperties.h)
 
 set(ASSIMIL8OR_AUDIO_FILES
+    Source/Assimil8or/Audio/HardwareTestOutput.cpp
+    Source/Assimil8or/Audio/HardwareTestOutput.h
     Source/Assimil8or/Audio/WaveformAudition.cpp
     Source/Assimil8or/Audio/WaveformAudition.h
     Source/Assimil8or/Audio/CvSampleSafety.h
@@ -133,6 +135,8 @@ set(ASSIMIL8OR_VALIDATOR_FILES
     Source/Assimil8or/Validator/ValidatorResultProperties.h)
 
 set(GUI_FILES
+    Source/GUI/HardwareTestOutputComponent.cpp
+    Source/GUI/HardwareTestOutputComponent.h
     Source/GUI/WaveformWorkspace.cpp
     Source/GUI/WaveformWorkspace.h
     Source/GUI/PresetEditSession.h

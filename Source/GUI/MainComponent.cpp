@@ -126,7 +126,6 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
         waveformWorkspace.onStopAudition = [player] () { player->stopWaveformAudition (); };
         waveformWorkspace.onAuditionMonitorChange = [player] (double decibels, double semitones) { return player->setWaveformMonitor (decibels, semitones); };
         waveformWorkspace.isAuditionActive = [player] () { return player->isWaveformAuditionActive (); };
-        waveformWorkspace.onAudioSettings = [player] () { player->showAudioSettings (); };
     }
 
     fileViewComponent.onAudioFileSelected = [this] (juce::File audioFile) { assimil8orEditorComponent.receiveSampleLoadRequest (audioFile); };

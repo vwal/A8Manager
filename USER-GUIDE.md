@@ -766,6 +766,31 @@ designer does stop audition. The Sample workspace still previews individual
 samples rather than a whole linked bank. Before using generated audio or CV on
 the module, work through the [hardware test checklist](HARDWARE-TEST-CHECKLIST.md).
 
+### Advanced test output
+
+**Waveform designer → Test output...** exports a new, separate hardware test
+package. Choose the current design, an audio tone, CV levels, a slow CV sine or
+a positive CV triangle. A separate low-level audio-reference channel provides
+distinct start/end patterns; `test-manifest.json` gives their exact frame positions
+and the channel map. Current designs retain their original waveform and playback
+settings, but all test channels have Mix and Mix modulation Off. The reference
+needs one spare output, so Current design tests support at most seven voices.
+
+This feature does not play signals through the computer, assign into the open
+preset or start Assimil8or playback. It requires explicit safety acknowledgement
+before export. CV test WAVs carry the same no-audition purpose tag as other CV.
+Disconnect test outputs from speakers/headphones and check routing and levels
+on a suitable scope or recorder before use. Percentages are digital full scale,
+not calibrated volts. Tags and Mix Off reduce mistakes but cannot protect against
+external players, removed metadata, repatching or changed hardware settings.
+
+Record the reference alongside the output under test. Its ending pattern marks
+the scheduled observation window, **not** proof that the tested voice stopped.
+Continuous/gated tests need an actual gate/stop recording too. Built-in test
+signals are not recallable designer recipes; Current design packages retain
+their `design.json`. See the [designer guide](WAVEFORM-DESIGNER.md#advanced-hardware-test-output)
+and [validation workflow](HARDWARE-TEST-CHECKLIST.md#test-output-packages-and-recorded-references).
+
 ## Common questions
 
 **Why is there no sound?**  

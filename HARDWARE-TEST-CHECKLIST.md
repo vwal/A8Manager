@@ -7,7 +7,9 @@ checks are the primary test of generation; a short hardware session checks our
 preset assumptions and the analog properties that a WAV cannot establish.
 
 Use a separate test folder. Keep the exported recipe (`design.json` or the
-assigned WAV's `.design.json`), preset, WAVs and observations together.
+assigned WAV's `.design.json`, when present), preset, WAVs and observations
+together. Advanced test-output packages also include `test-manifest.json` with
+their expected values and reference-marker positions.
 
 ## What needs which kind of test?
 
@@ -132,33 +134,78 @@ relative phase, missing/extra sections, loop seams and routing.
   entire capture path is suitable, DC-coupled and voltage-calibrated; otherwise
   use the scope/meter checks above.
 
-### Would start/end sonic markers help?
+### Test-output packages and recorded references
 
-**Yes, as an optional test-package feature; it is not implemented.** Prefer a
-separate reference track/output with recognizable short, low-level coded tone
-bursts, rather than adding sounds to the sample or CV under test. A manifest
-would state the exact source frame positions, sample rate, expected gate events
-and intended section durations. Start/end markers should use distinct patterns.
+**Waveform designer → Test output...** now creates a standalone hardware test
+package. It is export-only: there is no test playback through the computer and
+no change to the open preset or its assignments. Ordinary exports remain unchanged.
 
-- Reserve an otherwise unused A8 channel for a one-shot reference and capture
-  its individual output beside the output under test. Leave its Mix Off, avoid
-  changing the tested channel and keep normal exports unchanged. A bank using
-  all eight channels would need an external recorded reference/gate instead.
-- A shared trigger does not prove that reference and test channels start at the
-  same sample. Measure their fixed offset/retrigger variation first. A marker
-  emitted by the **computer** is a host event, not proof of the A8 playback time.
-- A reference-file end marker identifies the scheduled end of the test window,
-  not proof that the tested sample ended. Analyze the test output itself too.
-  Never put the only end marker after a region that loops forever: playback may
-  never reach it. For continuous/gated tests, capture the actual gate or a safely
-  recorded event reference and define a deliberate stop; log live marker edits.
-- Markers must not be inserted into generated CV, routed to speakers by default,
-  or allowed to alter the loop seam, sample length or voltage. No automatic
-  timing/voltage verdict should be issued without checking alignment and levels.
+1. Choose **Current design**, **Audio tone**, **CV levels**, **CV sine**, or
+   **CV positive triangle**. Built-in signals use a 1–60 second observation
+   window (default 10 seconds) and 1–25% digital full-scale level (default 10%).
+   Current design preserves its samples, pitch and playback mode rather than
+   being rescaled or stretched to the window.
+2. Disconnect tested outputs from speakers/headphones, prepare the measurement
+   setup above, and check the required safety acknowledgement. Export into a
+   new folder. Copy the whole package to the SD card; retain its `README.txt`
+   and `test-manifest.json` beside the WAVs and preset for analysis.
+3. Inspect the channel map. Test voices start at CH 1; the following channel is
+   the reference. All have Mix and Mix modulation Off, with automatic triggering
+   Off. Confirm those settings on the module before triggering. A Current design
+   bank can have at most seven voices: an eight-voice bank is refused, never
+   truncated. Use an external recorded reference/gate for an eight-voice test.
+4. Record the tested individual output and reference output simultaneously.
+   The reference has distinct, short, faded start/end tone patterns at −30 dBFS
+   peak. It is AUDIO-tagged; CV test files are CV-tagged and remain blocked from
+   Samples audition. No reference tones are inserted into the tested audio/CV.
+   Trigger/gate CH 1; the reference follows as a one-shot Link channel. Link
+   follows the nearest master's trigger/gate rather than inheriting all playback
+   parameters ([Assimil8or manual, Channel Modes](https://www.rossum-electro.com/fqlzron/wp-content/uploads/2018/04/Assimil8or_man_040618-2.pdf)).
+5. Use the manifest's exact frame positions and sample rate to locate the
+   reference patterns. Compare the tested waveform and expected interval too.
+   Measure relative onset/retrigger variation before assuming channel alignment,
+   and account for recorder clock drift. No automatic pass/fail or voltage
+   calibration is inferred merely because reference markers are found.
 
-For today's tests, ordinary captures with a documented trigger/gate sequence are
-sufficient. This feature would make repeatable automated capture analysis easier
-later; it is not a prerequisite for the minimum acceptance session.
+For the **essential analog CV check**, start with **CV levels**. At default
+settings it holds 0%, +10%, 0%, −10%, 0% FS in five equal sections, so a 10-second
+file gives two seconds per section. Capture the individual output and both mix
+outputs, with the reference on the fourth scope channel if desired. Record
+settled plateau voltages, polarity and the idle baseline. Then use **CV sine**
+(one bipolar cycle per window) or **CV positive triangle** (zero → positive
+level → zero) for the varying-CV check. Levels are digital fractions, **not
+assumed volts**; continue to use the gain/load and scope precautions above.
+
+The start code is two 20 ms 1 kHz bursts, the end code three 20 ms 2 kHz bursts,
+each with 2 ms fades and 40 ms spacing. The first end burst starts exactly at
+the window's frame boundary; the reference file continues another 120 ms to
+contain the full code. Capture a little before the trigger and beyond that tail.
+For a 10-second test, try about 1 s/div or a sufficiently long roll acquisition,
+then zoom the saved capture to inspect the individual bursts and CV transitions.
+
+The reference's ending pattern marks the **scheduled observation window**, not
+proof that the tested voice stopped. A current one-shot may end earlier; a
+continuous loop may continue after the reference has finished. For gated/looping
+tests, record the actual gate/stop event and define a deliberate stop; document
+live marker edits. A shared trigger is not a guarantee of sample-accurate starts.
+This feature does not emulate or verify every unusual sample/loop marker order.
+
+Keep Current design's `design.json` if you need to recall its shaping controls.
+Built-in tests have no designer recipe. The validator recognizes the genuine
+test manifest/instructions as informational desktop-only files; malformed or
+unrelated JSON/text still produces warnings. A manifest is an expectation record,
+not a substitute for validating its WAVs or measuring the actual hardware output.
+
+The feature may remain available as an advanced, opt-in tool in distributed
+builds. It must not be advertised as speaker-safe: low digital tone levels can
+be amplified, CV individual outputs remain active, hardware routing can change,
+and other players or stripped metadata bypass A8Manager's protections. The safety
+acknowledgement, no automatic playback, tagged CV and Mix Off reduce accidental
+exposure; they are not physical protection against a wrong patch.
+
+Ordinary captures with a documented trigger/gate sequence remain sufficient for
+many tests. This package makes repeated analysis easier; it does not require
+replacing working measurements or broadening the essential scope session.
 
 ## Before starting
 

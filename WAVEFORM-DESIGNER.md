@@ -78,6 +78,70 @@ In Samples, the validator identifies genuine generated recipes and instructions
 as informational desktop-only files. They are not hardware presets and do not
 add to sample RAM; unrelated or malformed JSON/text files still get warnings.
 
+## Advanced hardware test output
+
+Choose **Test output...** in the Waveform designer to export a separate test
+package with a dedicated timing-reference channel. This is a file-export tool,
+not a computer signal generator: it does not play the test or send CV through
+your computer's audio device. It never assigns into or saves over your current
+preset. Ordinary designer exports and assignments are unchanged.
+
+Choose the signal to test:
+
+- **Current design:** use the current Audio Cycle, CV Modulation or Layer Bank.
+  Its rendered samples, pitch and playback settings are preserved; the test
+  package turns its mix routing Off. Banks may use at most seven voices because
+  the eighth output is needed for the reference. An eight-voice bank is rejected,
+  not reduced or overwritten; record an external reference for that test instead.
+- **Audio tone:** a 440 Hz sine for checking output routing and timing.
+- **CV levels:** five equal sections: zero, positive level, zero, negative level,
+  zero. At the default level these are 0%, +10%, 0%, −10%, 0% of digital full scale.
+- **CV sine:** one slow bipolar cycle across the chosen duration.
+- **CV positive triangle:** rise from zero to the positive level, then return
+  to zero across the chosen duration.
+
+The test window is 1–60 seconds, initially 10 seconds. Built-in signals use a
+1–25% full-scale level, initially 10%; this control does not rescale Current
+design. A design's original one-shot length or continuous/gated playback is not
+changed to fit the window. The reference marks the observation window, not an
+assertion that the tested voice ends there. No percentage is a guaranteed voltage.
+
+Before exporting, disconnect the tested individual and mix outputs from speakers
+and headphones, prepare a suitable scope/recording connection and acknowledge
+the safety notice. Choose a parent folder: a new uniquely named folder is created
+with mono PCM24 WAVs, a preset, `test-manifest.json`, and `README.txt`. A Current
+design package also keeps `design.json`; built-in tests are not designer recipes.
+Keep the entire package together and follow its channel map when copying it to
+the Assimil8or SD card. Exporting does not start hardware playback.
+
+Every test channel, including the reference, has **Mix Off**, **Mix modulation
+Off** and **automatic triggering Off**. CV WAVs carry the usual CV purpose tag,
+remain blocked from Samples audition, and must use individual outputs. These are
+the same app-level precautions used for normal CV, not a physical interlock.
+Always confirm the module's routing and actual output level before patching.
+
+The reference is a separate AUDIO-tagged WAV at **−30 dBFS peak**: two 20 ms
+1 kHz bursts mark the start, and three 20 ms 2 kHz bursts mark the scheduled end.
+Bursts are spaced 40 ms apart and have 2 ms fades. The reference file includes a
+120 ms tail after the window to contain the complete end pattern. Record its
+individual output alongside the tested output. Trigger/gate CH 1; the reference
+is a one-shot Link channel following that master, while the tested voices keep
+their configured playback. Link follows the nearest master's trigger/gate, not
+all its playback parameters ([Assimil8or manual, Channel Modes](https://www.rossum-electro.com/fqlzron/wp-content/uploads/2018/04/Assimil8or_man_040618-2.pdf)).
+The manifest lists exact source frames, sample rate, output mapping,
+pitch, play/loop settings and reference bursts. Normal samples and CV contain no
+inserted marker tones. A shared trigger does not establish sample-accurate start
+alignment: measure the relative onset and repeatability, and account for recorder
+clock drift. For continuous or gated playback, also capture the actual gate/stop
+event; the scheduled end pattern is not proof that the tested output stopped.
+
+This advanced feature need not be disabled for distribution, but it should stay
+explicit and opt-in. Low-level tones can still be loud with downstream gain;
+DC/slow CV is not speaker material. Hardware settings can be changed, individual
+outputs can be mispatched, other players can ignore tags, and converters can
+strip them. Mix Off and blocked app audition do not guarantee speaker protection.
+See the [test-output workflow and essential measurements](HARDWARE-TEST-CHECKLIST.md#test-output-packages-and-recorded-references).
+
 ## Recalling and editing a saved design
 
 - In **Samples**, select the channel and zone, then choose **Preset tools → Edit selected
@@ -147,9 +211,11 @@ spread rather than just an untransposed individual WAV.
 Starting designer audition stops any Samples-workspace audition; stopping it
 does not restart the old sample. Starting sample playback takes over the audio
 output in the opposite direction. An audio-device change stops designer audition;
-start it again explicitly after choosing the output you want with **Audio
-settings...**. Returning to Samples stops designer audition and hides its expanded
-preview. Returning to the designer does not start sound automatically.
+start it again explicitly after choosing the output you want with the shared
+**Audio Settings** button in the top-right bar, next to **UI size**. There is no
+separate audio-settings button in the designer. Returning to Samples stops
+designer audition and hides its expanded preview. Returning to the designer does
+not start sound automatically.
 
 Every voice's monitored fundamental must be at least 20 Hz and strictly below
 20 kHz or the audio device's Nyquist limit, whichever is lower. Invalid settings

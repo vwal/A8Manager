@@ -30,12 +30,12 @@ public:
     std::function<void ()> onStopAudition;
     std::function<juce::Result (double monitorDb, double transposeSemitones)> onAuditionMonitorChange;
     std::function<bool ()> isAuditionActive;
-    std::function<void ()> onAudioSettings;
 
 private:
     friend struct WaveformWorkspaceTestAccess;
     std::function<void (const juce::String&, std::function<void (bool)>)> confirmAssignment;
     std::function<void (const juce::String&, std::function<void (bool)>)> confirmRecall;
+    std::function<void (const WaveformDesign::Settings&, juce::File, const juce::String&, int)> launchTestOutput;
     struct Impl;
     std::unique_ptr<Impl> impl;
     void timerCallback () override;

@@ -42,6 +42,8 @@ namespace
 
     void checkMonitorLayout (juce::Component& workspace)
     {
+        check (find (workspace, "design-audio-settings") == nullptr && button (workspace, "Audio settings...") == nullptr,
+               "Designer uses the shared top-right Audio Settings instead of a duplicate local action");
         auto& transpose { control<juce::Component> (workspace, "design-monitor-transpose") };
         auto& level { control<juce::Component> (workspace, "design-monitor-level") };
         auto& audition { control<juce::Button> (workspace, "design-audition") };
@@ -53,6 +55,8 @@ namespace
         check (levelBounds.getY () >= auditionBounds.getBottom ()
                && levelBounds.getX () <= auditionBounds.getCentreX () && levelBounds.getRight () >= auditionBounds.getCentreX (),
                "Monitor level sits below the audition button");
+        check (auditionBounds.getRight () == levelBounds.getRight (),
+               "Audition remains right-aligned over Monitor level after removing the duplicate settings action");
     }
 
     void snapshot (juce::Component& workspace, const juce::String& name)
@@ -70,6 +74,44 @@ namespace
 
 struct WaveformWorkspaceTestAccess
 {
+    static void testOutputEntry ()
+    {
+        using namespace WaveformDesign;
+        auto stopped { 0 }, opened { 0 }, cleared { 0 }, applied { 0 };
+        WaveformWorkspace workspace;
+        workspace.setSize (975, 732);
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory) };
+        workspace.setInitialFolder (folder);
+        control<juce::ComboBox> (workspace, "design-export-slot").setSelectedId (47, juce::sendNotificationSync);
+        control<juce::TextEditor> (workspace, "design-name").setText ("Timing check", false);
+        workspace.onStopAudition = [&] { ++stopped; };
+        workspace.onAuditionPayload = [&] (WaveformAudition::PayloadPtr payload) { if (! payload) ++cleared; };
+        workspace.onApplyAssignment = [&] (const auto&, const auto&) { ++applied; return juce::Result::ok (); };
+        const auto before { juce::JSON::toString (toJson (workspace.getSettings ())) };
+        workspace.launchTestOutput = [&] (const Settings& design, juce::File parent, const juce::String& name, int slot)
+        {
+            check (stopped == 1 && cleared == 1, "Entering hardware tests stops and clears computer audition before opening");
+            check (juce::JSON::toString (toJson (design)) == before && parent == folder && name == "Timing check" && slot == 47,
+                   "Hardware test output gets the current design, folder and separate package slot");
+            ++opened;
+        };
+        click (workspace, "Test output...");
+        check (opened == 1 && applied == 0 && juce::JSON::toString (toJson (workspace.getSettings ())) == before,
+               "Entering hardware tests neither assigns a preset nor edits the design");
+        auto& test { control<juce::Button> (workspace, "design-test-output") };
+        auto& create { control<juce::Button> (workspace, "design-export") };
+        auto& open { control<juce::Button> (workspace, "design-open-export") };
+        open.setVisible (true);
+        for (const auto width : { 975, 1117, 1400 })
+        {
+            workspace.setSize (width, 732);
+            workspace.resized ();
+            check (workspace.getLocalBounds ().contains (test.getBounds ()) && ! test.getBounds ().intersects (create.getBounds ())
+                   && ! test.getBounds ().intersects (open.getBounds ()), "Hardware test action fits the compact export row without overlapping other actions");
+        }
+        snapshot (workspace, "waveform-workspace-test-output-entry");
+    }
+
     static void recallWorkflow ()
     {
         using namespace WaveformDesign;
@@ -358,7 +400,7 @@ struct WaveformWorkspaceTestAccess
         {
             WaveformAudition::PayloadPtr payload;
             bool active { false }, failStart { false }, failMonitor { false };
-            int starts { 0 }, stops { 0 }, publications { 0 }, settingsCalls { 0 };
+            int starts { 0 }, stops { 0 }, publications { 0 };
             double monitorDb { 999 }, transpose { 999 };
         } host;
         int closes { 0 };
@@ -375,7 +417,7 @@ struct WaveformWorkspaceTestAccess
             workspace.onStartAudition = [&]
             {
                 ++host.starts;
-                if (host.failStart) return juce::Result::fail ("No output device selected - open Audio settings.");
+                if (host.failStart) return juce::Result::fail ("No output device selected - use the top-right Audio Settings.");
                 host.active = host.payload != nullptr;
                 return juce::Result::ok ();
             };
@@ -386,7 +428,6 @@ struct WaveformWorkspaceTestAccess
                 host.monitorDb = db; host.transpose = semitones;
                 return host.failMonitor ? juce::Result::fail ("Monitor frequency is outside the audible range; adjust Transpose.") : juce::Result::ok ();
             };
-            workspace.onAudioSettings = [&] { ++host.settingsCalls; };
             workspace.onClose = [&] { ++closes; };
             settle (workspace);
             auto& compact { *find (workspace, "design-compact-preview") };
@@ -399,8 +440,6 @@ struct WaveformWorkspaceTestAccess
             const auto initialTranspose { control<juce::Slider> (workspace, "design-monitor-transpose-value").getValue () };
             check (std::abs (initialLevel + 18) < 1e-7 && std::abs (initialTranspose) < 1e-7,
                    "Monitor starts at a conservative -18 dB with neutral transpose");
-            click (workspace, "Audio settings...");
-            check (host.settingsCalls == 1, "Audio settings delegates to the existing host device");
             host.failStart = true;
             click (workspace, "Start audition");
             check (! host.active && control<juce::Label> (workspace, "design-audition-hint").getText ().contains ("No output device"),
@@ -703,6 +742,7 @@ struct WaveformWorkspaceTestAccess
 
 void testWaveformWorkspace ()
 {
+    WaveformWorkspaceTestAccess::testOutputEntry ();
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
     WaveformWorkspaceTestAccess::assignmentWorkflow ();

@@ -1,5 +1,6 @@
 #include "WaveformWorkspace.h"
 #include "ModernTheme.h"
+#include "HardwareTestOutputComponent.h"
 #include "../Assimil8or/Audio/WaveformDesignExport.h"
 #include "../Assimil8or/Audio/WaveformDesignRecall.h"
 #include "../Assimil8or/Preset/PresetProperties.h"
@@ -443,6 +444,7 @@ struct WaveformWorkspace::Impl
     ModernLookAndFeel look;
     juce::Label title, subtitle, summary, status, nameLabel, renderStats, auditionTitle, auditionHint, assignmentHeading, packageHeading;
     juce::TextButton close { "Back to preset" }, load { "Load recipe / WAV..." }, create { "Export new package..." }, openExport { "Open in Sample workspace" }, assign { "Generate & Assign..." }, recall { "Recall assigned..." };
+    juce::TextButton testOutput { "Test output..." };
     juce::TextEditor fileName;
     Field mode { "Workspace", "design-mode" }, shape { "Shape", "design-shape" }, preset { "Starting point", "design-preset" };
     Field targetChannel { "Target channel", "design-target-channel" }, targetZone { "Target zone", "design-target-zone" }, exportSlot { "Package preset", "design-export-slot" };
@@ -455,7 +457,7 @@ struct WaveformWorkspace::Impl
     Preview preview;
     juce::TextButton expand { "Expand waveform..." };
     std::unique_ptr<ExpandedPreview> expandedPreview;
-    juce::TextButton auditionButton { "Start audition" }, audioSettings { "Audio settings..." };
+    juce::TextButton auditionButton { "Start audition" };
     Control monitorLevel { "Monitor level", "design-monitor-level", -60, 0, 0.1, " dB" };
     Control monitorTranspose { "Transpose", "design-monitor-transpose", -48, 48, 0.01, " st" };
     WaveformAudition::PayloadPtr auditionPayload;
@@ -514,7 +516,6 @@ struct WaveformWorkspace::Impl
         monitorLevel.slider.setTooltip ("Speaker/headphone monitor gain only: -60 to 0 dB, initially -18 dB. Keep your hardware output level low until you have checked it. Does not affect export.");
         monitorTranspose.slider.setTooltip ("Monitor-only transposition, -48 to +48 semitones. Listen at a useful note without changing the generated cycle, recipe, or exported preset.");
         auditionButton.setName ("design-audition");
-        audioSettings.setName ("design-audio-settings");
         auditionButton.setEnabled (false);
         styleLabel (status, "Audition starts only when requested. CV mode is always visual-only.", 12.0f);
         status.setName ("design-status");
@@ -552,7 +553,7 @@ struct WaveformWorkspace::Impl
         preview.setName ("design-compact-preview");
         expand.setName ("design-expand-preview");
         expand.setTooltip ("Open a larger, resizable source-waveform view. It follows design edits and mode changes. Escape or X closes only the view, not audition.");
-        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &assignmentHeading, &packageHeading, &close, &load, &create, &assign, &recall, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &audioSettings, &monitorLevel, &monitorTranspose, &viewport })
+        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &assignmentHeading, &packageHeading, &close, &load, &create, &assign, &recall, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &monitorLevel, &monitorTranspose, &viewport })
             owner.addAndMakeVisible (component);
         viewport.setViewedComponent (&content, false);
         viewport.setName ("design-controls");
@@ -560,6 +561,9 @@ struct WaveformWorkspace::Impl
         viewport.setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::never);
         for (auto* card : { &tone, &output, &timing, &envelope, &drawing, &layers }) content.addAndMakeVisible (card);
         create.setName ("design-export");
+        testOutput.setName ("design-test-output");
+        testOutput.setTooltip ("Advanced hardware verification: export audio/CV test signals and a separate timing-reference channel. No computer playback; the current preset stays unchanged.");
+        owner.addAndMakeVisible (testOutput);
         create.setTooltip ("Create a separate folder and preset with voices starting at CH 1. Target channel/zone above are NOT used. To fill them in the current preset, use Generate & Assign, then Save.");
         assign.setName ("design-assign");
         Theme::bindColour (assign, juce::TextButton::buttonColourId, [] { return Theme::accent.darker (0.6f); });
@@ -749,7 +753,6 @@ struct WaveformWorkspace::Impl
         };
         monitorLevel.slider.onValueChange = monitorChanged;
         monitorTranspose.slider.onValueChange = monitorChanged;
-        audioSettings.onClick = [this] { if (owner.onAudioSettings) owner.onAudioSettings (); };
         mode.box.onChange = [this]
         {
             if (applying) return;
@@ -806,6 +809,14 @@ struct WaveformWorkspace::Impl
         load.onClick = [this] { loadRecipe (); };
         recall.onClick = [this] { recallAssigned (targetChannel.box.getSelectedId () - 1, targetZone.box.getSelectedId () - 1); };
         create.onClick = [this] { exportFiles (); };
+        testOutput.onClick = [this]
+        {
+            if (chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming) return;
+            clearAudition (false);
+            updateAuditionControls ();
+            if (owner.launchTestOutput) owner.launchTestOutput (settings, initialFolder, fileName.getText (), exportSlot.box.getSelectedId ());
+            else HardwareTestOutputComponent::show (settings, initialFolder, fileName.getText (), exportSlot.box.getSelectedId ());
+        };
         assign.onClick = [this] { assignFiles (); };
         targetChannel.box.onChange = [this] { updateAssignmentControls (); };
         targetZone.box.onChange = [this] { updateAssignmentControls (); };
@@ -916,6 +927,7 @@ struct WaveformWorkspace::Impl
             assignmentContext->preset.getChild (channel - 1).getChild (zone).getProperty (ZoneProperties::SamplePropertyId).toString ().isNotEmpty ());
         exportSlot.setEnabled (! busy);
         create.setEnabled (! busy && validate (settings).wasOk ());
+        testOutput.setEnabled (! busy); // Built-in test signals remain available even if this design is invalid.
         close.setEnabled (! busy); load.setEnabled (! busy); openExport.setEnabled (! busy);
     }
 
@@ -1075,7 +1087,6 @@ struct WaveformWorkspace::Impl
         auditionButton.setButtonText (active ? "Stop audition" : "Start audition");
         auditionButton.setEnabled (! cv && ! auditionSuspended && (active || (auditionPayload && displayedGeneration == generation && owner.onStartAudition)));
         monitorLevel.setEnabled (! cv); monitorTranspose.setEnabled (! cv);
-        audioSettings.setEnabled (owner.onAudioSettings != nullptr);
         auditionTitle.setText (cv ? "CV - VISUAL ONLY" : "LIVE AUDITION", juce::dontSendNotification);
         const auto warn { cv || auditionError.isNotEmpty () };
         Theme::bindColour (auditionHint, juce::Label::textColourId, [warn] { return warn ? Theme::warning : Theme::muted; });
@@ -1395,7 +1406,6 @@ struct WaveformWorkspace::Impl
         preview.setBounds (picture.withTrimmedBottom (4));
         previewRow.removeFromLeft (20);
         auto auditionHeading { previewRow.removeFromTop (29) };
-        audioSettings.setBounds (auditionHeading.removeFromRight (130)); auditionHeading.removeFromRight (8);
         auditionButton.setBounds (auditionHeading.removeFromRight (128));
         auditionTitle.setBounds (auditionHeading);
         auto monitorRow { previewRow.removeFromTop (38) };
@@ -1420,6 +1430,8 @@ struct WaveformWorkspace::Impl
         targetZone.setBounds (assignmentRow.removeFromLeft (200));
         packageHeading.setBounds (footer.removeFromTop (20));
         auto exportRow { footer.removeFromTop (38) };
+        testOutput.setBounds (exportRow.removeFromRight (142).reduced (0, 3));
+        exportRow.removeFromRight (12);
         exportSlot.setBounds (exportRow.removeFromLeft (240).withTrimmedRight (12));
         create.setBounds (exportRow.removeFromLeft (180).reduced (0, 3)); exportRow.removeFromLeft (12);
         if (openExport.isVisible ()) openExport.setBounds (exportRow.removeFromLeft (190).reduced (0, 3));

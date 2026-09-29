@@ -9,6 +9,11 @@ CV/modulation and linked layer banks such as supersaws. Both workspaces share
 the preset slots and unsaved edits. Generate & Assign writes unique 24-bit WAVs
 and a recipe into the current folder; Save writes the selected preset. Standalone
 package export remains available with a selectable preset number.
+The designer's **Test output...** action exports a separate hardware-validation
+package: the current design or audio/CV test signals, a low-level timing reference
+on its own channel, and an exact-frame manifest for recordings. It does not start
+computer playback or change the current preset. Every test output defaults to
+Mix Off; CV still requires speaker-disconnected, DC-capable measurement equipment.
 Audio cycles and complete layer banks can be auditioned live while shaping;
 the compact waveform preview also has an expanded view.
 Generated CV files are marked to prevent Samples-workspace speaker audition,

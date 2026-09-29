@@ -2,6 +2,7 @@
 #include "Assimil8or/Audio/WaveformDesignAssignment.h"
 #include "Assimil8or/Audio/WaveformDesignExport.h"
 #include "Assimil8or/Audio/WaveformDesignSidecars.h"
+#include "Assimil8or/Audio/HardwareTestOutput.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/Validator/ValidatorResultProperties.h"
 #include <iostream>
@@ -29,7 +30,7 @@ struct GeneratedSidecarValidatorTestAccess
             check (ram == 0 && ! preset && result.getNumFixerEntries () == 0,
                    "Sidecars and unrelated files do not count as sample RAM, presets or conversion fixes");
             check (result.getType () == (recognized ? ValidatorResultProperties::ResultTypeInfo : ValidatorResultProperties::ResultTypeWarning),
-                   "Only recognized designer artifacts are informational; unrelated or invalid files remain warnings");
+                   "Only recognized generated artifacts are informational; unrelated or invalid files remain warnings");
             check (result.getText ().contains (recognized ? "desktop-only" : "unknown file type"),
                    "Validation explains generated desktop sidecars without hiding unknown files");
         };
@@ -71,6 +72,58 @@ struct GeneratedSidecarValidatorTestAccess
             return file;
         };
         const auto validJson { juce::JSON::toString (toJson (settings)) };
+        juce::String validTestJson, testReadme;
+        for (const auto signal : { HardwareTestOutput::Signal::currentDesign, HardwareTestOutput::Signal::audioTone,
+                                  HardwareTestOutput::Signal::cvLevels, HardwareTestOutput::Signal::cvSine, HardwareTestOutput::Signal::cvRamp })
+        {
+            HardwareTestOutput::Settings testSettings;
+            testSettings.signal = signal;
+            testSettings.design = startingPoint (Mode::layers, Shape::saw);
+            testSettings.design.voiceCount = 7;
+            testSettings.design.cycleFrames = 64;
+            testSettings.design.sampleRate = signal == HardwareTestOutput::Signal::currentDesign ? 96000.0 : 48000.0;
+            testSettings.durationSeconds = 1.00001;
+            testSettings.presetNumber = 47;
+            HardwareTestOutput::ExportResult output;
+            const auto exported { HardwareTestOutput::exportPackage (testSettings, folder, "Test-sidecar", output) };
+            const auto exportMessage { "Export real hardware-test signal " + juce::String (static_cast<int> (signal)) + ": " + exported.getErrorMessage () };
+            check (exported.wasOk (), exportMessage.toRawUTF8 ());
+            validateSidecar (output.manifest, true);
+            validateSidecar (output.folder.getChildFile ("README.txt"), true);
+            check (WaveformDesignSidecars::identify (output.manifest) == WaveformDesignSidecars::Kind::testManifest,
+                   "Test manifests are recognized as analysis records, never waveform recipes");
+            check (WaveformDesignSidecars::identify (output.folder.getChildFile ("README.txt")) == WaveformDesignSidecars::Kind::testInstructions,
+                   "Test loading instructions have their own narrowly recognized kind");
+            validTestJson = output.manifest.loadFileAsString ();
+            testReadme = output.folder.getChildFile ("README.txt").loadFileAsString ();
+        }
+        validateSidecar (write ("ordinary.json", validTestJson), false);
+        validateSidecar (write ("design.json", validTestJson), false);
+        validateSidecar (write ("test-manifest.json", validJson), false);
+        validateSidecar (write ("test-manifest.json", "{\"type\":\"A8Manager.HardwareTestOutput\",\"schemaVersion\":1}"), false);
+        validateSidecar (write ("test-manifest.json", validTestJson + "\ntrailing content"), false);
+        validateSidecar (write ("README.txt", "A8Manager Hardware Test Output\n\nIncomplete instructions."), false);
+        validateSidecar (write ("README.txt", "A8Manager Hardware Test Output\n\nROUTING AND SAFETY\n\nREFERENCE MARKERS\n\nFILES AND EXPECTED VALUES\n"), false);
+        validateSidecar (write ("README.txt", testReadme.replace ("\r\n", "\n").replace ("\n", "\r\n")), true);
+        for (const auto& key : { "schemaVersion", "signal", "sampleRate", "durationSeconds", "windowFrames", "level", "presetNumber", "referenceChannel", "channels", "referenceBursts" })
+        {
+            auto malformed { juce::JSON::parse (validTestJson) };
+            malformed.getDynamicObject ()->removeProperty (key);
+            validateSidecar (write ("test-manifest.json", juce::JSON::toString (malformed)), false);
+        }
+        auto malformedTest = [&] (auto change)
+        {
+            auto malformed { juce::JSON::parse (validTestJson) };
+            change (*malformed.getDynamicObject ());
+            validateSidecar (write ("test-manifest.json", juce::JSON::toString (malformed)), false);
+        };
+        malformedTest ([] (auto& object) { object.setProperty ("schemaVersion", 2); });
+        malformedTest ([] (auto& object) { object.setProperty ("windowFrames", 48000.5); });
+        malformedTest ([] (auto& object) { object.setProperty ("durationSeconds", 61.0); });
+        malformedTest ([] (auto& object) { object.getProperty ("channels").getArray ()->getReference (0).getDynamicObject ()->setProperty ("file", "../outside.wav"); });
+        malformedTest ([] (auto& object) { object.getProperty ("channels").getArray ()->getLast ().getDynamicObject ()->setProperty ("purpose", "CV"); });
+        malformedTest ([] (auto& object) { object.getProperty ("referenceBursts").getArray ()->getReference (0).getDynamicObject ()->setProperty ("startFrame", -1); });
+        malformedTest ([] (auto& object) { object.getProperty ("referenceBursts").getArray ()->getLast ().getDynamicObject ()->setProperty ("endFrameExclusive", 999999999); });
         validateSidecar (write ("ordinary.json", validJson), false);
         validateSidecar (write ("other.txt", genuineReadme), false);
         validateSidecar (write ("design.json", "{\"name\":\"unrelated application\"}"), false);
@@ -100,7 +153,7 @@ struct GeneratedSidecarValidatorTestAccess
         check (WaveformDesignSidecars::identify (folder.getChildFile ("missing.design.json")) == WaveformDesignSidecars::Kind::unknown,
                "Missing candidate sidecars are not recognized");
 
-        std::cout << "PASS: generated recipe/readme validation, real package and assignment outputs, preserved unknown warnings and bounded schema checks\n";
+        std::cout << "PASS: generated recipe/readme/test-manifest validation, real package and assignment outputs, preserved unknown warnings and bounded schema checks\n";
     }
 };
 

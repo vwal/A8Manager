@@ -41,6 +41,10 @@ set_tests_properties(ParserCvRegression StereoSplitRegression PROPERTIES TIMEOUT
 juce_add_console_app(A8ManagerInteractionTests PRODUCT_NAME "A8Manager Interaction Tests")
 juce_generate_juce_header(A8ManagerInteractionTests)
 target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
+    HardwareTestOutputTests.cpp
+    HardwareTestOutputUiTests.cpp
+    ../Source/Assimil8or/Audio/HardwareTestOutput.cpp
+    ../Source/GUI/HardwareTestOutputComponent.cpp
     AppearanceTests.cpp
     ../Source/GUI/GuiProperties.cpp
     CvAuditionTests.cpp
@@ -132,6 +136,9 @@ set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPE
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
 add_test(NAME ValueDragRegression COMMAND A8ManagerInteractionTests)
 add_test(NAME AppearanceRegression COMMAND A8ManagerInteractionTests --appearance)
+add_test(NAME HardwareTestOutputRegression COMMAND A8ManagerInteractionTests --hardware-test-output)
+add_test(NAME HardwareTestOutputUiRegression COMMAND A8ManagerInteractionTests --hardware-test-output-ui)
+set_tests_properties(HardwareTestOutputRegression HardwareTestOutputUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 set_tests_properties(AppearanceRegression PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME WaveformDesignRegression COMMAND A8ManagerInteractionTests --waveform-design)
 add_test(NAME WaveformDesignExportRegression COMMAND A8ManagerInteractionTests --waveform-design-export)
