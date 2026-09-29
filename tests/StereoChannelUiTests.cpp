@@ -125,7 +125,18 @@ struct StereoChannelUiTestAccess
         editor->channelTabs.setCurrentTabIndex (1);
         check (std::abs (editor->getSelectedDuration (2).value_or (-1.0) - 300.5 / 48000.0) < 1.0e-9,
                "Designer gets master loop timing when the stereo right channel is selected");
+        leftProperties.setPitch (12.0, false);
+        check (std::abs (editor->getSelectedDuration (2).value_or (-1.0) - 300.5 / 96000.0) < 1.0e-9,
+               "Designer duration matching includes master channel pitch when viewing stereo right");
+        leftProperties.setPitch (0.0, false);
         editor->channelTabs.setCurrentTabIndex (0);
+
+        ZoneProperties firstZone (leftProperties.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        firstZone.setSample ("", false);
+        editor->updateChannelTabName (0);
+        check (editor->isChannelActive (0) && editor->channelTabs.getTabNames ()[0] == "CH 1-L",
+               "A channel with an empty first zone retains its active stereo label when later zones have content");
+        firstZone.setSample ("stereo-ui-fixture.wav", false);
 
         std::function<void ()> disposedRecall;
         {

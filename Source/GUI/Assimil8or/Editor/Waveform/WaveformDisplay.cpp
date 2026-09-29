@@ -1,6 +1,7 @@
 #include "WaveformDisplay.h"
 #include <cmath>
 #include "../../../ModernTheme.h"
+#include "../../../../Assimil8or/Audio/PlaybackPitch.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 
 namespace
@@ -68,8 +69,8 @@ WaveformDisplay::WaveformDisplay ()
     zoomInfo.setTooltip ("Reset zoom: fit the whole file horizontally and restore 100% waveform height (also double-click the waveform).");
     durationInfo.setFont (juce::FontOptions (11.0f));
     durationInfo.setBorderSize ({ 0, 3, 0, 3 });
-    durationInfo.setTooltip ("File, sample region and loop lengths in minutes:seconds at the zone's PITCH OFFSET. "
-                             "Excludes audition speed, Keep pitch time-stretching, channel pitch and CV. Marker timestamps remain source-file positions. "
+    durationInfo.setTooltip ("File, sample region and loop lengths in minutes:seconds at channel PITCH + zone PITCH OFFSET, capped at the sampler's playback-rate limit. "
+                             "Excludes audition speed and external CV. Marker timestamps remain source-file positions. "
                              "Gray stripes always mark a gap from Sample End to a later Loop Start. With hardware looping enabled they extend through Loop End. "
                              "This hardware loop-extent hint does not change which region the audition buttons play.");
     addAndMakeVisible (durationInfo);
@@ -92,8 +93,8 @@ WaveformDisplay::WaveformDisplay ()
     auditionRateSlider.setScrollWheelEnabled (false);
     auditionRateSlider.setTooltip ("Audition speed: 0.0625x to 4x. Drag or type; double-click the slider for 1x. "
                                    "With Keep pitch on, speed changes duration without transposing. "
-                                   "Zone PITCH OFFSET is applied separately. With it off, speed and pitch are linked. "
-                                   "Channel pitch/CV and other hardware processing are not simulated.");
+                                   "Channel PITCH + zone PITCH OFFSET always change both pitch and duration. With it off, speed and pitch are linked. "
+                                   "External CV and other hardware processing are not simulated.");
     auditionRateLabel.setTooltip (auditionRateSlider.getTooltip ());
     auditionRateSlider.onValueChange = [this] ()
     {
@@ -101,7 +102,7 @@ WaveformDisplay::WaveformDisplay ()
     };
     addAndMakeVisible (auditionRateSlider);
     preservePitchButton.setToggleState (true, juce::dontSendNotification);
-    preservePitchButton.setTooltip ("Time-stretched preview: keep pitch steady as speed changes, then apply the zone's PITCH OFFSET. "
+    preservePitchButton.setTooltip ("Keep audition-speed changes from altering pitch. Channel PITCH + zone PITCH OFFSET still change pitch and duration as on the sampler. "
                                     "Extreme rates and very short loops may produce artifacts. "
                                     "Turn off for ordinary sampler-style varispeed (not a full hardware emulation). "
                                     "Preview mode/speed are not saved into the preset.");
@@ -281,6 +282,7 @@ void WaveformDisplay::init (juce::ValueTree channelPropertiesVT, juce::ValueTree
     channelProperties.wrap (channelPropertiesVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     channelProperties.onLoopModeChange = [this] (int) { updateMarkerPositions (); };
     channelProperties.onLoopLengthIsEndChange = [this] (bool) { ++matchGeneration; };
+    channelProperties.onPitchChange = [this] (double) { updateDurations (); };
     sampleManagerProperties.wrap (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::client, AudioPlayerProperties::EnableCallbacks::yes);
     audioPlayerProperties.onAuditionRateChange = [this] (double rate) { auditionRateSlider.setValue (rate, juce::dontSendNotification); };
@@ -489,7 +491,8 @@ juce::String WaveformDisplay::markerLabel (int marker)
     const auto rate { hasSample () ? sampleProperties.getSampleRate () : 0.0 };
     auto text { names[marker] + " " + WaveformPresentation::samples (position) + " (" + WaveformPresentation::duration (position, rate) + ")" };
     if (marker == kSampleEnd || marker == kLoopEnd)
-        text += "  length " + WaveformPresentation::duration (position - markerPosition (marker - 1), rate, zoneProperties.getPitchOffset ());
+        text += "  length " + WaveformPresentation::duration (position - markerPosition (marker - 1), rate,
+            PlaybackPitch::effectiveSemitones (channelProperties.getPitch (), zoneProperties.getPitchOffset (), rate));
     return text;
 }
 
@@ -497,7 +500,7 @@ void WaveformDisplay::updateDurations ()
 {
     if (! hasSample ()) { durationInfo.setText ("No sample", juce::dontSendNotification); return; }
     const auto rate { sampleProperties.getSampleRate () };
-    const auto pitch { zoneProperties.getPitchOffset () };
+    const auto pitch { PlaybackPitch::effectiveSemitones (channelProperties.getPitch (), zoneProperties.getPitchOffset (), rate) };
     auto time = [rate, pitch] (double frames) { return WaveformPresentation::duration (frames, rate, pitch); };
     durationInfo.setText ("File " + time (static_cast<double> (getSampleLength ())) + "  |  " +
         (loopSelected ? "Sample " : "SAMPLE ") + time (markerPosition (kSampleEnd) - markerPosition (kSampleStart)) + "  |  " +

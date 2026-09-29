@@ -110,9 +110,13 @@ juce::String ChannelProperties::getNormalizedCvInput (juce::String cvInput)
 
 CvInputAndAmount ChannelProperties::getCvInputAndValueFromString (juce::String cvInputAndValueString)
 {
-    const auto delimiterLocation { cvInputAndValueString.indexOfChar (0, ' ') };
-    //jassert (delimiterLocation != 0);
-    return { cvInputAndValueString.substring (0, delimiterLocation), cvInputAndValueString.substring (delimiterLocation + 1).getFloatValue () };
+    const auto text { cvInputAndValueString.trim () };
+    const auto delimiterLocation { text.lastIndexOfChar (' ') };
+    if (delimiterLocation <= 0 || delimiterLocation >= text.length () - 1)
+        return { "Off", 0.0 };
+    // Relative CV aliases contain a space ("CV A"). Split at the amount,
+    // using the same boundary as the preset parser's format validation.
+    return { getNormalizedCvInput (text.substring (0, delimiterLocation).trim ()), text.substring (delimiterLocation + 1).getFloatValue () };
 }
 
 bool ChannelProperties::isChannelPropertiesVT (juce::ValueTree valueTree)

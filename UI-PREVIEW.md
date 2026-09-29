@@ -71,8 +71,10 @@ unchanged.
   Native-menu callbacks reject
   stale zone/sample selections. An app-local ruler adds grouped frame counts
   without modifying the pinned oolib submodule.
-  File/sample/loop lengths use source rate and zone PITCH OFFSET, excluding preview
-  speed, Keep pitch, channel pitch and CV. Source-position timestamps never shift.
+  File/sample/loop lengths use source rate and combined channel PITCH + zone
+  PITCH OFFSET, capped at the hardware's source-rate-dependent upper limit.
+  Preview speed and external CV are excluded; Keep pitch does not change these
+  lengths. Source-position timestamps never shift.
   Changed boundaries remain normal preset edits saved with Save.
   A yellow playhead with a small triangular cap follows ONCE/LOOP audition at
   30 Hz. It uses original sample-frame positions, including after resampling,
@@ -86,16 +88,16 @@ unchanged.
 - **Audition speed:** the waveform toolbar has a logarithmic slider and editable
   multiplier, from 0.0625x (1/16 speed) to 4x. Double-click the slider to reset to
   1x. It works while playing ONCE or LOOP. **Keep pitch** (on by default) changes
-  duration without transposing the sound; the zone's **PITCH OFFSET**, including
-  fractional semitones, is applied independently and responds during playback.
-  At 0.5x a sample lasts twice as long; +12 semitones then raises it an octave
-  without halving that duration. At 1x with zero offset, audio bypasses the
-  stretcher. Turn Keep pitch off for ordinary sampler-style varispeed, where
-  both speed and zone pitch affect pitch and duration together.
+  audition-speed duration without adding transposition. Combined channel **PITCH**
+  and zone **PITCH OFFSET**, including fractional semitones, always change both
+  pitch and duration and respond during playback. At 0.5x a sample lasts twice
+  as long; +12 semitones then raises it an octave and halves that duration back
+  to the original length. At 1x, audio bypasses the stretcher. Turn Keep pitch off
+  for ordinary sampler-style varispeed, where speed also changes heard pitch.
   The rate stays fixed as loop points change. Preview mode/rate are shared across
   channels/zones for this session, reset to Keep pitch / 1x on relaunch, and never
-  modify the preset. A stereo pair uses the auditioned master zone's offset on
-  both sides. Channel-level Pitch/CV, envelopes, phase modulation and the other
+  modify the preset. A stereo pair uses the auditioned master's combined pitch on
+  both sides. External CV, envelopes, phase modulation and the other
   hardware processing are not simulated.
   Time stretching can smear transients or produce artifacts, especially with
   extreme speeds/transpositions or very short loops. It is an editing aid, not

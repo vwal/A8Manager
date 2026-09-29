@@ -9,6 +9,7 @@
 #include "../../../Assimil8or/Preset/PresetProperties.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "../../../Assimil8or/Audio/SampleLoopSimulation.h"
+#include "../../../Assimil8or/Audio/PlaybackPitch.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Debug/DumpStack.h"
 #include "oolib/GUI/ErrorHelpers.h"
@@ -111,7 +112,7 @@ ZoneEditor::ZoneEditor ()
         label->setFont (juce::FontOptions (11.0f));
         label->setBorderSize ({ 0, 2, 0, 2 });
         label->setJustificationType (juce::Justification::centredRight);
-        label->setTooltip ("Region length in minutes:seconds at this zone's PITCH OFFSET; excludes audition speed, Keep pitch and channel pitch/CV.");
+        label->setTooltip ("Region length in minutes:seconds at channel PITCH + zone PITCH OFFSET, capped at the sampler's playback-rate limit. Excludes audition speed and external CV.");
         addAndMakeVisible (label);
     }
     Theme::bindColour (sampleDurationLabel, juce::Label::textColourId, [] { return WaveformPresentation::markerColours[1]; });
@@ -269,7 +270,7 @@ void ZoneEditor::updateDurations ()
     }
     const auto fileLength { sampleProperties.getLengthInSamples () };
     const auto rate { sampleProperties.getSampleRate () };
-    const auto pitch { zoneProperties.getPitchOffset () };
+    const auto pitch { PlaybackPitch::effectiveSemitones (parentChannelProperties.getPitch (), zoneProperties.getPitchOffset (), rate) };
     sampleDurationLabel.setText ("SAMPLE " + WaveformPresentation::duration (
         static_cast<double> (zoneProperties.getSampleEnd ().value_or (fileLength) - zoneProperties.getSampleStart ().value_or (0)), rate, pitch), juce::dontSendNotification);
     loopDurationLabel.setText ("LOOP " + WaveformPresentation::duration (
@@ -708,6 +709,7 @@ void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree unedite
     parentChannelProperties.wrap (zoneProperties.getValueTree ().getParent (), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     parentChannelIndex = parentChannelProperties.getId () - 1;
     parentChannelProperties.onChannelModeChange = [this] (int) { updateAuditionControls (); };
+    parentChannelProperties.onPitchChange = [this] (double) { updateDurations (); };
 
     SampleManagerProperties sampleManagerProperties (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (parentChannelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::yes);

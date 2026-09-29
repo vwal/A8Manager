@@ -85,6 +85,7 @@ set(ASSIMIL8OR_AUDIO_FILES
     Source/Assimil8or/Audio/AudioManager.h
     Source/Assimil8or/Audio/AudioPlayer.cpp
     Source/Assimil8or/Audio/AudioPlayer.h
+    Source/Assimil8or/Audio/PlaybackPitch.h
     Source/Assimil8or/Audio/AuditionStretch.cpp
     Source/Assimil8or/Audio/AuditionStretch.h
     Source/Assimil8or/Audio/AudioPlayerProperties.cpp

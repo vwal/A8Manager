@@ -3,6 +3,56 @@
 #include "Preset/ParameterNames.h"
 #include "Preset/ParameterPresetsSingleton.h"
 #include "oolib/Debug/DebugLog.h"
+#include <charconv>
+#include <cmath>
+#include <set>
+
+namespace
+{
+    bool isFiniteNumber (juce::String text, bool integer = false)
+    {
+        if (text.startsWithChar ('+')) text = text.substring (1);
+        if (text.isEmpty ()) return false;
+        const auto data { text.toStdString () };
+        const auto end { data.data () + data.size () };
+        if (integer)
+        {
+            int parsed {};
+            const auto result { std::from_chars (data.data (), end, parsed) };
+            return result.ec == std::errc {} && result.ptr == end;
+        }
+        // Floating-point from_chars requires macOS 26 in Apple's libc++; keep
+        // decimal/exponent validation portable to the app's older deployment target.
+        auto cursor { data.data () };
+        if (cursor != end && *cursor == '-') ++cursor;
+        auto consumeDigits = [&] ()
+        {
+            const auto start { cursor };
+            while (cursor != end && *cursor >= '0' && *cursor <= '9') ++cursor;
+            return cursor != start;
+        };
+        auto hasDigits { consumeDigits () };
+        if (cursor != end && *cursor == '.')
+        {
+            ++cursor;
+            hasDigits = consumeDigits () || hasDigits;
+        }
+        if (! hasDigits) return false;
+        if (cursor != end && (*cursor == 'e' || *cursor == 'E'))
+        {
+            ++cursor;
+            if (cursor != end && (*cursor == '+' || *cursor == '-')) ++cursor;
+            if (! consumeDigits ()) return false;
+        }
+        return cursor == end && std::isfinite (text.getDoubleValue ());
+    }
+
+    bool isCvInput (const juce::String& input)
+    {
+        return input == "Off" || input == "CV A" || input == "CV B" || input == "CV C"
+            || (input.length () == 2 && input[0] >= '0' && input[0] <= '8' && input[1] >= 'A' && input[1] <= 'C');
+    }
+}
 
 #define LOG_PARSING 0
 #if LOG_PARSING
@@ -23,10 +73,24 @@ Assimil8orPreset::Assimil8orPreset ()
 
 juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree presetPropertiesVT)
 {
-    if (! presetPropertiesVT.isValid ())
+    if (! presetPropertiesVT.hasType (PresetProperties::PresetTypeId) || presetPropertiesVT.getNumChildren () != kNumChannels)
         return juce::Result::fail ("The preset is not valid.");
     if (presetFile.isDirectory ())
         return juce::Result::fail ("The destination is a folder: " + presetFile.getFullPathName ());
+    for (auto channelIndex { 0 }; channelIndex < kNumChannels; ++channelIndex)
+    {
+        const auto channel { presetPropertiesVT.getChild (channelIndex) };
+        if (! channel.hasType (ChannelProperties::ChannelTypeId) || channel.getNumChildren () != kNumZones
+            || static_cast<int> (channel.getProperty (ChannelProperties::IdPropertyId)) != channelIndex + 1)
+            return juce::Result::fail ("The preset has invalid channel structure; nothing was saved.");
+        for (auto zoneIndex { 0 }; zoneIndex < kNumZones; ++zoneIndex)
+        {
+            const auto zone { channel.getChild (zoneIndex) };
+            if (! zone.hasType (ZoneProperties::ZoneTypeId) || zone.getNumChildren () != 0
+                || static_cast<int> (zone.getProperty (ZoneProperties::IdPropertyId)) != zoneIndex + 1)
+                return juce::Result::fail ("The preset has invalid zone structure; nothing was saved.");
+        }
+    }
 
     // Exporting to another slot must not change the live editor's preset identity.
     PresetProperties presetPropertiesToWrite (presetPropertiesVT.createCopy (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
@@ -63,11 +127,10 @@ juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree pre
     addLine (presetPropertiesToWrite.getXfadeDCV () != defaultPresetProperties.getXfadeDCV (), Parameter::Preset::XfadeDCVId + " : " + presetPropertiesToWrite.getXfadeDCV ());
     addLine (presetPropertiesToWrite.getXfadeDWidth () != defaultPresetProperties.getXfadeDWidth (), Parameter::Preset::XfadeDWidthId + " : " + juce::String (presetPropertiesToWrite.getXfadeDWidth (), 2));
 
-    presetPropertiesToWrite.forEachChannel ([this, &addLine, &indentAmount, &defaultZoneProperties, &defaultChannelProperties] (juce::ValueTree channelVT, int)
+    presetPropertiesToWrite.forEachChannel ([this, &addLine, &lines, &indentAmount, &defaultZoneProperties, &defaultChannelProperties] (juce::ValueTree channelVT, int)
     {
         ChannelProperties channelProperties (channelVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
-        ZoneProperties zoneProperties (channelProperties.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-        if (! zoneProperties.getSample ().isEmpty ())
+        const auto channelHeader { lines.size () };
         {
             addLine (true, Section::ChannelId + " " + juce::String (channelProperties.getId ()) + " :");
             ++indentAmount;
@@ -112,10 +175,10 @@ juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree pre
             addLine (channelProperties.getZonesCV () != defaultChannelProperties.getZonesCV (), Parameter::Channel::ZonesCVId + " : " + channelProperties.getZonesCV ());
             addLine (channelProperties.getZonesRT () != defaultChannelProperties.getZonesRT (), Parameter::Channel::ZonesRTId + " : " + juce::String (channelProperties.getZonesRT ()));
 
-            channelProperties.forEachZone ([this, &indentAmount, &addLine, &defaultZoneProperties] (juce::ValueTree zoneVT, int)
+            channelProperties.forEachZone ([this, &indentAmount, &addLine, &lines, &defaultZoneProperties] (juce::ValueTree zoneVT, int)
             {
                 ZoneProperties zoneProperties (zoneVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-                if (! zoneProperties.getSample ().isEmpty ())
+                const auto zoneHeader { lines.size () };
                 {
                     addLine (true, Section::ZoneId + " " + juce::String (zoneProperties.getId ()) + " :");
                     ++indentAmount;
@@ -134,21 +197,45 @@ juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree pre
                     addLine (zoneProperties.getSide () != defaultZoneProperties.getSide (), Parameter::Zone::SideId + " : " + juce::String (zoneProperties.getSide ()));
                     --indentAmount;
                 }
+                // A sample-less zone may still have offsets, markers or a voltage boundary.
+                // Omit only an entirely default zone, never one with retained settings.
+                if (lines.size () == zoneHeader + 1)
+                    lines.remove (zoneHeader);
                 return true;
             });
             --indentAmount;
         }
+        // Channel settings are independent of whether any zone currently has a sample.
+        if (lines.size () == channelHeader + 1)
+            lines.remove (channelHeader);
         return true;
     });
 
     // write data out to preset file
+    Assimil8orPreset verifier;
+    verifier.parse (lines);
+    if (verifier.getParseErrorsVT ().getNumChildren () != 0)
+        return juce::Result::fail ("Cannot save invalid preset values: " + verifier.getParseErrorsVT ().getChild (0).getProperty ("description").toString ());
     const auto stringToWrite { lines.joinIntoString ("\r\n") };
-    return presetFile.replaceWithText (stringToWrite) ? juce::Result::ok ()
-        : juce::Result::fail ("Unable to save '" + presetFile.getFullPathName () + "'. Check the destination and available space.");
+    juce::TemporaryFile temporary (presetFile, juce::TemporaryFile::useHiddenFile);
+    {
+        juce::FileOutputStream output (temporary.getFile ());
+        const auto bytes { stringToWrite.getNumBytesAsUTF8 () };
+        if (output.failedToOpen () || ! output.write (stringToWrite.toRawUTF8 (), bytes))
+            return juce::Result::fail ("Unable to write '" + presetFile.getFullPathName () + "'. The existing preset was not replaced.");
+        output.flush ();
+        if (output.getStatus ().failed () || output.getPosition () != static_cast<juce::int64> (bytes)
+            || temporary.getFile ().getSize () != static_cast<juce::int64> (bytes))
+            return juce::Result::fail ("Unable to finish writing '" + presetFile.getFullPathName () + "'. The existing preset was not replaced.");
+    }
+    return temporary.overwriteTargetFileWithTemporary () ? juce::Result::ok ()
+        : juce::Result::fail ("Unable to replace '" + presetFile.getFullPathName () + "'. Check the destination and available space.");
 }
 
 juce::Result Assimil8orPreset::write (juce::File presetFile)
 {
+    if (parseErrorList.getNumChildren () != 0)
+        return juce::Result::fail ("Cannot save a preset that contains parse errors.");
     return write (presetFile, presetProperties.getValueTree ());
 }
 
@@ -171,15 +258,55 @@ void Assimil8orPreset::parse (juce::StringArray presetLines)
     zoneProperties = {};
     curZoneSection = {};
 
+    auto reportError = [this] (juce::String type, juce::String description)
+    {
+        juce::ValueTree error ("ParseError");
+        error.setProperty ("type", type, nullptr);
+        error.setProperty ("description", description, nullptr);
+        parseErrorList.addChild (error, -1, nullptr);
+    };
+    std::set<juce::String> sections, parameters;
+    auto presetHeaders { 0 };
+
     for (const auto& presetLine : presetLines)
     {
         LogParsing ("parsing - " + presetLine.trimStart ());
-        if (presetLine.trim ().isEmpty ())
+        if (presetLine.trim ().isEmpty () || presetLine.trimStart ().startsWithChar ('#'))
             continue;
+
+        if (! presetLine.containsChar (':'))
+        {
+            reportError ("ParameterFormatError", "Missing ':' in preset line: " + presetLine.trim ());
+            continue;
+        }
 
         key = presetLine.upToFirstOccurrenceOf (":", false, false).trim ();
         value = presetLine.fromFirstOccurrenceOf (":", false, false).trim ();
+        if (presetLine.containsAnyOf ("\r\n"))
+        {
+            reportError ("ParameterFormatError", "A parameter must fit on one line: " + key);
+            continue;
+        }
         const auto paramName { key.upToFirstOccurrenceOf (" ", false, false) };
+        const auto isSection { paramName == Section::PresetId || paramName == Section::ChannelId || paramName == Section::ZoneId };
+        if (isSection)
+        {
+            const auto number { key.fromFirstOccurrenceOf (" ", false, false).trim () };
+            const auto maximum { paramName == Section::PresetId ? 199 : 8 };
+            if (! isFiniteNumber (number, true) || number.getIntValue () < 1 || number.getIntValue () > maximum || value.isNotEmpty ())
+            {
+                reportError ("ParameterFormatError", "Invalid section: " + key);
+                continue;
+            }
+            if (paramName == Section::PresetId) ++presetHeaders;
+            auto sectionKey { paramName + " " + juce::String (number.getIntValue ()) };
+            if (paramName == Section::ZoneId) sectionKey = juce::String (channelProperties.isValid () ? channelProperties.getId () : 0) + "/" + sectionKey;
+            if (! sections.insert (sectionKey).second || presetHeaders > 1)
+            {
+                reportError ("ParameterFormatError", "Duplicate section: " + key);
+                continue;
+            }
+        }
 
         auto findActionMapContaining = [this, &paramName] () -> ActionMap*
         {
@@ -215,7 +342,29 @@ void Assimil8orPreset::parse (juce::StringArray presetLines)
             }
 
             if (curActions == actionMap)
+            {
+                if (! isSection)
+                {
+                    auto parameterKey { getSectionName () + "/" + key };
+                    if (curActions == &channelActions || curActions == &zoneActions)
+                        parameterKey += "/" + juce::String (channelProperties.getId ());
+                    if (curActions == &zoneActions) parameterKey += "/" + juce::String (zoneProperties.getId ());
+                    if (key != paramName || ! parameters.insert (parameterKey).second)
+                    {
+                        reportError ("ParameterFormatError", "Invalid or duplicate parameter: " + key);
+                        continue;
+                    }
+                    static const juce::StringArray textParameters { "Name", "Sample", "Data2asCV", "XfadeACV", "XfadeBCV", "XfadeCCV", "XfadeDCV", "XfadeGroup", "ZonesCV" };
+                    static const juce::StringArray cvAmountParameters { "AliasingMod", "AttackMod", "BitsMod", "ExpAM", "ExpFM", "LinAM", "LinFM", "LoopLengthMod", "LoopStartMod", "MixMod", "PanMod", "PhaseCV", "PitchCV", "PMIndexMod", "ReleaseMod", "SampleStartMod", "SampleEndMod" };
+                    static const juce::StringArray integerParameters { "MidiSetup", "Aliasing", "AttackFromCurrent", "AutoTrigger", "ChannelMode", "LinAMisExtEnv", "LoopLengthIsEnd", "LoopMode", "MixModIsFader", "PlayMode", "PMSource", "Reverse", "SpliceSmoothing", "ZonesRT", "LoopStart", "SampleStart", "SampleEnd", "Side" };
+                    if (! textParameters.contains (key) && ! cvAmountParameters.contains (key) && ! isFiniteNumber (value, integerParameters.contains (key)))
+                    {
+                        reportError ("ParameterFormatError", "Invalid numeric value for '" + key + "': " + value);
+                        continue;
+                    }
+                }
                 actionMap->find (paramName)->second ();
+            }
         }
         else
         {
@@ -227,6 +376,8 @@ void Assimil8orPreset::parse (juce::StringArray presetLines)
             parseErrorList.addChild (newParseError, -1, nullptr);
         }
     }
+    if (presetHeaders != 1)
+        reportError ("ParameterFormatError", "Expected exactly one Preset section.");
     LogParsing ("Assimil8orPreset::parse - exit");
 }
 
@@ -249,7 +400,10 @@ juce::String Assimil8orPreset::getSectionName ()
 void Assimil8orPreset::checkCvInputAndAmountFormat (juce::String theKey, juce::String theValue)
 {
     const auto delimiterLocation { theValue.indexOfChar (0, ' ') };
-    if (delimiterLocation <= 0 || delimiterLocation >= theValue.length () - 1)
+    const auto cvInput { theValue.upToLastOccurrenceOf (" ", false, false).trim () };
+    const auto amount { theValue.fromLastOccurrenceOf (" ", false, false).trim () };
+    if (delimiterLocation <= 0 || delimiterLocation >= theValue.length () - 1 || ! isCvInput (cvInput)
+        || ! isFiniteNumber (amount) || ! std::isfinite (amount.getFloatValue ()))
     {
         const auto parameterFormatError { juce::String ("value '") + theValue + "' for parameter '" + theKey + "' - incorrect format" };
         LogParsing (parameterFormatError);

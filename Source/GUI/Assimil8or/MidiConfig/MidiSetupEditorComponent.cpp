@@ -320,8 +320,11 @@ juce::PopupMenu MidiSetupEditorComponent::createMidiSetupCloneMenu (std::functio
     {
         if (destMidiSetupIndex != midiSetupIndex)
         {
-            cloneMenu.addItem ("To Midi Setup " + juce::String (destMidiSetupIndex + 1), true, false, [this, destMidiSetupIndex, setter] ()
+            const auto writable { ! static_cast<bool> (midiSetupPropertiesListVT.getChild (destMidiSetupIndex).getProperty (MidiSetupProperties::FileReadOnlyPropertyId, false)) };
+            cloneMenu.addItem ("To Midi Setup " + juce::String (destMidiSetupIndex + 1), writable, false, [this, destMidiSetupIndex, setter] ()
             {
+                if (static_cast<bool> (midiSetupPropertiesListVT.getChild (destMidiSetupIndex).getProperty (MidiSetupProperties::FileReadOnlyPropertyId, false)))
+                    return;
                 MidiSetupProperties destMidiSetupProperties (midiSetupPropertiesListVT.getChild (destMidiSetupIndex), MidiSetupProperties::WrapperType::client, MidiSetupProperties::EnableCallbacks::no);
                 setter (destMidiSetupProperties);
             });
@@ -332,12 +335,12 @@ juce::PopupMenu MidiSetupEditorComponent::createMidiSetupCloneMenu (std::functio
         // clone to other midi setups
         for (auto destMidiSetupIndex { 0 }; destMidiSetupIndex < 9; ++destMidiSetupIndex)
         {
-            if (destMidiSetupIndex != midiSetupIndex)
+            if (destMidiSetupIndex != midiSetupIndex && ! static_cast<bool> (midiSetupPropertiesListVT.getChild (destMidiSetupIndex).getProperty (MidiSetupProperties::FileReadOnlyPropertyId, false)))
             {
                 MidiSetupProperties destMidiSetupProperties (midiSetupPropertiesListVT.getChild (destMidiSetupIndex), MidiSetupProperties::WrapperType::client, MidiSetupProperties::EnableCallbacks::no);
                 setter (destMidiSetupProperties);
             }
-            }
+        }
     });
     return cloneMenu;
 }

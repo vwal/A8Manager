@@ -3,6 +3,7 @@
 #include "Assimil8or/MidiSetup/MidiSetupFile.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 namespace
@@ -65,6 +66,108 @@ namespace
         Assimil8orPreset writer;
         require (writer.write (occupied, preset ("Ten")).wasOk (), "Write paste target fixture");
         require (PresetFileOperations::needsOverwriteConfirmation (occupied) && ! PresetFileOperations::needsOverwriteConfirmation (empty), "Paste confirmation is based on destination existence, not selected row");
+    }
+    void testSparsePresetRoundTrip (juce::File folder)
+    {
+        auto tree { preset ("Sparse working preset") };
+        PresetProperties properties (tree, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+        ChannelProperties sparse (properties.getChannelVT (0), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        sparse.setPitch (-96.0, false);
+        sparse.setPan (0.375, false);
+        sparse.setPitchCV ("2B", -0.125, false);
+        ZoneProperties later (sparse.getZoneVT (4), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        later.setSample ("later zone.wav", false);
+        later.setSampleStart (111, false);
+        later.setSampleEnd (9999, false);
+        later.setLoopStart (222, false);
+        later.setLoopLength (777.125, false);
+        later.setMinVoltage (-3.75, false);
+        ZoneProperties empty (sparse.getZoneVT (7), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        empty.setPitchOffset (-96.0, false);
+        empty.setMinVoltage (-5.0, false);
+        empty.setLevelOffset (-12.5, false);
+        ChannelProperties settingsOnly (properties.getChannelVT (5), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        settingsOnly.setChannelMode (ChannelProperties::cycle, false);
+        settingsOnly.setAttack (1.2345, false);
+        settingsOnly.setReverse (true, false);
+        settingsOnly.setMixModIsFader (true, false);
+        settingsOnly.setZonesCV ("8C", false);
+        settingsOnly.setLoopLengthIsEnd (true, false);
+        const auto destination { folder.getChildFile ("prst090.yml") };
+        Assimil8orPreset writer;
+        require (writer.write (destination, tree).wasOk (), "Save sparse and settings-only channels");
+        juce::ValueTree loaded;
+        require (PresetFileOperations::read (destination, loaded).wasOk (), "Reload sparse and settings-only channels");
+        require (PresetHelpers::areEntirePresetsEqual (tree, loaded), "Retain later populated zones, empty-zone settings, and settings-only channels");
+        const auto text { destination.loadFileAsString () };
+        require (text.contains ("Channel 1 :") && text.contains ("Zone 5 :") && text.contains ("Zone 8 :") && text.contains ("Channel 6 :"), "Explicitly serialize each non-default sparse section");
+        require (! text.contains ("Channel 2 :") && ! text.contains ("Zone 1 :"), "Entirely default empty sections can remain omitted");
+
+        // All known property families must survive even with no sample anywhere.
+        for (const auto type : { ParameterPresetListProperties::MinParameterPresetType, ParameterPresetListProperties::MaxParameterPresetType })
+        {
+            auto limits { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (type).createCopy () };
+            require (writer.write (destination, limits).wasOk () && PresetFileOperations::read (destination, loaded).wasOk (), "Save/reload all parameter families without samples");
+            require (PresetHelpers::areEntirePresetsEqual (limits, loaded), "All known preset/channel/zone property families round-trip");
+        }
+        for (auto alias : { "A", "B", "C" })
+        {
+            Assimil8orPreset parser;
+            parser.parse ({ "Preset 1:", "Channel 1:", "PitchCV: CV " + juce::String (alias) + " -0.375" });
+            require (parser.getParseErrorsVT ().getNumChildren () == 0, "Relative CV aliases parse without errors");
+            ChannelProperties channel (parser.getPresetVT ().getChild (0), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+            require (channel.getPitchCV () == CvInputAndAmount { "0" + juce::String (alias), -0.375 }, "CV aliases normalize to relative input without losing the amount");
+            require (parser.write (destination).wasOk () && PresetFileOperations::read (destination, loaded).wasOk (), "CV alias preset saves and reloads");
+            require (PresetHelpers::areEntirePresetsEqual (parser.getPresetVT (), loaded), "Normalized CV aliases round-trip unchanged");
+        }
+    }
+    void testMalformedPresets (juce::File folder)
+    {
+        const auto source { folder.getChildFile ("prst091.yml") };
+        const auto protectedFile { folder.getChildFile ("prst092.yml") };
+        Assimil8orPreset writer;
+        require (writer.write (protectedFile, preset ("Do not replace")).wasOk (), "Create protected preset fixture");
+        const auto original { protectedFile.loadFileAsString () };
+        for (const auto text : { "", "Preset 1", "Preset 1:\nUnknownFutureField: 3", "Preset 1:\nChannel 0:\nPitch: 1",
+                               "Preset 1:\nChannel 9:\nPitch: 1", "Preset 1:\nChannel 1:\nZone 9:\nSample: x.wav",
+                               "Preset 1:\nChannel 1:\nPitch: not-a-number", "Preset 1:\nChannel 1:\nPitch: nan",
+                               "Preset 1:\nChannel 1:\nPitch: 1.5junk", "Preset 1:\nChannel 1:\nPlayMode: 0.5",
+                               "Preset 1:\nChannel 1:\nZone 1:\nSampleStart: 999999999999999999999",
+                               "Preset 1:\nChannel 1:\nPitchCV: 2A nope", "Preset 1:\nChannel 1:\nPitchCV: 9Z 0.5",
+                               "Preset 1:\nChannel 1:\nPitch: 1\nPitch: 2", "Preset 1:\nChannel 1:\nChannel 01:",
+                               "Preset 1:\nChannel 1:\nZone 1:\nZone 1:", "Preset 1:\nPreset 2:" })
+        {
+            require (source.replaceWithText (text), "Write malformed/unsupported preset fixture");
+            const auto originalSource { source.loadFileAsString () };
+            juce::ValueTree result { preset ("Prior data") };
+            require (PresetFileOperations::read (source, result).failed () && ! result.isValid (), "Malformed or unsupported presets fail without a default replacement tree");
+            require (source.loadFileAsString () == originalSource, "Rejected input is not rewritten");
+            Assimil8orPreset parser;
+            parser.parse (juce::StringArray::fromLines (text));
+            require (parser.getParseErrorsVT ().getNumChildren () > 0 && parser.write (protectedFile).failed (), "Direct parser cannot save a partial/failed parse");
+            require (protectedFile.loadFileAsString () == original, "Parse failure preserves existing destination bytes");
+        }
+        auto invalid { preset ("Unsafe numeric value") };
+        invalid.getChild (0).setProperty (ChannelProperties::PitchPropertyId, std::numeric_limits<double>::quiet_NaN (), nullptr);
+        require (writer.write (protectedFile, invalid).failed () && protectedFile.loadFileAsString () == original, "Non-finite values cannot replace a good preset");
+        invalid = preset ("Name\nChannel 1 :");
+        require (writer.write (protectedFile, invalid).failed () && protectedFile.loadFileAsString () == original, "Embedded newlines cannot inject preset sections");
+        invalid = preset ("Incomplete");
+        invalid.removeChild (0, nullptr);
+        require (writer.write (protectedFile, invalid).failed () && protectedFile.loadFileAsString () == original, "Malformed tree structure cannot replace a good preset");
+        const char embeddedNul[] { "Preset 1:\nName: Valid prefix\0\nUnknownFutureField: 42\n" };
+        require (source.replaceWithData (embeddedNul, sizeof (embeddedNul) - 1), "Write embedded NUL fixture");
+        juce::ValueTree nulResult { preset ("Prior data") };
+        require (PresetFileOperations::read (source, nulResult).failed () && ! nulResult.isValid (), "Embedded NUL cannot hide unknown fields or turn a truncated prefix into a valid preset");
+        const char invalidEncoding[] { "Preset 1:\nName: Invalid \xff byte\n" };
+        require (source.replaceWithData (invalidEncoding, sizeof (invalidEncoding) - 1), "Write invalid UTF-8 fixture");
+        require (PresetFileOperations::read (source, nulResult).failed () && ! nulResult.isValid (), "Invalid encoding cannot silently alter preset text");
+        require (source.replaceWithText ("# Header comment\nPreset 1:\n  Name: Comments\n  # Interior comment\n  Channel 1:\n    Pitch: +1.25"), "Write comments and signed number fixture");
+        juce::ValueTree result;
+        require (PresetFileOperations::read (source, result).wasOk (), "Valid comments and explicit positive values remain supported");
+        auto unicode { preset (juce::String::fromUTF8 ("Caf\xc3\xa9")) };
+        require (writer.write (source, unicode).wasOk () && PresetFileOperations::read (source, result).wasOk ()
+                 && PresetHelpers::areEntirePresetsEqual (unicode, result), "Valid UTF-8 text round-trips unchanged");
     }
     void testMoves (juce::File folder)
     {
@@ -148,7 +251,8 @@ int runPresetWorkflowAuditTests ()
         const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-preset-workflow-regression", "", false) };
         require (folder.createDirectory ().wasOk (), "Create test sandbox");
         struct Cleanup { juce::File directory; ~Cleanup () { directory.deleteRecursively (); } } cleanup { folder };
-        testSave (folder); testSlots (folder); testMoves (folder); testDiscardGuard (); testArchives (folder);
+        testSave (folder); testSlots (folder); testSparsePresetRoundTrip (folder); testMalformedPresets (folder);
+        testMoves (folder); testDiscardGuard (); testArchives (folder);
         std::cout << "Preset workflow audit regression passed\n";
         return 0;
     }

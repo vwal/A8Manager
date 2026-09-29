@@ -119,6 +119,11 @@ unprocessed neutral playback, latency-compensated one-shot duration, live
 speed/pitch edits, four-frame loop wrapping, sampler-style offset duration and
 unchanged preset data when toggling the preview mode. These numerical probes do
 not replace listening tests on transient-rich or polyphonic samples.
+Additional pitch-parity cases combine channel Pitch and zone Pitch Offset,
+check the 24/48/96/192 kHz source-rate ceilings independently of the output
+device, exercise live edits and source changes, and retain the full negative
+parameter range. Preset pitch changes duration in both Keep pitch modes; only
+the separate audition-speed transposition is compensated.
 Intermittent failures have been observed in the existing 0.0625x keep-pitch
 case: 207 crossings versus 204.8 expected, or 167 versus 163.84 (a two-crossing
 tolerance). Ten consecutive passing repeats were also observed. Signalsmith randomises phases at extreme stretch
@@ -273,6 +278,17 @@ retention, valid filename slots, filtered row/slot mapping, move/save rebinding
 helpers, transactional swaps (including injected installation failure), target
 occupancy for Paste, dirty guards and staged ZIP imports. ZIP fixtures include
 same/different-content collisions, unsafe paths and malformed/ambiguous presets.
+Save/load cases also retain later populated zones when zone 1 is empty,
+settings-only channels and empty-zone parameters. They check all known min/max
+parameter families, relative CV aliases, valid Unicode, and rejection of malformed
+numbers, duplicate sections/keys, unknown fields, invalid encoding and embedded
+NULs without replacing existing files.
+
+**MidiSavingRegression** exercises the file reader/writer and actual MIDI dialog:
+known values round-trip while unknown flat fields, comments and line endings
+survive edits; only dirty slots are written. Unsupported/malformed files are
+protected, failed or externally conflicted saves retain pending edits, and the
+destination stays bound to the originally loaded folder. No audio device opens.
 
 **PairedZoneEditRegression** exercises the production pair-edit helper for
 Copy/Continue, Insert, full/settings-only Paste, Flip, Explode and Clear. It checks
@@ -363,7 +379,8 @@ audio devices or hardware are used.
   monitor levels cancel resume intent so later control edits cannot reclaim
   the output unexpectedly.
 - **WaveformDurationRegression** checks source/sample/loop duration matching,
-  zone pitch, fractional loop ends and invalid/unloaded data. The existing
+  combined channel/zone pitch and source-rate ceilings, fractional loop ends
+  and invalid/unloaded data. The existing
   StereoChannelUiRegression also checks the real selected-editor binding,
   including the stereo right channel following its master.
 

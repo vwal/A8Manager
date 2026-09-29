@@ -6,7 +6,7 @@ computer, and save the resulting preset for use with the module.
 
 The computer audition is an editing aid, **not a complete simulation of the
 Assimil8or**. It previews individual regions or a forward sample-into-loop
-sequence, with zone PITCH OFFSET, but not all the channel processing you can
+sequence, with channel PITCH and zone PITCH OFFSET, but not all the channel processing you can
 configure in the editor.
 
 ## Contents
@@ -240,15 +240,15 @@ corresponding region's duration next to its end position.
 The **Zones** panel also shows SAMPLE and LOOP time lengths underneath their
 numeric boundary fields, with the same pitch adjustment described below.
 
-These lengths include the current zone's **PITCH OFFSET**:
-`duration = frames / source sample rate / 2^(PITCH OFFSET / 12)`.
+These lengths include **channel PITCH + zone PITCH OFFSET**, capped at the
+Assimil8or's source-rate-dependent upper playback limit:
+`duration = frames / source sample rate / 2^(effective total pitch / 12)`.
 For example, +12 semitones halves the nominal length and −12 doubles it.
-The `@ … st` footer suffix identifies the pitch offset used.
+The `@ … st` footer suffix identifies the effective total pitch used.
 
 **Audition speed does not change these length readouts.** Neither does the
-preview's Keep pitch option. They describe nominal sampler-style duration at the
-zone pitch, not necessarily the duration you hear with time stretching enabled.
-Channel PITCH and external CV modulation are excluded. Marker *timestamps* remain
+preview's Keep pitch option. They describe sampler-style duration at 1x audition
+speed. External CV modulation is excluded. Marker *timestamps* remain
 positions in the original file, so they are unaffected by any playback setting.
 
 ## Zooming and navigating the waveform
@@ -413,7 +413,7 @@ forward preview, so the trigger is disabled. Empty/unavailable samples and known
 CV waveforms cannot use it either. For stereo pairs, trigger from the left/master
 channel; both sides play together.
 
-**Audition speed, Keep pitch and zone PITCH OFFSET still apply.** This mode never
+**Audition speed, Keep pitch, channel PITCH and zone PITCH OFFSET still apply.** This mode never
 changes your saved play mode, loop mode or markers. It models this forward
 sample-to-loop sequence only—not reverse playback, gate release, CV-driven
 markers, or all unusual Assimil8or marker-order behaviors.
@@ -443,33 +443,41 @@ double-click the slider to return to **1x**. You can adjust it while playing.
 **PITCH OFFSET** belongs to the selected zone and is measured in semitones.
 Positive values raise pitch, negative values lower it; `+12` is an octave up,
 `−12` an octave down. Fractional values such as `+3.01` are also heard in the
-preview. It is separate from the channel-level **PITCH** parameter.
+preview. The channel-level **PITCH** parameter is added to it: channel +12 and
+zone −12 cancel; channel +12 and zone +12 produce +24 semitones.
+
+Each saved control ranges from −96 to +60 semitones. The combined upward
+transposition is limited by the source sample rate, as on Assimil8or: +84 st at
+24 kHz, +72 at 48 kHz, +60 at 96 kHz, and +48 at 192 kHz. Above that ceiling,
+further increases have no effect on preview pitch or duration; the preset values
+are not rewritten. Very low settings may be inaudible. Physical CV/FM modulation
+and the module's exact interpolation/aliasing characteristics are not simulated.
 
 The **Keep pitch** checkbox determines how speed and pitch interact.
 
 ### Keep pitch on — the default
 
-Speed changes duration without transposing the sound. Zone PITCH OFFSET then
-transposes it independently, without changing that duration. “Keep pitch” means
-keep speed changes from altering pitch; it does **not** disable PITCH OFFSET.
+Audition speed changes duration without adding a pitch shift. Channel PITCH and
+zone PITCH OFFSET still transpose the sound **and change its duration**, as on
+the sampler. “Keep pitch” compensates only for Audition speed, not preset pitch.
 
 ### Keep pitch off — linked pitch and speed
 
 The preview uses ordinary sampler-style variable-speed playback. Slowing down
-lowers pitch; speeding up raises it. Zone PITCH OFFSET also changes the playback
-rate, so its pitch change affects duration as well.
+lowers pitch; speeding up raises it. Channel PITCH and zone PITCH OFFSET also
+change the playback rate, so their pitch changes affect duration as well.
 
-| Keep pitch | Audition speed | Zone PITCH OFFSET | Heard pitch relative to the file | Duration relative to the selected region |
+| Keep pitch | Audition speed | Effective total preset pitch | Heard pitch relative to the file | Duration relative to the selected region |
 | --- | --- | --- | --- | --- |
 | On | 0.5x | 0 | Unchanged | Twice as long |
-| On | 0.5x | +12 | One octave higher | Twice as long |
-| On | 2x | −12 | One octave lower | Half as long |
+| On | 0.5x | +12 | One octave higher | Unchanged |
+| On | 2x | −12 | One octave lower | Unchanged |
 | Off | 0.5x | 0 | One octave lower | Twice as long |
 | Off | 1x | +12 | One octave higher | Half as long |
 | Off | 0.5x | +12 | Unchanged: the two shifts cancel | Unchanged |
 
-With Keep pitch off, the effective rate is
-`audition speed × 2^(PITCH OFFSET / 12)`. For a loop, “duration” in the table is
+In either mode, the effective rate is
+`audition speed × 2^(effective total preset pitch / 12)`. For a loop, “duration” in the table is
 the time taken for one repetition.
 
 Shortening a loop makes it repeat more frequently even at an unchanged speed;
@@ -478,14 +486,14 @@ automatically compensate for loop-length edits.
 
 ### What the preview does and does not save
 
-- **PITCH OFFSET is part of the zone** and is written with the preset when you
-  click SAVE.
+- **PITCH belongs to the channel; PITCH OFFSET belongs to the zone.** Both are
+  written with the preset when you click SAVE.
 - **Audition speed and Keep pitch are temporary listening controls.** They are
   shared across channels/zones during the session, reset to 1x / on when the app
   is relaunched, and are not written into the preset or sample file.
-- For a stereo pair, auditioning the master/left zone applies its PITCH OFFSET
-  to both sides.
-- Channel PITCH, CV modulation, envelopes, level/pan processing, and other
+- For a stereo pair, auditioning the master/left zone applies its combined
+  channel PITCH and zone PITCH OFFSET to both sides.
+- CV modulation, envelopes, level/pan processing, and other
   module behaviour are not simulated by this preview. A control being editable
   does not mean it changes the computer audition.
 
@@ -661,6 +669,24 @@ stays open after a failed save. Preset **Move** goes to the adjacent numbered sl
 target follow the moved preset. A failed move attempts to restore both originals;
 if recovery needs assistance, the error gives the backup location.
 
+Saving keeps channel settings even when the channel has no samples or its first
+zone is empty. Populated later zones and settings on empty zones retain their
+original slot numbers; saving does not compact or renumber them. This protects
+work in progress, but does not imply that sparse zone layouts are a recommended
+hardware playback configuration.
+
+Preset files with malformed or unknown parameters are refused rather than
+loaded as defaults and overwritten. Keep such files intact for inspection or a
+future compatibility update. A save writes and checks a temporary file before
+replacing the existing preset.
+
+MIDI SAVE writes only edited setup slots. Unrecognized flat MIDI fields,
+comments and existing line endings are retained. A tab marked **!** could not
+be read safely and is disabled; saving another tab leaves its file untouched.
+If a setup file changes outside the app while the dialog is open, saving stops
+with an explanation instead of overwriting that change. Keep a note of your
+pending edits, then reopen MIDI settings to reload the current files.
+
 The **Preset tools** menu offers import/export of **Settings Only** or
 **Settings and Samples**. Use the latter when you need a portable copy that
 includes the audio, rather than expecting the preset settings alone to contain
@@ -774,6 +800,12 @@ ONCE/LOOP buttons and a **CV sample / Speaker audition disabled** notice. Either
 side of a stereo pair being CV blocks the pair. You can still edit its markers
 and preset. Known CV channels keep Mix Off for individual-output use; verify
 the module displays Off before connecting a mix output to speakers.
+On Assimil8or itself, you can deliberately raise a channel's Mix Output Level
+from Off to combine CV channels at the DC-coupled mix outputs. Treat that mix
+as a CV signal: disconnect speakers/headphones, leave headroom when summing,
+and verify its voltage range before patching. This is a hardware override,
+not an app safety override: A8Manager still requires Mix Off for known CV
+channels and will not preserve an unsafe mix setting when editing/saving them.
 Audio Cycle and Layer Bank WAVs remain ordinary auditionable audio in Samples;
 the CV restriction does not apply to them.
 
@@ -828,13 +860,16 @@ Check the outlined field group beside the small waveform. Click SMPL START/END
 for the sample region or LOOP START/LENGTH/END for the loop region, then restart
 audition. The waveform's Loop zoom button does not select the audition source.
 
-**Why doesn't the channel PITCH control change what I hear?**  
-The preview applies zone PITCH OFFSET, not the full channel-processing chain.
-Configure channel settings for the preset, then test their effect on the module.
+**Why does increasing PITCH sometimes stop changing what I hear?**  
+The preview combines channel PITCH and zone PITCH OFFSET, then applies the
+sampler's upper playback-rate limit for the source file's sample rate. Check the
+waveform footer's `@ … st` value. A control change beyond that ceiling is still
+saved, but does not increase playback pitch further.
 
 **Why did a loop change pitch or duration?**  
-Check Audition speed, Keep pitch, and the selected zone's PITCH OFFSET. With
-Keep pitch off they combine to set the playback rate. Also check whether you
+Check channel PITCH, zone PITCH OFFSET, Audition speed, and Keep pitch. Preset
+pitch always changes playback rate; Keep pitch only prevents Audition speed
+from adding a pitch shift. Also check whether you
 changed the loop length itself.
 
 **Why does a quiet sample look large in the small display?**  

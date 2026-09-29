@@ -356,6 +356,13 @@ DC removal and short fades/crossfades. Those measures do not modify exported WAV
 - [ ] Open the export in the Samples workspace. That workspace auditions its
   selected sample/zone, not the complete linked bank. Its audition speed and
   Keep pitch controls are separate from the designer's monitor controls.
+- [ ] At 1x audition speed, use channel PITCH +12 and zone PITCH OFFSET −12:
+  pitch and duration should match the untransposed file. With both set to +12,
+  frequency should be four times higher and duration one-quarter as long.
+  Keep pitch must not alter these results at 1x. At 0.5x with Keep pitch on,
+  duration doubles relative to that pitched result, without another pitch shift.
+  Compare recordings against the source sample count/rate; a scope is not
+  essential for this check. Extreme/ultrasonic pitches are not listening tests.
 - [ ] Confirm the designer does not offer audio audition in **CV / Modulation**
   mode. This is intentional, even for CV files with an audible repetition rate.
   Do not bypass this by playing a DC/slow-CV export through ordinary monitors.

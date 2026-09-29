@@ -325,8 +325,9 @@ a faster repeating control waveform.
 - Tempo and beat controls provide another way to set the file duration. Tempo
   is baked into the WAV, not a live tempo-sync instruction for the module.
 - **Match file/sample/loop** takes the currently selected zone's loaded file,
-  sample-marker span, or loop-marker span. Matching includes zone PITCH OFFSET
-  and excludes audition speed/Keep pitch and channel processing. The waveform
+  sample-marker span, or loop-marker span. Matching includes channel PITCH + zone
+  PITCH OFFSET at the sampler's source-rate-dependent ceiling. It excludes audition
+  speed and external CV modulation; Keep pitch does not change it. The waveform
   need not be playing. Matching is a one-time copy, not a continuing link.
   Empty, unavailable, invalid, or out-of-range durations are rejected.
 - Envelope attack, decay and release are fractions of a cycle, not seconds;
@@ -404,7 +405,7 @@ outputs. Pan only affects the stereo mix. The visual preview overlays source
 cycles; it is not a time-domain simulation of the changing detuned mix. The
 designer's live audition does play the detuned, panned voices together. In
 contrast, the **Samples** workspace auditions its selected file/zone, not the
-complete Link bank or its channel PITCH processing. Test the assembled sound
+complete Link bank, but does apply that channel's PITCH and zone PITCH OFFSET. Test the assembled sound
 on Assimil8or for the final hardware result.
 
 ## Playback choices

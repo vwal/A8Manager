@@ -3,9 +3,6 @@
 #include <JuceHeader.h>
 #include "MidiSetupProperties.h"
 
-using Action = std::function<void ()>;
-using ActionMap = std::map<juce::String, Action>;
-
 namespace MidiSetup
 {
     static inline const juce::String ModeId { "mode" };
@@ -25,17 +22,32 @@ namespace MidiSetup
 class MidiSetupFile
 {
 public:
-    MidiSetupFile ();
+    MidiSetupFile () = default;
+    juce::Result read (juce::File midiSetupFile);
     juce::Result write (juce::File presetFile, juce::ValueTree presetProperties);
     juce::ValueTree parse (juce::StringArray presetLines);
+    juce::Result getParseResult () const { return parseResult; }
+    juce::Result checkForExternalChanges () const;
+    static bool settingsEqual (juce::ValueTree first, juce::ValueTree second);
 
-    juce::ValueTree getMidiSetupPropertiesVT () { return midiSetupProperties.getValueTree (); }
+    // Do not expose the immutable baseline used to detect and render edits.
+    juce::ValueTree getMidiSetupPropertiesVT () { return midiSetupProperties.getValueTree ().createCopy (); }
 
 private:
     MidiSetupProperties midiSetupProperties;
-    ActionMap globalActions;
-    juce::String key;
-    juce::String value;
+    juce::Result parseResult { juce::Result::ok () };
+    juce::File sourceFile;
+    juce::MemoryBlock sourceBytes;
+    juce::String sourceText;
+    bool sourceExisted { false };
 
-    void initParser ();
+    struct Line
+    {
+        juce::String text, ending;
+        int parameter { -1 }, valueStart { 0 }, valueEnd { 0 };
+    };
+    std::vector<Line> sourceLines;
+
+    juce::Result parseText (const juce::String& text);
+    juce::String render (juce::ValueTree properties);
 };

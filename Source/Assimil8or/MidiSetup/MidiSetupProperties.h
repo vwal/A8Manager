@@ -94,6 +94,8 @@ public:
     void copyFrom (juce::ValueTree srcMidiSetupPropertiesVT);
 
     static inline const juce::Identifier MidiSetupTypeId { "MidiSetup" };
+    // Editor-only protection for an unreadable or unsupported setup; never serialized.
+    static inline const juce::Identifier FileReadOnlyPropertyId { "fileReadOnly" };
     static inline const juce::Identifier AssignPropertyId           { "assign" };
     static inline const juce::Identifier BasicChannelPropertyId     { "basicChannel" };
     static inline const juce::Identifier ColACCPropertyId           { "colACC" };

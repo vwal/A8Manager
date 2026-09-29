@@ -33,7 +33,7 @@ std::optional<double> Assimil8orEditorComponent::getSelectedDuration (int region
     {
         ZoneProperties zoneProperties (zoneTree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
         SampleProperties sampleProperties (sampleTree, SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
-        result = WaveformDuration::selected (zoneProperties, sampleProperties, region);
+        result = WaveformDuration::selected (zoneProperties, sampleProperties, region, channelProperties[channel].getPitch ());
     });
     return result;
 }
@@ -753,8 +753,14 @@ void Assimil8orEditorComponent::updateAllChannelTabNames ()
 
 bool Assimil8orEditorComponent::isChannelActive (int channelIndex)
 {
-    ZoneProperties zoneProperties (channelProperties [channelIndex].getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-    return ! zoneProperties.getSample ().isEmpty ();
+    bool active { false };
+    channelProperties [channelIndex].forEachZone ([&] (juce::ValueTree zoneTree, int)
+    {
+        ZoneProperties zone (zoneTree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        active = zone.getSample ().isNotEmpty ();
+        return ! active;
+    });
+    return active;
 }
 
 void Assimil8orEditorComponent::updateChannelTabName (int channelIndex)

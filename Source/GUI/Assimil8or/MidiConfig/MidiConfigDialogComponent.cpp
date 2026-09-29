@@ -41,7 +41,9 @@ void MidiConfigDialogComponent::handleShowChange (bool show)
 {
     if (show)
     {
-        loadMidiSetups ();
+        const auto result { loadMidiSetups () };
+        if (result.failed ())
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Some MIDI setups cannot be edited", result.getErrorMessage ());
         startTimer (250);
     }
     else
@@ -50,29 +52,33 @@ void MidiConfigDialogComponent::handleShowChange (bool show)
     }
 }
 
-void MidiConfigDialogComponent::loadMidiSetups ()
+juce::Result MidiConfigDialogComponent::loadMidiSetups ()
 {
-    // get current folder
-    juce::File currentFolder { appProperties.getMostRecentFolder () };
+    // Keep the save destination bound to the folder that was actually loaded.
+    loadedFolder = juce::File (appProperties.getMostRecentFolder ());
+    juce::StringArray errors;
     // iterate over possible midi setup files
     for (auto curMidiSetupIndex { 0 }; curMidiSetupIndex < 9; ++curMidiSetupIndex)
     {
         MidiSetupProperties midiSetupProperties { midiSetupPropertiesListVT.getChild (curMidiSetupIndex), MidiSetupProperties::WrapperType::owner, MidiSetupProperties::EnableCallbacks::no };
         MidiSetupProperties uneditedMidiSetupProperties { uneditedMidiSetupPropertiesListVT.getChild (curMidiSetupIndex), MidiSetupProperties::WrapperType::owner, MidiSetupProperties::EnableCallbacks::no };
-        auto midiSetupRawFile { currentFolder.getChildFile ("midi" + juce::String (curMidiSetupIndex + 1)).withFileExtension ("yml") };
-        if (midiSetupRawFile.exists ())
-        {
-            MidiSetupFile midiSetupFile;
-            juce::StringArray midiSetupFileLines;
-            midiSetupRawFile.readLines (midiSetupFileLines);
-            midiSetupProperties.copyFrom (midiSetupFile.parse (midiSetupFileLines));
-        }
+        const auto midiSetupRawFile { loadedFolder.getChildFile ("midi" + juce::String (curMidiSetupIndex + 1)).withFileExtension ("yml") };
+        auto& document { midiSetupFiles [static_cast<size_t> (curMidiSetupIndex)] };
+        const auto result { document.read (midiSetupRawFile) };
+        if (result.wasOk ())
+            midiSetupProperties.copyFrom (document.getMidiSetupPropertiesVT ());
         else
         {
             midiSetupProperties.copyFrom (MidiSetupProperties ({}, MidiSetupProperties::WrapperType::owner, MidiSetupProperties::EnableCallbacks::no).getValueTree ());
+            errors.add (midiSetupRawFile.getFileName () + ": " + result.getErrorMessage ());
         }
+        midiSetupProperties.getValueTree ().setProperty (MidiSetupProperties::FileReadOnlyPropertyId, result.failed (), nullptr);
+        midiSetupEditorComponents [static_cast<size_t> (curMidiSetupIndex)].setEnabled (result.wasOk ());
         uneditedMidiSetupProperties.copyFrom (midiSetupProperties.getValueTree ());
     }
+    timerCallback ();
+    return errors.isEmpty () ? juce::Result::ok () : juce::Result::fail (errors.joinIntoString ("\n\n") +
+        "\n\nThe affected tabs are disabled and their files will be left untouched. Other setups can still be edited.");
 }
 
 void MidiConfigDialogComponent::cancelClicked ()
@@ -103,46 +109,61 @@ void MidiConfigDialogComponent::closeDialog ()
 
 void MidiConfigDialogComponent::saveClicked ()
 {
-    juce::File currentFolder { appProperties.getMostRecentFolder () };
-    for (auto curMidiSetupIndex { 0 }; curMidiSetupIndex < 9; ++curMidiSetupIndex)
+    const auto result { saveMidiSetups () };
+    if (result.failed ())
     {
-        auto midiSetupRawFile { currentFolder.getChildFile ("midi" + juce::String (curMidiSetupIndex + 1)).withFileExtension ("yml") };
-        MidiSetupFile midiSetupFile;
-        const auto result { midiSetupFile.write (midiSetupRawFile, midiSetupPropertiesListVT.getChild (curMidiSetupIndex)) };
-        if (result.failed ())
-        {
-            // Keep the dialog and dirty baseline intact so the user can retry.
-            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "MIDI save failed", result.getErrorMessage ());
-            return;
-        }
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "MIDI save failed", result.getErrorMessage ());
+        return;
     }
     closeDialog ();
 }
 
+bool MidiConfigDialogComponent::isSetupEdited (int index) const
+{
+    return ! MidiSetupFile::settingsEqual (uneditedMidiSetupPropertiesListVT.getChild (index), midiSetupPropertiesListVT.getChild (index));
+}
+
+juce::Result MidiConfigDialogComponent::saveMidiSetups ()
+{
+    // Preflight every edited slot before writing any of them. Unedited and unreadable
+    // setups are not rewritten just because a different tab was edited.
+    for (auto curMidiSetupIndex { 0 }; curMidiSetupIndex < 9; ++curMidiSetupIndex)
+    {
+        if (! isSetupEdited (curMidiSetupIndex))
+            continue;
+        const auto result { midiSetupFiles [static_cast<size_t> (curMidiSetupIndex)].checkForExternalChanges () };
+        if (result.failed ())
+            return result;
+    }
+    juce::StringArray saved;
+    for (auto curMidiSetupIndex { 0 }; curMidiSetupIndex < 9; ++curMidiSetupIndex)
+    {
+        if (! isSetupEdited (curMidiSetupIndex))
+            continue;
+        const auto file { loadedFolder.getChildFile ("midi" + juce::String (curMidiSetupIndex + 1) + ".yml") };
+        const auto result { midiSetupFiles [static_cast<size_t> (curMidiSetupIndex)].write (file, midiSetupPropertiesListVT.getChild (curMidiSetupIndex)) };
+        if (result.failed ())
+        {
+            timerCallback ();
+            return juce::Result::fail (result.getErrorMessage () + (saved.isEmpty () ? juce::String {} :
+                "\n\nAlready saved: " + saved.joinIntoString (", ") + ". Remaining edits are still open; you can retry."));
+        }
+        MidiSetupProperties baseline (uneditedMidiSetupPropertiesListVT.getChild (curMidiSetupIndex), MidiSetupProperties::WrapperType::client, MidiSetupProperties::EnableCallbacks::no);
+        baseline.copyFrom (midiSetupPropertiesListVT.getChild (curMidiSetupIndex));
+        saved.add (file.getFileName ());
+    }
+    timerCallback ();
+    return juce::Result::ok ();
+}
+
 void MidiConfigDialogComponent::timerCallback ()
 {
-    auto areMidiSetupsEqual = [] (juce::ValueTree uneditedMidiSetupPropertiesVT, juce::ValueTree midiSetupPropertiesVT)
-    {
-        MidiSetupProperties uneditedMidiSetupProperties (uneditedMidiSetupPropertiesVT, MidiSetupProperties::WrapperType::client, MidiSetupProperties::EnableCallbacks::no);
-        MidiSetupProperties midiSetupProperties (midiSetupPropertiesVT, MidiSetupProperties::WrapperType::client, MidiSetupProperties::EnableCallbacks::no);
-        return uneditedMidiSetupProperties.getMode () == midiSetupProperties.getMode () &&
-               uneditedMidiSetupProperties.getAssign () == midiSetupProperties.getAssign () &&
-               uneditedMidiSetupProperties.getBasicChannel () == midiSetupProperties.getBasicChannel () &&
-               uneditedMidiSetupProperties.getRcvProgramChange () == midiSetupProperties.getRcvProgramChange () &&
-               uneditedMidiSetupProperties.getXmtProgramChange () == midiSetupProperties.getXmtProgramChange () &&
-               uneditedMidiSetupProperties.getColACC () == midiSetupProperties.getColACC () &&
-               uneditedMidiSetupProperties.getColBCC () == midiSetupProperties.getColBCC () &&
-               uneditedMidiSetupProperties.getColCCC () == midiSetupProperties.getColCCC () &&
-               uneditedMidiSetupProperties.getPitchWheelSemi () == midiSetupProperties.getPitchWheelSemi () &&
-               uneditedMidiSetupProperties.getVelocityDepth () == midiSetupProperties.getVelocityDepth () &&
-               uneditedMidiSetupProperties.getNotifications () == midiSetupProperties.getNotifications () &&
-               uneditedMidiSetupProperties.getIndexBaseKey () == midiSetupProperties.getIndexBaseKey ();
-    };
     anyMidiSetupsEdited = false;
     for (auto curMidiSetupIndex { 0 }; curMidiSetupIndex < 9; ++curMidiSetupIndex)
     {
-        const auto midiSetupEdited { ! areMidiSetupsEqual (uneditedMidiSetupPropertiesListVT.getChild (curMidiSetupIndex), midiSetupPropertiesListVT.getChild (curMidiSetupIndex)) };
-        midiSetupTabs.setTabName (curMidiSetupIndex, juce::String::charToString ('1' + curMidiSetupIndex) + (midiSetupEdited ? "*" : ""));
+        const auto midiSetupEdited { isSetupEdited (curMidiSetupIndex) };
+        const auto unreadable { midiSetupFiles [static_cast<size_t> (curMidiSetupIndex)].getParseResult ().failed () };
+        midiSetupTabs.setTabName (curMidiSetupIndex, juce::String::charToString ('1' + curMidiSetupIndex) + (unreadable ? "!" : midiSetupEdited ? "*" : ""));
         anyMidiSetupsEdited |= midiSetupEdited;
     }
     saveButton.setEnabled (anyMidiSetupsEdited);

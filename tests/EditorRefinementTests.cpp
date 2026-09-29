@@ -346,6 +346,11 @@ struct ZoneEditorTestAccess
         editor.audioPlayerProperties.setAuditionRate (0.5, false);
         editor.updateDurations ();
         check (editor.sampleDurationLabel.getText () == "SAMPLE 0:00.250", "Audition speed does not leak into zone durations");
+        editor.parentChannelProperties.setPitch (12.0, false);
+        editor.updateDurations ();
+        check (editor.sampleDurationLabel.getText () == "SAMPLE 0:00.125" && editor.loopDurationLabel.getText () == "LOOP 0:00.025", "Zone panel lengths include channel pitch as well as zone pitch offset");
+        editor.parentChannelProperties.setPitch (0.0, false);
+        editor.updateDurations ();
         using Selector = AudioPlayerProperties::SamplePointsSelector;
         editor.audioPlayerProperties.setSamplePointsSelector (Selector::LoopPoints, false); // another zone's last choice
         // This detached fixture bypasses init() and its sample-status callback.

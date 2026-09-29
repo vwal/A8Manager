@@ -1,4 +1,5 @@
 #include "Assimil8or/Audio/AudioPlayer.h"
+#include "Assimil8or/Audio/PlaybackPitch.h"
 #include "Assimil8or/Audio/SampleLoopSimulation.h"
 #include <iostream>
 #include <stdexcept>
@@ -183,13 +184,15 @@ struct AudioPlayerTestAccess
                 observer.setPreservePitch (preserve, true);
                 observer.setAuditionRate (rate, true);
                 if (preserve) player.handleZonePitch (3.25);
+                const auto pitchRatio { preserve ? std::exp2 (3.25 / 12.0) : 1.0 };
+                const auto transportRate { rate * pitchRatio };
                 observer.setPlayState (State::sampleIntoLoop, true);
                 player.timerCallback ();
                 juce::AudioBuffer<float> output (2, 128);
                 render (output, 0, 1);
                 player.timerCallback ();
                 check (observer.getSimulationPhase () == Phase::sample &&
-                       std::abs (observer.getPlaybackPosition () - (8.0 + rate / 2.0)) < 1e-9,
+                       std::abs (observer.getPlaybackPosition () - (8.0 + transportRate / 2.0)) < 1e-9,
                        "Look-ahead at every speed must preserve the true source-frame intro cursor");
                 auto frames { 1 };
                 while (frames < 2049)
@@ -201,14 +204,14 @@ struct AudioPlayerTestAccess
                                "Stretched simulation must remain finite through many tiny-loop wraps");
                 }
                 player.timerCallback ();
-                const auto expected { (48.0 + std::fmod (16.0 + frames * rate - 48.0, 32.0)) / 2.0 };
+                const auto expected { (48.0 + std::fmod (16.0 + frames * transportRate - 48.0, 32.0)) / 2.0 };
                 check (observer.getSimulationPhase () == Phase::loop && std::abs (observer.getPlaybackPosition () - expected) < 1e-8,
                        "Varispeed and Keep pitch must share correct phase, rate, and source-frame loop mapping");
                 observer.setAuditionRate (0.75, true);
                 const auto previous { observer.getPlaybackPosition () };
                 render (output, 0, 8);
                 player.timerCallback ();
-                check (std::abs (observer.getPlaybackPosition () - (24.0 + std::fmod (previous - 24.0 + 3.0, 16.0))) < 1e-8,
+                check (std::abs (observer.getPlaybackPosition () - (24.0 + std::fmod (previous - 24.0 + 3.0 * pitchRatio, 16.0))) < 1e-8,
                        "Changing speed inside the loop must not replay the sample intro");
             }
 
@@ -296,6 +299,18 @@ struct AudioPlayerTestAccess
             sample.setStatus (SampleStatus::exists, false);
         }
         player.initFromZone ({ 0, 0 });
+        player.channelProperties.setPitch (7.0, true);
+        player.zoneProperties.setPitchOffset (5.0, true);
+        check (player.channelPitch == 7.0 && player.zonePitchOffset == 5.0 && player.effectiveAuditionRate () == 2.0,
+               "Real source binding must listen to channel Pitch as well as zone Pitch Offset");
+        ZoneProperties anotherZone (player.channelProperties.getZoneVT (1), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        anotherZone.setPitchOffset (-7.0, false);
+        player.initFromZone ({ 0, 1 });
+        check (player.channelPitch == 7.0 && player.zonePitchOffset == -7.0 && player.effectiveAuditionRate () == 1.0,
+               "Zone selection retains channel pitch while replacing the zone offset");
+        player.initFromZone ({ 0, 0 });
+        player.channelProperties.setPitch (0.0, true);
+        player.zoneProperties.setPitchOffset (0.0, true);
         auto value = [&] (int side, int frame) { return player.sampleBuffer->getSample (side, frame); };
         check (std::abs (value (0, 128) - 0.25f) < 0.01f && std::abs (value (1, 128) - 0.25f) < 0.01f, "Unpaired L side reaches both preview outputs");
         player.zoneProperties.setSide (1, true);
@@ -345,9 +360,15 @@ struct AudioPlayerTestAccess
         player.sampleRate = 24000.0;
         player.prepareSampleForPlayback ();
         check (player.sampleBuffer->getNumSamples () == 512 && player.sampleStart == 50 && player.sampleLength == 400, "Device rate change updates audio and range together");
+        player.channelProperties.setPitch (60.0, true);
+        player.zoneProperties.setPitchOffset (60.0, true);
+        check (std::abs (player.effectivePitchSemitones () - 72.0) < 1e-9,
+               "Pitch ceiling follows the WAV's 48 kHz source rate, not the 24 kHz output device");
         player.initFromZone ({ 0, 0 });
         check (player.isStereoPair () && player.nextChannelProperties.getValueTree () == previousRightTree &&
                player.nextZoneProperties.isValid () && player.nextSampleProperties.isValid (), "Returning from channel eight restores real partner bindings");
+        check (player.channelPitch == 0.0 && player.zonePitchOffset == 0.0 && player.effectiveAuditionRate () == 1.0,
+               "Selecting another channel cannot retain the previous channel or zone pitch");
         std::cout << "PASS: actual stereo source preparation, sides, rates, missing/reloaded partner, channel eight and SAMPLE/LOOP isolation\n";
     }
 
@@ -357,11 +378,30 @@ struct AudioPlayerTestAccess
         {
             if (! ok) throw std::runtime_error (message);
         };
+        for (const auto [rate, ceiling] : { std::pair<double, double> { 24000.0, 84.0 }, { 48000.0, 72.0 },
+                                          { 96000.0, 60.0 }, { 192000.0, 48.0 } })
+        {
+            check (std::abs (PlaybackPitch::effectiveSemitones (60.0, 60.0, rate) - ceiling) < 1e-9,
+                   "Combined pitch must stop at the documented source-rate-dependent hardware ceiling");
+            check (std::abs (rate * PlaybackPitch::rateRatio (60.0, 60.0, rate) - PlaybackPitch::maximumSourceRate) < 1e-7,
+                   "Each documented ceiling must reach the same maximum source-frame traversal rate");
+        }
+        check (std::abs (44100.0 * PlaybackPitch::rateRatio (60.0, 60.0, 44100.0) - PlaybackPitch::maximumSourceRate) < 1e-7,
+               "Non-power-of-two source rates must obey the same inferred hardware rate ceiling");
+        check (PlaybackPitch::effectiveSemitones (-96.0, -96.0, 48000.0) == -192.0 &&
+               PlaybackPitch::rateRatio (-96.0, -96.0, 48000.0) == 1.0 / 65536.0,
+               "Both independently legal downward pitch values must be retained");
+        check (PlaybackPitch::effectiveSemitones (120.0, -120.0, 48000.0) == -36.0 &&
+               PlaybackPitch::effectiveSemitones (std::numeric_limits<double>::quiet_NaN (), 12.0, 48000.0) == 12.0 &&
+               PlaybackPitch::rateRatio (12.0, 12.0, 0.0) == 1.0,
+               "Malformed pitch values clamp independently and missing source rates use a safe neutral ratio");
         AudioPlayer player;
         player.audioPlayerProperties.enableCallbacks (true);
         player.audioPlayerProperties.onPlayStateChange = [&] (auto state) { player.handlePlayState (state); };
         player.audioPlayerProperties.onAuditionRateChange = [&] (double rate) { player.handleAuditionRate (rate); };
         player.audioPlayerProperties.onPreservePitchChange = [&] (bool preserve) { player.handlePreservePitch (preserve); };
+        player.channelProperties.enableCallbacks (true);
+        player.channelProperties.onPitchChange = [&] (double semitones) { player.handleChannelPitch (semitones); };
         player.zoneProperties.enableCallbacks (true);
         player.zoneProperties.onPitchOffsetChange = [&] (double semitones) { player.handleZonePitch (semitones); };
         player.prepareAuditionResampler ();
@@ -382,7 +422,9 @@ struct AudioPlayerTestAccess
         {
             player.handlePlayState (AudioPlayerProperties::PlayState::stop);
             player.audioPlayerProperties.setPreservePitch (false, true);
+            player.channelProperties.setPitch (0.0, true);
             player.zoneProperties.setPitchOffset (0.0, true);
+            player.sourceSampleRate = 48000.0;
             player.audioPlayerProperties.setAuditionRate (1.0, true);
             player.sampleBuffer = std::make_unique<juce::AudioBuffer<float>> (2, 64);
             for (auto i { 0 }; i < 64; ++i)
@@ -533,18 +575,31 @@ struct AudioPlayerTestAccess
         check (std::abs (output.getSample (0, 0) - 0.09f) < 1e-6f,
                "Neutral Keep pitch must bypass spectral processing and preserve original samples");
 
+        for (const auto keepPitch : { false, true })
+        {
+            configure (8, 56, 1.0, AudioPlayerProperties::PlayState::loop);
+            observer.setPreservePitch (keepPitch, true);
+            player.channelProperties.setPitch (-12.0, true);
+            render (output, 0, 3);
+            player.channelProperties.setPitch (0.0, true);
+            render (output, 0, 2);
+            player.timerCallback ();
+            check (observer.getPlaybackPosition () == 11.5,
+                   "Live channel pitch at 1x must preserve fractional transport in both preview modes");
+        }
+
         configure (8, 12, 1.0, AudioPlayerProperties::PlayState::play);
         observer.setPreservePitch (true, true);
         observer.setAuditionRate (0.5, true);
         player.zoneProperties.setPitchOffset (12.0, true);
-        render (output, 0, 16);
+        render (output, 0, 8);
         player.timerCallback ();
         check (observer.getPlayState () == AudioPlayerProperties::PlayState::play &&
                std::abs (observer.getPlaybackPosition () - 16.0) < 1e-9,
-               "Keep pitch must double duration at half speed, independent of zone transposition/read-ahead");
+               "Half audition speed and +12 st preset pitch must cancel in duration, not pitch");
         render (output, 0, 12);
         player.timerCallback ();
-        check (observer.getPlayState () == AudioPlayerProperties::PlayState::stop && output.getMagnitude (8, 4) == 0.0f,
+        check (observer.getPlayState () == AudioPlayerProperties::PlayState::stop && output.getMagnitude (4, 8) == 0.0f,
                "Stretched one-shot must stop at the requested duration with a silent tail");
 
         // Real spectral rendering: distinct stereo tones ensure both sides keep
@@ -561,7 +616,8 @@ struct AudioPlayerTestAccess
                         juce::MathConstants<double>::twoPi * i / (channel == 0 ? 100.0 : 80.0))));
             observer.setPreservePitch (true, true);
             observer.setAuditionRate (speed, true);
-            player.zoneProperties.setPitchOffset (pitch, true);
+            player.channelProperties.setPitch (pitch * 0.25, true);
+            player.zoneProperties.setPitchOffset (pitch * 0.75, true);
             juce::AudioBuffer<float> tone (2, 32768);
             for (auto offset { 0 }; offset < tone.getNumSamples (); offset += 128)
                 render (tone, offset, 128);
@@ -579,11 +635,11 @@ struct AudioPlayerTestAccess
                     std::cerr << "speed=" << speed << ", pitch=" << pitch << ", channel=" << channel
                               << ", crossings=" << crossings << ", expected=" << expected << '\n';
                 check (std::abs (crossings - expected) <= 2.0,
-                       "Keep pitch must preserve frequency across speeds and honour fractional zone Pitch Offset");
+                       "Keep pitch must preserve combined channel/zone frequency across audition speeds");
             }
             player.timerCallback ();
-            check (std::abs (observer.getPlaybackPosition () - std::fmod (32768.0 * speed, 4800.0)) < 1e-7,
-                   "Stretched playhead must follow duration, not transposed pitch or FFT look-ahead");
+            check (std::abs (observer.getPlaybackPosition () - std::fmod (32768.0 * speed * std::exp2 (pitch / 12.0), 4800.0)) < 1e-7,
+                   "Stretched playhead must follow combined preset-pitch duration, not FFT look-ahead");
         }
 
         configure (8, 56, 2.0, AudioPlayerProperties::PlayState::loop);
@@ -595,13 +651,14 @@ struct AudioPlayerTestAccess
         player.zoneProperties.setPitchOffset (3.01, true);
         render (loops, 0, 10);
         player.timerCallback ();
-        check (std::abs (observer.getPlaybackPosition () - 10.75) < 1e-7,
+        const auto livePitchRatio { std::exp2 (3.01 / 12.0) };
+        check (std::abs (observer.getPlaybackPosition () - (17.5 + 4.0 * livePitchRatio) / 2.0) < 1e-7,
                "Live stretching rate/pitch changes must preserve the fractional audible cursor");
         player.sampleStart = 30;
         player.sampleLength = 4;
         render (loops, 0, 29);
         player.timerCallback ();
-        check (std::abs (observer.getPlaybackPosition () - 16.8) < 1e-7,
+        check (std::abs (observer.getPlaybackPosition () - (30.0 + std::fmod (29.0 * 0.4 * livePitchRatio, 4.0)) / 2.0) < 1e-7,
                "Stretched tiny loops must wrap and discard the previous range's look-ahead");
 
         configure (8, 12, 1.0, AudioPlayerProperties::PlayState::play);
@@ -618,20 +675,23 @@ struct AudioPlayerTestAccess
         // pitch input. Pitch accuracy at these extremes is a listening concern,
         // but neither processing mode may produce NaNs or run past the source.
         for (const auto keepPitch : { false, true })
-            for (const auto pitch : { -90.0, 60.0 })
+            for (const auto pitch : { -96.0, 60.0 })
             {
                 configure (60, 4, 1.0, AudioPlayerProperties::PlayState::loop);
                 observer.setPreservePitch (keepPitch, true);
                 observer.setAuditionRate (pitch < 0.0 ? 0.0625 : 4.0, true);
                 player.zoneProperties.setPitchOffset (pitch, true);
+                player.channelProperties.setPitch (pitch, true);
                 player.prepareAuditionResampler ();
                 render (output, 0, 16);
                 for (auto i { 0 }; i < 16; ++i)
                     check (std::isfinite (output.getSample (0, i)) && std::isfinite (output.getSample (1, i)),
-                           "Extreme zone pitch and rate must remain finite at a file-end loop");
+                           "Combined extreme channel/zone pitch and rate must remain finite at a file-end loop");
             }
         player.zoneProperties.setPitchOffset (std::numeric_limits<double>::infinity (), true);
         check (player.zonePitchOffset == 0.0, "Non-finite pitch must use a safe neutral audition value");
+        player.channelProperties.setPitch (std::numeric_limits<double>::quiet_NaN (), true);
+        check (player.channelPitch == 0.0, "Non-finite channel pitch must use a safe neutral audition value");
         configure (0, 64, 1.0, AudioPlayerProperties::PlayState::play);
         player.sampleBuffer = std::make_unique<juce::AudioBuffer<float>> (1, 64);
         observer.setPreservePitch (true, true);

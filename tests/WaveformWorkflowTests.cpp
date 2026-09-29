@@ -69,6 +69,10 @@ struct WaveformTestAccess
         check (view.durationInfo.getText ().contains ("SAMPLE 0:00.400") && view.durationInfo.getText ().contains ("Loop 0:00.101"), "Region lengths use source sample rate");
         view.zoneProperties.setPitchOffset (12, true);
         check (view.durationInfo.getText ().contains ("SAMPLE 0:00.200"), "Pitch change updates duration immediately");
+        channel.setPitch (12, true);
+        check (view.durationInfo.getText ().contains ("SAMPLE 0:00.100") && view.durationInfo.getText ().contains ("@ +24.00 st"), "Channel pitch refreshes the combined-pitch waveform footer");
+        check (view.markerLabel (1).contains ("length 0:00.100"), "Marker length labels use combined channel and zone pitch");
+        channel.setPitch (0, true);
         const auto lengths { view.durationInfo.getText () };
         audition.setAuditionRate (0.5, true);
         check (view.durationInfo.getText () == lengths, "Audition speed never changes nominal lengths");

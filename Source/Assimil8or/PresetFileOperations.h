@@ -4,6 +4,8 @@
 #include "Preset/PresetHelpers.h"
 #include "Audio/ChannelCvSafety.h"
 #include <array>
+#include <cstring>
+#include <limits>
 
 namespace PresetFileOperations
 {
@@ -45,8 +47,14 @@ namespace PresetFileOperations
     {
         result = {};
         if (! file.existsAsFile ()) return juce::Result::fail ("Preset file is missing: " + file.getFullPathName ());
-        juce::StringArray lines;
-        file.readLines (lines);
+        juce::MemoryBlock bytes;
+        if (! file.loadFileAsData (bytes) || bytes.getSize () > static_cast<size_t> (std::numeric_limits<int>::max ()))
+            return juce::Result::fail ("Cannot read the complete preset file: " + file.getFullPathName ());
+        if (bytes.getSize () != 0 && std::memchr (bytes.getData (), 0, bytes.getSize ()) != nullptr)
+            return juce::Result::fail ("Cannot load '" + file.getFileName () + "': NUL bytes or unsupported text encoding. Use a UTF-8 preset file.");
+        if (! juce::CharPointer_UTF8::isValidString (static_cast<const char*> (bytes.getData ()), static_cast<int> (bytes.getSize ())))
+            return juce::Result::fail ("Cannot load '" + file.getFileName () + "': invalid UTF-8 encoding. The original file was not changed.");
+        const auto lines { juce::StringArray::fromLines (juce::String::createStringFromData (bytes.getData (), static_cast<int> (bytes.getSize ()))) };
         auto headers { 0 };
         juce::StringArray content;
         for (const auto& line : lines)

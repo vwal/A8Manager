@@ -35,6 +35,7 @@ void testWaveformDuration ();
 void testWaveformAudition ();
 void testWaveformAuditionRouting ();
 void testCvAudition ();
+void testMidiSaving ();
 int runPresetWorkflowAuditTests ();
 
 namespace
@@ -210,6 +211,11 @@ int main (int argc, char* argv[])
         if (argc == 2 && juce::String (argv [1]) == "--editor-refinements")
         {
             testEditorRefinements ();
+            return 0;
+        }
+        if (argc == 2 && juce::String (argv [1]) == "--midi-saving")
+        {
+            testMidiSaving ();
             return 0;
         }
         if (argc == 2 && juce::String (argv [1]) == "--stereo-preview")

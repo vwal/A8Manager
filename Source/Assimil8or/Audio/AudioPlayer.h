@@ -73,7 +73,9 @@ private:
     int blockSize { 128 };
     double sampleRateRatio { 0.0 };
     double auditionRate { 1.0 };
+    double channelPitch { 0.0 };
     double zonePitchOffset { 0.0 };
+    double sourceSampleRate { 48000.0 };
     bool preservePitch { true };
     AuditionStretch auditionStretch;
     int readSampleOffset { 0 };
@@ -142,7 +144,9 @@ private:
     void handlePlayState (AudioPlayerProperties::PlayState playState);
     void handleAuditionRate (double rate);
     void handlePreservePitch (bool preserve);
+    void handleChannelPitch (double semitones);
     void handleZonePitch (double semitones);
+    double effectivePitchSemitones () const;
     double effectiveAuditionRate () const;
     void prepareAuditionResampler ();
     void renderAuditionInput (const juce::AudioSourceChannelInfo& bufferToFill);

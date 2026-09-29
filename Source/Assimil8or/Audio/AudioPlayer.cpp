@@ -1,4 +1,5 @@
 #include "AudioPlayer.h"
+#include "PlaybackPitch.h"
 #include "SampleLoopSimulation.h"
 #include <cmath>
 #include <limits>
@@ -88,7 +89,9 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
     }
     channelProperties.wrap (presetProperties.getChannelVT (channelIndex), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     zoneProperties.wrap (channelProperties.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::yes);
+    channelProperties.onPitchChange = [this] (double semitones) { handleChannelPitch (semitones); };
     zoneProperties.onPitchOffsetChange = [this] (double semitones) { handleZonePitch (semitones); };
+    handleChannelPitch (channelProperties.getPitch ());
     handleZonePitch (zoneProperties.getPitchOffset ());
     sampleProperties.wrap (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::owner, SampleProperties::EnableCallbacks::yes);
 
@@ -342,6 +345,8 @@ void AudioPlayer::prepareSampleForPlayback ()
         sampleProperties.getAudioBufferPtr () != nullptr && sampleProperties.getAudioBufferPtr ()->getNumChannels () > 0 &&
         std::isfinite (sampleProperties.getSampleRate ()) && sampleProperties.getSampleRate () > 0.0 && std::isfinite (sampleRate) && sampleRate > 0.0)
     {
+        sourceSampleRate = sampleProperties.getSampleRate ();
+        auditionResampler.setResamplingRatio (effectiveAuditionRate ());
         const auto sourceFrames { std::clamp (sampleProperties.getLengthInSamples (), juce::int64 { 0 },
             static_cast<juce::int64> (sampleProperties.getAudioBufferPtr ()->getNumSamples ())) };
         const auto outputFrames { static_cast<double> (sourceFrames) * sampleRate / sampleProperties.getSampleRate () };
@@ -665,25 +670,42 @@ void AudioPlayer::handlePreservePitch (bool preserve)
     resetAuditionResampler = true;
 }
 
+void AudioPlayer::handleChannelPitch (double semitones)
+{
+    juce::ScopedLock sl (dataCS);
+    channelPitch = PlaybackPitch::parameterSemitones (semitones);
+    auditionResampler.setResamplingRatio (effectiveAuditionRate ());
+    if (preservePitch && std::abs (auditionRate - 1.0) > 1.0e-9) resetAuditionResampler = true;
+}
+
 void AudioPlayer::handleZonePitch (double semitones)
 {
     juce::ScopedLock sl (dataCS);
-    zonePitchOffset = std::isfinite (semitones) ? juce::jlimit (-90.0, 60.0, semitones) : 0.0;
+    zonePitchOffset = PlaybackPitch::parameterSemitones (semitones);
     auditionResampler.setResamplingRatio (effectiveAuditionRate ());
-    if (preservePitch) resetAuditionResampler = true;
+    if (preservePitch && std::abs (auditionRate - 1.0) > 1.0e-9) resetAuditionResampler = true;
+}
+
+double AudioPlayer::effectivePitchSemitones () const
+{
+    return PlaybackPitch::effectiveSemitones (channelPitch, zonePitchOffset, sourceSampleRate);
 }
 
 double AudioPlayer::effectiveAuditionRate () const
 {
-    return auditionRate * (preservePitch ? 1.0 : std::pow (2.0, zonePitchOffset / 12.0));
+    // Keep pitch removes only the audition-speed transposition. Preset pitch
+    // always changes both frequency and duration, as it does on Assimil8or.
+    return auditionRate * std::exp2 (effectivePitchSemitones () / 12.0);
 }
 
 void AudioPlayer::prepareAuditionResampler ()
 {
     // Allocate enough input capacity for the fastest rate, even when starting
     // slowly. Changing speed need not allocate or reprocess the entire sample.
-    // Zone offset can add five octaves in varispeed mode (x32).
-    const auto capacity { std::ceil (blockSize * AudioPlayerProperties::maxAuditionRate * 32.0 / effectiveAuditionRate ()) };
+    // Two independent +60 st controls can reach x1024 for sufficiently low
+    // source rates. Bound the integer block hint at extreme downward pitch.
+    // Keep the real ratio during preparation so JUCE's filter state matches it.
+    const auto capacity { std::ceil (blockSize * AudioPlayerProperties::maxAuditionRate * PlaybackPitch::maximumRatio / effectiveAuditionRate ()) };
     auditionResampler.prepareToPlay (static_cast<int> (std::min (capacity, static_cast<double> (std::numeric_limits<int>::max ()))), sampleRate);
     auditionStretch.prepare (sampleRate);
     resetAuditionResampler = true;
@@ -749,7 +771,7 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
     if (curSampleOffset < activeStart || curSampleOffset >= end)
         curSampleOffset = activeStart;
     const auto looping { playState == AudioPlayerProperties::PlayState::loop || simulating };
-    const auto stretching { preservePitch && (std::abs (auditionRate - 1.0) > 1.0e-9 || std::abs (zonePitchOffset) > 1.0e-9) };
+    const auto stretching { preservePitch && std::abs (auditionRate - 1.0) > 1.0e-9 };
     const auto speed { effectiveAuditionRate () };
     if (resetAuditionResampler || renderedStart != sampleStart || renderedEnd != end || renderedLoopStart != loopStart)
     {
@@ -762,7 +784,7 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
         renderedLoopStart = loopStart;
         auditionResampler.flushBuffers ();
         if (stretching)
-            auditionStretch.reset (*sampleBuffer, activeStart, end, curSampleOffset, speed, zonePitchOffset, looping,
+            auditionStretch.reset (*sampleBuffer, activeStart, end, curSampleOffset, speed, effectivePitchSemitones (), looping,
                                    simulating ? loopStart : -1);
         resetAuditionResampler = false;
     }

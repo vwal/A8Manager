@@ -79,6 +79,7 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     SimulationUiTests.cpp
     PairedZoneEditTests.cpp
     PresetWorkflowAuditTests.cpp
+    MidiSavingTests.cpp
     ../Source/Assimil8or/Assimil8orPreset.cpp
     ../Source/Assimil8or/Assimil8orValidator.cpp
     ../Source/Assimil8or/Validator/ValidatorProperties.cpp
@@ -88,6 +89,8 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../Source/Assimil8or/FileTypeHelpers.cpp
     ../Source/Assimil8or/MidiSetup/MidiSetupFile.cpp
     ../Source/Assimil8or/MidiSetup/MidiSetupProperties.cpp
+    ../Source/GUI/Assimil8or/MidiConfig/MidiConfigDialogComponent.cpp
+    ../Source/GUI/Assimil8or/MidiConfig/MidiSetupEditorComponent.cpp
     ../Source/GUI/Assimil8or/Editor/ZoneEditor.cpp
     ../Source/GUI/Assimil8or/Editor/ChannelEditor.cpp
     ../Source/GUI/Assimil8or/Editor/Assimil8orEditorComponent.cpp
@@ -136,6 +139,8 @@ set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPE
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
 add_test(NAME ValueDragRegression COMMAND A8ManagerInteractionTests)
 add_test(NAME AppearanceRegression COMMAND A8ManagerInteractionTests --appearance)
+add_test(NAME MidiSavingRegression COMMAND A8ManagerInteractionTests --midi-saving)
+set_tests_properties(MidiSavingRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME HardwareTestOutputRegression COMMAND A8ManagerInteractionTests --hardware-test-output)
 add_test(NAME HardwareTestOutputUiRegression COMMAND A8ManagerInteractionTests --hardware-test-output-ui)
 set_tests_properties(HardwareTestOutputRegression HardwareTestOutputUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
