@@ -143,6 +143,49 @@ void testWaveformDesignAssignment ()
     channel (stereo, 2).setChannelMode (ChannelProperties::stereoRight, false);
     reject (audio, stereo, 1, 0, "Stereo-left target is rejected");
     reject (audio, stereo, 2, 0, "Stereo-right target is rejected");
+
+    // Reported workflow: an occupied CH 1/2 pair must not reserve CH 3 or
+    // redirect the designer's suggested first free destination to either side.
+    const auto stereoFile { folder.getChildFile ("existing-stereo.wav") };
+    {
+        std::unique_ptr<juce::OutputStream> output { stereoFile.createOutputStream () };
+        juce::WavAudioFormat format;
+        auto writer { format.createWriterFor (output, juce::AudioFormatWriterOptions {}.withSampleRate (48000).withNumChannels (2).withBitsPerSample (24)) };
+        juce::AudioBuffer<float> samples (2, 128);
+        for (int frame { 0 }; frame < 128; ++frame)
+        {
+            samples.setSample (0, frame, 0.25f);
+            samples.setSample (1, frame, -0.5f);
+        }
+        require (writer && writer->writeFromAudioSampleBuffer (samples, 0, 128) && writer->flush (), "Create real stereo fixture for designer CH 3 assignment");
+    }
+    auto occupiedStereo { source.createCopy () };
+    channel (occupiedStereo, 1).setChannelMode (ChannelProperties::stereoRight, false);
+    for (int side { 0 }; side < 2; ++side)
+    {
+        auto pairedZone { zone (occupiedStereo, side) };
+        pairedZone.setSample (stereoFile.getFileName (), false);
+        pairedZone.setSide (side, false);
+        pairedZone.setSampleStart (8, false); pairedZone.setSampleEnd (100, false);
+        pairedZone.setLoopStart (16, false); pairedZone.setLoopLength (32.0, false);
+        pairedZone.setMinVoltage (-5.0, false);
+    }
+    const auto stereoBefore { occupiedStereo.createCopy () };
+    for (const auto& settings : { audio, cv })
+    {
+        AssignmentResult afterStereo;
+        require (prepareAssignment (settings, folder, "After stereo", occupiedStereo, 2, 0, afterStereo).wasOk (),
+                 "Designer can assign audio or CV to CH 3 directly after an occupied CH 1/2 stereo pair");
+        verifyFiles (afterStereo, folder, settings.mode == Mode::modulation, 1);
+        require (zone (afterStereo.editedPreset, 2).getSample () == afterStereo.waves[0].getFileName () &&
+                 channel (afterStereo.editedPreset, 2).getChannelMode () == ChannelProperties::master,
+                 "Zero-based target 2 populates CH 3 as an independent channel");
+        require (occupiedStereo.isEquivalentTo (stereoBefore) &&
+                 afterStereo.editedPreset.getChild (0).isEquivalentTo (stereoBefore.getChild (0)) &&
+                 afterStereo.editedPreset.getChild (1).isEquivalentTo (stereoBefore.getChild (1)),
+                 "Generating for CH 3 preserves both existing stereo sides and the detached input");
+        require (cleanupAssignmentFiles (afterStereo).wasOk (), "Remove owned un-applied stereo-neighbour assignment fixtures");
+    }
     auto linked { source.createCopy () };
     channel (linked, 2).setChannelMode (ChannelProperties::link, false);
     reject (audio, linked, 1, 0, "A linked follower outside the assignment is protected");

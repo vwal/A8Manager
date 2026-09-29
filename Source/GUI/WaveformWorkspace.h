@@ -18,6 +18,7 @@ public:
     void setInitialFolder (juce::File folder);
     using AssignmentContext = PresetEditSession::Snapshot;
     void refreshAssignmentContext ();
+    void recallAssigned (int channel, int zone); // Zero-based selected preset coordinates.
     WaveformDesign::Settings getSettings () const;
     std::function<std::optional<AssignmentContext> ()> onGetAssignmentContext;
     std::function<juce::Result (const AssignmentContext&, const WaveformDesign::AssignmentResult&)> onApplyAssignment;
@@ -34,6 +35,7 @@ public:
 private:
     friend struct WaveformWorkspaceTestAccess;
     std::function<void (const juce::String&, std::function<void (bool)>)> confirmAssignment;
+    std::function<void (const juce::String&, std::function<void (bool)>)> confirmRecall;
     struct Impl;
     std::unique_ptr<Impl> impl;
     void timerCallback () override;

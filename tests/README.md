@@ -23,7 +23,7 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers twenty-eight tests, with 60- or 90-second timeouts. Use `ctest --test-dir
+CTest registers thirty-one tests, with 60- or 90-second timeouts. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
@@ -190,15 +190,30 @@ oversized batches and missing files.
 
 **StereoChannelUiRegression** exercises the real channel editors and parent
 callbacks: paired zone selection, independent right-channel pan/CV controls,
-safe right-channel Tools access and pair-aware Default while preserving zone
-trees and channel IDs. It covers collapsing a previously expanded waveform when
+safe right-channel Tools access (Default and Purge) and pair-aware Default while
+preserving zone trees and channel IDs. It covers collapsing a previously expanded waveform when
 its channel becomes Stereo Right, stale/reset callbacks after edits/destruction,
-and Channel Revert restoring the correct saved channel. Optional visual artifacts
-(`stereo-right-pan-150.png`) are written only when
+and Channel Revert restoring the correct saved channel. Genuine exported audio
+and assigned-bank fixtures verify the actual Samples TOOLS recall item's enabled
+state and selected channel/zone dispatch. Ordinary, empty, missing and nonflat
+sample references, missing/malformed recipes, folder changes and missing callbacks
+disable recall; stale menu actions recheck and destroyed-editor callbacks are safe.
+Optional visual artifacts (`stereo-right-pan-150.png`) are written only when
 `A8MANAGER_TEST_ARTIFACTS` is supplied. The tests use an in-memory preset, not
 the user's preferences or audio device. They render offscreen; native-window
 visibility/focus and actual listening are not automated. Debug assertion output
 fails this regression even if the process returns success.
+
+**ChannelPurgeUiRegression** drives the real channel-menu action and confirmation
+callback with the live EditManager and SampleManager. It verifies independent
+channel and both stereo-side entry points, all-eight-zone/channel-setting reset,
+Master-mode restoration, first-zone selection, immediate sample-cache unload,
+audition stop and dirty-state marking. Other channels, live tree identities,
+the saved baseline/preset, WAVs and recipes are preserved. Cancellation, reused
+approvals, intervening edits (including change-and-revert), folder/preset switches,
+stale menu actions and editor destruction cannot apply an old purge. The test
+checks that CH tabs have their right-click tools callback installed; it invokes
+menu/confirmation callbacks without opening or clicking a native popup/dialog.
 
 **PresetWorkflowAuditRegression** checks failed preset/MIDI saves and dirty-state
 retention, valid filename slots, filtered row/slot mapping, move/save rebinding
@@ -209,7 +224,12 @@ same/different-content collisions, unsafe paths and malformed/ambiguous presets.
 **PairedZoneEditRegression** exercises the production pair-edit helper for
 Copy/Continue, Insert, full/settings-only Paste, Flip, Explode and Clear. It checks
 distinct L/R files and selectors, slot IDs, voltage synchronization, refusal to
-drop a full final slot, incomplete pairs and final slice remainders. Confirmation
+drop a full final slot, incomplete pairs and final slice remainders. Whole-channel
+purge checks cover independent channels and both sides of stereo pairs, including
+CH 7/8, retained tree identities, unpair-before-clear notification order and
+malformed/orphan-pair rejection without partial edits. Real CV/audio fixtures
+verify that purging clears the CV Mix lock despite cached CV metadata and allows
+immediate audio reassignment without changing the original CV file. Confirmation
 dialogs themselves are not automated.
 
 ## Waveform workspace
@@ -277,3 +297,23 @@ sample-import isolation (including stereo), Mix locks, paste validation and Save
 protection. Workspace and stereo-channel UI tests cover the corresponding controls
 and asynchronous confirmation/commit behavior. These are software regressions,
 not hardware voltage/mix-routing measurements.
+
+Stereo-neighbor regressions also exercise the reported CH 1/2 stereo pair →
+suggested CH 3 workflow: actual asynchronous UI assignment, live SampleManager
+loading and editor notifications, preservation of both stereo channels, and
+Save/readback of CH 3 in the selected preset. Separate package export is checked
+to leave that shared preset unchanged.
+
+`GeneratedSidecarValidatorRegression` passes real oscillator, CV, layer-bank and
+assignment outputs through the actual file validator. It checks informational
+recognition of generated recipes/README files, unchanged WAV/preset memory
+accounting, and continued warnings for unrelated, malformed, oversized, deeply
+nested or unsupported-version recipe files.
+
+`WaveformDesignRecallRegression` recalls actual audio/CV exports and every voice
+of eight-voice banks from both standalone packages and assignments. It checks
+complete settings restoration, recipe association, safe format/dimension/purpose
+checks, malformed JSON/RIFF handling and explicit recipe loading for legacy files.
+Workspace tests cover recall confirmation/cancellation, changed designs/presets/
+recipes, callback lifetime, original target selection, whole-bank recall and
+unchanged preset/files. Editor tests check exact selected channel/zone dispatch.

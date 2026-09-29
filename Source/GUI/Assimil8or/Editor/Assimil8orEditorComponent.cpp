@@ -10,6 +10,7 @@
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "../../../Assimil8or/Preset/PresetHelpers.h"
 #include "../../../Assimil8or/Preset/StereoChannelTools.h"
+#include "../../../Assimil8or/Audio/WaveformDesignRecall.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Debug/DumpStack.h"
 #include "oolib/GUI/ErrorHelpers.h"
@@ -39,6 +40,11 @@ std::optional<double> Assimil8orEditorComponent::getSelectedDuration (int region
 Assimil8orEditorComponent::Assimil8orEditorComponent ()
 {
     setOpaque (true);
+    confirmChannelPurge = [] (const juce::String& title, const juce::String& message, std::function<void (bool)> callback)
+    {
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, title, message, "Purge", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
+    };
 
     auto setupButton = [this] (juce::TextButton& button, juce::String text, std::function<void ()> buttonFunction)
     {
@@ -57,6 +63,7 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
     for (auto curChannelIndex { 0 }; curChannelIndex < 8; ++curChannelIndex)
         channelTabs.addTab ("CH " + juce::String::charToString ('1' + curChannelIndex), Theme::panel, &channelEditors [curChannelIndex], false);
     addAndMakeVisible (channelTabs);
+    channelTabs.onTabPopup = [this] (int channel) { displayChannelToolsMenu (channel); };
 
     // add this AFTER the Channels tabs, because it occupies some of the same space, and ends up behind the tabs if we add it before
     toolsButton.setButtonText ("TOOLS");
@@ -432,15 +439,12 @@ void Assimil8orEditorComponent::init (juce::ValueTree rootPropertiesVT)
         };
         channelEditors [channelIndex].displayToolsMenu = [this] (int channelIndex)
         {
-            auto popupMenuLnF { std::make_shared<juce::LookAndFeel_V4> () };
-            popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
-            auto toolsMenu { createChannelToolsMenu (channelIndex) };
-            toolsMenu.setLookAndFeel (popupMenuLnF.get ());
-            toolsMenu.showMenuAsync ({}, [popupMenuLnF] (int) {});
+            displayChannelToolsMenu (channelIndex);
         };
         return true;
     });
     channelEditorsInitialized = true;
+    channelActionSession.init (rootPropertiesVT);
     synchronizeAllStereoZones ();
 
     idDataChanged (presetProperties.getId ());
@@ -499,6 +503,59 @@ void Assimil8orEditorComponent::addChannelDefaultMenuItem (juce::PopupMenu& menu
     });
 }
 
+void Assimil8orEditorComponent::displayChannelToolsMenu (int channelIndex)
+{
+    if (! channelEditorsInitialized) return;
+    auto popupMenuLnF { std::make_shared<juce::LookAndFeel_V4> () };
+    popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+    auto toolsMenu { createChannelToolsMenu (channelIndex) };
+    toolsMenu.setLookAndFeel (popupMenuLnF.get ());
+    toolsMenu.showMenuAsync ({}, [popupMenuLnF] (int) {});
+}
+
+void Assimil8orEditorComponent::addChannelPurgeMenuItem (juce::PopupMenu& menu, int channelIndex)
+{
+    const auto source { channelActionSession.snapshot () };
+    const auto channelTree { channelProperties[channelIndex].getValueTree () };
+    const auto partner { StereoChannelTools::partner (channelTree) };
+    juce::Component::SafePointer<Assimil8orEditorComponent> safe (this);
+    menu.addItem ("Purge this channel...", source.has_value (), false, [safe, source, channelIndex, channelTree, partner] ()
+    {
+        if (safe == nullptr || ! source) return;
+        const auto current { safe->channelActionSession.snapshot () };
+        if (! current || current->revision != source->revision || current->folder != source->folder ||
+            ! current->preset.isEquivalentTo (source->preset) || safe->channelProperties[channelIndex].getValueTree () != channelTree) return;
+        auto channels { "CH " + juce::String (channelIndex + 1) };
+        if (partner.isValid ()) channels += " and CH " + partner.getProperty (ChannelProperties::IdPropertyId).toString ();
+        const auto request { ++safe->purgeConfirmation };
+        safe->confirmChannelPurge ("Purge " + channels + "?",
+            "Clear all eight zones and reset the channel settings for " + channels + "?" +
+            juce::String (partner.isValid () ? " Both stereo channels will be cleared and become independent Master channels." : "") +
+            "\n\nWAV files and waveform recipes are NOT deleted. Other channels are unchanged. Click Save afterward to write the preset.",
+            [safe, source, channelIndex, channelTree, partner, request] (bool accepted)
+        {
+            if (safe == nullptr || safe->purgeConfirmation != request) return;
+            ++safe->purgeConfirmation;
+            if (! accepted) return;
+            const auto approved { safe->channelActionSession.snapshot () };
+            if (! approved || approved->revision != source->revision || approved->folder != source->folder ||
+                ! approved->preset.isEquivalentTo (source->preset) || safe->channelProperties[channelIndex].getValueTree () != channelTree ||
+                StereoChannelTools::partner (channelTree) != partner) return;
+            safe->audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+            if (! StereoChannelTools::purge (channelTree, safe->defaultChannelProperties.getValueTree ()))
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot purge channel",
+                    "The channel, its zones or its stereo pairing are invalid. Nothing was cleared; correct the preset structure and try again.");
+                return;
+            }
+            safe->channelEditors[channelIndex].setSelectedZoneFromPartner (0);
+            if (partner.isValid ())
+                safe->channelEditors[static_cast<int> (partner.getProperty (ChannelProperties::IdPropertyId)) - 1].setSelectedZoneFromPartner (0);
+            safe->updateAllChannelTabNames ();
+        });
+    });
+}
+
 juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIndex)
 {
     juce::PopupMenu toolsMenu;
@@ -509,6 +566,7 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIn
     {
         // Opening Tools on R must not expose independent zone/clone operations.
         addChannelDefaultMenuItem (toolsMenu, channelIndex);
+        addChannelPurgeMenuItem (toolsMenu, channelIndex);
         return toolsMenu;
     }
     {
@@ -577,6 +635,8 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIn
     {
         channelProperties[channelIndex].copyFrom (unEditedPresetProperties.getChannelVT (channelIndex));
     });
+    toolsMenu.addSeparator ();
+    addChannelPurgeMenuItem (toolsMenu, channelIndex);
     return toolsMenu;
 }
 
@@ -726,12 +786,39 @@ void Assimil8orEditorComponent::revertPreset ()
     PresetProperties::copyTreeProperties (unEditedPresetProperties.getValueTree (), presetProperties.getValueTree ());
 }
 
+bool Assimil8orEditorComponent::canRecallSelectedWaveform ()
+{
+    const auto channel { channelTabs.getCurrentTabIndex () };
+    if (! channelEditorsInitialized || ! onRecallWaveform || channel < 0 || channel >= 8) return false;
+    const auto zone { channelEditors[channel].getSelectedZoneIndex () };
+    if (zone < 0 || zone >= 8 || appProperties.getMostRecentFolder ().isEmpty ()) return false;
+    const auto sample { channelProperties[channel].getZoneVT (zone).getProperty (ZoneProperties::SamplePropertyId).toString () };
+    if (sample.isEmpty () || juce::File::isAbsolutePath (sample) || sample.containsAnyOf ("/\\")) return false;
+    WaveformDesignRecall::RecalledDesign recalled;
+    return WaveformDesignRecall::recallWave (juce::File (appProperties.getMostRecentFolder ()).getChildFile (sample), recalled).wasOk ();
+}
+
+void Assimil8orEditorComponent::recallSelectedWaveform ()
+{
+    if (! canRecallSelectedWaveform ()) return;
+    const auto channel { channelTabs.getCurrentTabIndex () };
+    if (! channelEditorsInitialized || ! onRecallWaveform || channel < 0 || channel >= 8) return;
+    const auto zone { channelEditors[channel].getSelectedZoneIndex () };
+    if (zone >= 0 && zone < 8) onRecallWaveform (channel, zone);
+}
+
 void Assimil8orEditorComponent::displayToolsMenu ()
 {
-    auto* popupMenuLnF { new juce::LookAndFeel_V4 };
+    auto popupMenuLnF { std::make_shared<juce::LookAndFeel_V4> () };
     popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+    auto toolsMenu { createPresetToolsMenu () };
+    toolsMenu.setLookAndFeel (popupMenuLnF.get ());
+    toolsMenu.showMenuAsync ({}, [popupMenuLnF] (int) {});
+}
+
+juce::PopupMenu Assimil8orEditorComponent::createPresetToolsMenu ()
+{
     juce::PopupMenu toolsMenu;
-    toolsMenu.setLookAndFeel (popupMenuLnF);
     toolsMenu.addSectionHeader ("Preset");
     toolsMenu.addSeparator ();
 
@@ -750,8 +837,12 @@ void Assimil8orEditorComponent::displayToolsMenu ()
     toolsMenu.addItem ("Default", true, false, [this] () { setPresetToDefaults (); });
     toolsMenu.addItem ("Revert", true, false, [this] () { revertPreset (); });
     toolsMenu.addItem ("Midi Setups", true, false, [this] () { guiControlProperties.showMidiConfigWindow (true); });
+    toolsMenu.addSeparator ();
+    juce::Component::SafePointer<Assimil8orEditorComponent> safe (this);
+    toolsMenu.addItem ("Edit selected waveform in designer...", canRecallSelectedWaveform (), false,
+        [safe] () { if (safe != nullptr) safe->recallSelectedWaveform (); });
 
-    toolsMenu.showMenuAsync ({}, [this, popupMenuLnF] (int) { delete popupMenuLnF; });
+    return toolsMenu;
 }
 
 void Assimil8orEditorComponent::exportPresetSettings ()

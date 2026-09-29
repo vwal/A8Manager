@@ -50,6 +50,8 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     WaveformDesignAssignmentTests.cpp
     SharedPresetSessionTests.cpp
     ChannelCvSafetyTests.cpp
+    GeneratedSidecarValidatorTests.cpp
+    WaveformDesignRecallTests.cpp
     WaveformWorkspaceTests.cpp
     WaveformDurationTests.cpp
     ../Source/Assimil8or/Audio/WaveformDesign.cpp
@@ -67,9 +69,15 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     AudioFileSafetyTests.cpp
     StereoAssignmentTests.cpp
     StereoChannelUiTests.cpp
+    ChannelPurgeUiTests.cpp
     PairedZoneEditTests.cpp
     PresetWorkflowAuditTests.cpp
     ../Source/Assimil8or/Assimil8orPreset.cpp
+    ../Source/Assimil8or/Assimil8orValidator.cpp
+    ../Source/Assimil8or/Validator/ValidatorProperties.cpp
+    ../Source/Assimil8or/Validator/ValidatorResultListProperties.cpp
+    ../Source/Assimil8or/Validator/ValidatorResultProperties.cpp
+    ../Source/Assimil8or/Fixer/FixerEntryProperties.cpp
     ../Source/Assimil8or/FileTypeHelpers.cpp
     ../Source/Assimil8or/MidiSetup/MidiSetupFile.cpp
     ../Source/Assimil8or/MidiSetup/MidiSetupProperties.cpp
@@ -125,6 +133,10 @@ add_test(NAME WaveformDesignExportRegression COMMAND A8ManagerInteractionTests -
 add_test(NAME WaveformDesignAssignmentRegression COMMAND A8ManagerInteractionTests --waveform-design-assignment)
 add_test(NAME SharedPresetSessionRegression COMMAND A8ManagerInteractionTests --shared-preset-session)
 add_test(NAME ChannelCvSafetyRegression COMMAND A8ManagerInteractionTests --channel-cv-safety)
+add_test(NAME GeneratedSidecarValidatorRegression COMMAND A8ManagerInteractionTests --generated-sidecar-validator)
+add_test(NAME WaveformDesignRecallRegression COMMAND A8ManagerInteractionTests --waveform-design-recall)
+set_tests_properties(WaveformDesignRecallRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
+set_tests_properties(GeneratedSidecarValidatorRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 set_tests_properties(WaveformDesignAssignmentRegression SharedPresetSessionRegression ChannelCvSafetyRegression
     PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME WaveformWorkspaceRegression COMMAND A8ManagerInteractionTests --waveform-workspace)
@@ -149,6 +161,8 @@ add_test(NAME AudioAuditRegression COMMAND A8ManagerInteractionTests --audio-aud
 add_test(NAME AudioFileSafetyRegression COMMAND A8ManagerInteractionTests --audio-file-safety)
 add_test(NAME StereoAssignmentRegression COMMAND A8ManagerInteractionTests --stereo-assignment)
 add_test(NAME StereoChannelUiRegression COMMAND A8ManagerInteractionTests --stereo-channel-ui)
+add_test(NAME ChannelPurgeUiRegression COMMAND A8ManagerInteractionTests --channel-purge-ui)
+set_tests_properties(ChannelPurgeUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME PairedZoneEditRegression COMMAND A8ManagerInteractionTests --paired-zone-edit)
 add_test(NAME PresetWorkflowAuditRegression COMMAND A8ManagerInteractionTests --preset-workflow-audit)
 set_tests_properties(AudioAuditRegression AudioFileSafetyRegression StereoAssignmentRegression StereoChannelUiRegression PairedZoneEditRegression PresetWorkflowAuditRegression PROPERTIES TIMEOUT 60)

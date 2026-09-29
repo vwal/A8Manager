@@ -9,6 +9,7 @@
 #include "../../../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "../../../Assimil8or/Preset/PresetProperties.h"
 #include "../../DragValueEditor.h"
+#include "../../PresetEditSession.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 
@@ -36,9 +37,13 @@ public:
     void overwritePresetOrCancel (std::function<void ()> overwriteFunction, std::function<void ()> cancelFunction);
     std::optional<double> getSelectedDuration (int region);
     void savePreset ();
+    void recallSelectedWaveform ();
+    bool canRecallSelectedWaveform ();
+    std::function<void (int channel, int zone)> onRecallWaveform;
 
 private:
     friend struct StereoChannelUiTestAccess;
+    friend struct ChannelPurgeUiTestAccess;
     RuntimeRootProperties runtimeRootProperties;
     AppProperties appProperties;
     AudioPlayerProperties audioPlayerProperties;
@@ -54,13 +59,16 @@ private:
     bool copyBufferHasData { false };
     bool channelEditorsInitialized { false };
     EditManager* editManager { nullptr };
+    PresetEditSession channelActionSession;
+    unsigned purgeConfirmation { 0 };
+    std::function<void (const juce::String&, const juce::String&, std::function<void (bool)>)> confirmChannelPurge;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::Label titleLabel;
     juce::TextButton saveButton;
     juce::TextButton toolsButton;
 
-    juce::TabbedComponent channelTabs { juce::TabbedButtonBar::Orientation::TabsAtTop };
+    TabbedComponentWithChangeCallback channelTabs { juce::TabbedButtonBar::Orientation::TabsAtTop };
     WindowDecorator windowDecorator;
 
     // Preset Parameters
@@ -92,8 +100,11 @@ private:
     std::array<ChannelProperties, 8> channelProperties;
 
     void displayToolsMenu ();
+    juce::PopupMenu createPresetToolsMenu ();
+    void displayChannelToolsMenu (int channelIndex);
     juce::PopupMenu createChannelToolsMenu (int channelIndex);
     void addChannelDefaultMenuItem (juce::PopupMenu& menu, int channelIndex);
+    void addChannelPurgeMenuItem (juce::PopupMenu& menu, int channelIndex);
     void synchronizeStereoZones (int sourceChannel, int zoneIndex);
     void synchronizeAllStereoZones ();
     void explodeChannel (int channelIndex, int explodeCount);

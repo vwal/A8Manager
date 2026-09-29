@@ -37,8 +37,13 @@ files may be useful independently and are not automatically deleted.
 **CV and audio must use separate channels**, though they may coexist on different
 channels of one preset. This includes every zone, not just the selected zone.
 Even replacing the only zone with the opposite content type requires purging
-that channel first. Known CV channels are locked to **Mix Off** and **Mix
-modulation Off**, leaving the individual output available. Samples imports and
+that channel first. In Samples, use the channel's **TOOLS → Purge this channel...**
+or right-click its CH tab, then confirm. This resets all eight zones and channel
+settings, not the WAV/recipe files. A stereo pair is purged together and becomes
+two independent Master channels. Click **SAVE** to keep the preset change.
+
+Known CV channels are locked to **Mix Off** and **Mix modulation Off**, leaving
+the individual output available. Samples imports and
 zone paste enforce the same separation. An already mixed preset cannot be saved
 until corrected. Missing/unreadable destination samples prevent assignment
 because their purpose cannot be verified. Untagged third-party CV cannot be
@@ -52,7 +57,10 @@ reliably recognized: the monitoring precautions below still apply.
    **Start audition** to hear the design before exporting.
 2. Choose playback: **One shot**, **Loop** (continuous), or **Gated loop**.
 3. Give the design a name, choose **Package preset** (001–199), then choose
-   **Export package...**. Select a parent folder.
+   **Export new package...**. Select a parent folder. This does not use the
+   Target channel/zone fields or modify your selected preset; voices in the new
+   package start at CH 1. Use **Generate & Assign...**, then **SAVE**, to fill
+   the selected channel/zone in the current preset instead.
    A8Manager creates a new, uniquely named `A8-...` folder inside it.
 4. **Open in Sample workspace** opens the generated folder for inspection.
    Existing unsaved preset edits still require confirmation before changing roots.
@@ -66,10 +74,42 @@ WAVs use the chosen 48 or 96 kHz rate. Existing files and folders are not replac
 repeated exports get a numbered folder suffix. This does not assign files to or
 save over the preset currently being edited. Other zones/channels in the exported
 preset are empty defaults.
+In Samples, the validator identifies genuine generated recipes and instructions
+as informational desktop-only files. They are not hardware presets and do not
+add to sample RAM; unrelated or malformed JSON/text files still get warnings.
 
-Use **Load recipe...** to reopen a package's `design.json` or an assigned design's
-uniquely named `.design.json`. Assignment and export both save the recipe;
-unwritten design changes are held only for the current application session.
+## Recalling and editing a saved design
+
+- In **Samples**, select the channel and zone, then choose **TOOLS → Edit selected
+  waveform in designer...**.
+- In the designer, choose an occupied **Target channel / Target zone** and click
+  **Recall assigned...**.
+- Or use **Load recipe / WAV...** to select a package's `design.json`, an assigned
+  design's uniquely named `.design.json`, or its generated WAV directly.
+
+The Samples TOOLS command is greyed out unless the selected zone contains a
+recognized generated WAV with a valid associated recipe in the current folder.
+Ordinary samples, empty zones and missing/invalid companion files cannot be
+recalled this way. Any voice in a generated bank can enable the command.
+
+Confirm replacement of the design currently held in that workspace mode. Cancel
+and generate/assign or export it first if you want to keep it. Recall restores
+all saved shaping controls, mode and timing; choosing any bank voice restores
+the **whole bank**, including each voice's settings. It does not start audition.
+When the original bank is still assigned to consecutive channels, its first
+channel becomes the assignment target. Otherwise choose a destination explicitly.
+
+Recall reads the saved recipe, not changes subsequently made to sample/loop
+markers, pitch or other preset parameters. It does not alter WAV files or the
+preset. After editing, use **Generate & Assign...**, review the replacement
+confirmation, then **SAVE**. New WAVs are created; previous files are preserved.
+
+Keep the recipe beside the generated WAVs with their original filenames for
+automatic recall. If files were renamed, or an older WAV has no generator tag,
+load its recipe explicitly. A WAV alone cannot reconstruct the generator knobs
+or bank settings; missing/unrecognized recipes are reported without replacing
+your current design. Assignment and export both save the recipe; unwritten
+design changes are held only for the current application session.
 Each Workspace mode remembers its current design while the app remains open,
 so switching between Audio Cycle, CV and Layer Bank preserves those edits.
 Choosing a fresh Starting point replaces the current mode's design with preset

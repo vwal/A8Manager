@@ -69,6 +69,103 @@ namespace
 
 struct WaveformWorkspaceTestAccess
 {
+    static void recallWorkflow ()
+    {
+        using namespace WaveformDesign;
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-workspace-recall", "", false) };
+        check (folder.createDirectory ().wasOk (), "Create owned recall workflow folder");
+        struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+        auto live { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType).createCopy () };
+        live.setProperty (PresetProperties::IdPropertyId, 17, nullptr);
+        auto audio { startingPoint (Mode::oscillator, Shape::pulse) };
+        audio.phaseDegrees = 87; audio.pulseWidth = 0.27; audio.harmonics = 13; audio.fold = 0.2;
+        AssignmentResult assigned;
+        check (prepareAssignment (audio, folder, "Recall me", live, 2, 0, assigned).wasOk (), "Generate real assigned waveform to recall");
+        live = assigned.editedPreset;
+        auto revision { std::uint64_t { 1 } };
+        auto context = [&] () -> std::optional<WaveformWorkspace::AssignmentContext> { return WaveformWorkspace::AssignmentContext { folder, live.createCopy (), revision }; };
+        std::function<void (bool)> answer;
+        int prompts { 0 };
+        juce::String message;
+        WaveformWorkspace workspace;
+        workspace.setSize (975, 732);
+        workspace.onGetAssignmentContext = context;
+        workspace.confirmRecall = [&] (const juce::String& text, std::function<void (bool)> callback) { ++prompts; message = text; answer = std::move (callback); };
+        workspace.refreshAssignmentContext ();
+        auto& target { control<juce::ComboBox> (workspace, "design-target-channel") };
+        auto& zone { control<juce::ComboBox> (workspace, "design-target-zone") };
+        auto& recall { control<juce::Button> (workspace, "design-recall") };
+        check (! recall.isEnabled (), "Recall is unavailable for the suggested empty destination");
+        target.setSelectedId (3, juce::sendNotificationSync);
+        check (recall.isEnabled (), "An occupied target exposes recall without changing preset data");
+        const auto before { juce::JSON::toString (toJson (workspace.getSettings ())) };
+        click (workspace, "Recall assigned...");
+        check (prompts == 1 && message.contains ("replaced") && juce::JSON::toString (toJson (workspace.getSettings ())) == before,
+               "Recall confirms replacement before changing design settings");
+        answer (false); answer (true);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == before, "Cancel is single-use and preserves the design");
+        click (workspace, "Recall assigned...");
+        ++revision;
+        answer (true);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == before, "Changed preset invalidates a pending recall");
+        click (workspace, "Recall assigned...");
+        control<juce::Slider> (workspace, "design-phase-value").setValue (25, juce::sendNotificationSync);
+        answer (true);
+        check (workspace.getSettings ().phaseDegrees == 25, "Edits made during recall confirmation are not discarded");
+        const auto liveBefore { live.createCopy () };
+        const auto filesBefore { folder.findChildFiles (juce::File::findFiles, false).size () };
+        click (workspace, "Recall assigned...");
+        answer (true);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (audio)) &&
+               target.getSelectedId () == 3 && zone.getSelectedId () == 1,
+               "Recall restores every audio shaping setting and keeps its original destination");
+        check (live.isEquivalentTo (liveBefore) && folder.findChildFiles (juce::File::findFiles, false).size () == filesBefore,
+               "Recall does not assign, save, or generate any preset/WAV files");
+        click (workspace, "Recall assigned...");
+        auto changedRecipe { audio }; changedRecipe.phaseDegrees = 42;
+        check (assigned.recipe.replaceWithText (juce::JSON::toString (toJson (changedRecipe))), "Alter owned recipe during confirmation");
+        answer (true);
+        check (workspace.getSettings ().phaseDegrees == 87, "Externally changed recipe is not silently recalled after confirmation");
+
+        auto cv { startingPoint (Mode::modulation, Shape::triangle) }; cv.durationSeconds = 0.02; cv.offset = 0.25;
+        AssignmentResult cvAssigned;
+        check (prepareAssignment (cv, folder, "Recall CV", live, 3, 0, cvAssigned).wasOk (), "Generate assigned CV recall fixture");
+        live = cvAssigned.editedPreset; ++revision;
+        workspace.recallAssigned (3, 0);
+        answer (true);
+        settle (workspace);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (cv)) &&
+               ! control<juce::Button> (workspace, "design-audition").isEnabled (),
+               "CV recall restores its mode and shaping without enabling speaker audition");
+
+        auto bank { startingPoint (Mode::layers, Shape::saw) }; spreadVoices (bank, 3, 19, 137, 0.6);
+        bank.voices[1].detuneCents = 9; bank.voices[2].pan = 0.31;
+        AssignmentResult bankAssigned;
+        check (prepareAssignment (bank, folder, "Recall bank", live, 4, 0, bankAssigned).wasOk (), "Generate assigned bank recall fixture");
+        live = bankAssigned.editedPreset; ++revision;
+        workspace.recallAssigned (5, 0); // Select the second voice, not its master.
+        check (message.contains ("entire bank"), "Bank recall explains that it restores all voices");
+        answer (true);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (bank)) && target.getSelectedId () == 5,
+               "Recalling a bank follower restores all voices and selects the original bank's first channel");
+        const auto bankBefore { juce::JSON::toString (toJson (workspace.getSettings ())) };
+        ZoneProperties missing (live.getChild (0).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        missing.setSample ("ordinary.wav", false); ++revision;
+        const auto promptsBefore { prompts };
+        workspace.recallAssigned (0, 0);
+        check (prompts == promptsBefore && juce::JSON::toString (toJson (workspace.getSettings ())) == bankBefore &&
+               control<juce::Label> (workspace, "design-status").getText ().contains ("Could not recall"),
+               "Missing/unrelated WAV recipe gives an explanation and preserves the design");
+        auto doomed { std::make_unique<WaveformWorkspace> () };
+        doomed->onGetAssignmentContext = context;
+        doomed->confirmRecall = [&] (const juce::String&, std::function<void (bool)> callback) { answer = std::move (callback); };
+        doomed->recallAssigned (5, 0);
+        doomed.reset ();
+        answer (true); // SafePointer must discard late native-modal callbacks.
+        snapshot (workspace, "waveform-workspace-recalled-bank");
+        std::cout << "PASS: saved audio/CV/bank recall, destinations, non-mutating confirmation, stale rejection and lifetime safety\n";
+    }
+
     static void assignmentWorkflow ()
     {
         using namespace WaveformDesign;
@@ -190,9 +287,45 @@ struct WaveformWorkspaceTestAccess
         click (workspace, "Generate & Assign...");
         check (promptText.contains ("Mix Off") && promptText.contains ("cannot share a channel"), "CV assignment explicitly warns about individual output routing and audio/CV separation");
         answer (false);
+
+        // The reported case: CH 1/2 is a stereo pair, and the suggested CH 3
+        // must receive the generated sample, without touching either partner.
+        live = original.createCopy ();
+        PresetProperties stereoPreset (live, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+        ChannelProperties stereoLeft (stereoPreset.getChannelVT (0), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        ChannelProperties stereoRight (stereoPreset.getChannelVT (1), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        stereoRight.setChannelMode (ChannelProperties::stereoRight, false);
+        for (auto channel : { stereoLeft.getValueTree (), stereoRight.getValueTree () })
+        {
+            ZoneProperties stereoZone (channel.getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            stereoZone.setSample ("existing-stereo.wav", false);
+        }
+        const auto leftBefore { stereoLeft.getValueTree ().createCopy () }, rightBefore { stereoRight.getValueTree ().createCopy () };
+        ++revision;
+        control<juce::ComboBox> (workspace, "design-mode").setSelectedId (1, juce::sendNotificationSync);
+        workspace.refreshAssignmentContext ();
+        check (target.getSelectedId () == 3 && ! target.isItemEnabled (1) && ! target.isItemEnabled (2),
+               "Stereo CH 1/2 suggests the independent empty CH 3");
+        click (workspace, "Generate & Assign...");
+        check (promptText.contains ("channel 3, zone 1"), "Stereo-neighbor assignment confirms the suggested channel");
+        answer (true);
+        waitForAssignment ();
+        PresetProperties stereoAssigned (live, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+        ChannelProperties thirdAssigned (stereoAssigned.getChannelVT (2), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        ZoneProperties thirdZone (thirdAssigned.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        check (applications == 2 && thirdZone.getSample ().isNotEmpty () && folder.getChildFile (thirdZone.getSample ()).existsAsFile (),
+               "Generate & Assign fills CH 3 beside an existing stereo pair");
+        check (stereoAssigned.getChannelVT (0).isEquivalentTo (leftBefore) && stereoAssigned.getChannelVT (1).isEquivalentTo (rightBefore),
+               "Assigning the suggested CH 3 preserves the complete stereo pair");
+        check (! target.getText ().contains ("empty") && control<juce::Label> (workspace, "design-status").getText ().contains ("preset 7, CH 3, zone 1"),
+               "Successful assignment visibly identifies its destination and no longer lists CH 3 as empty");
+        check (control<juce::Label> (workspace, "design-assignment-heading").getText ().contains ("CURRENT PRESET") &&
+               control<juce::Label> (workspace, "design-package-heading").getText ().contains ("current preset unchanged") &&
+               control<juce::Button> (workspace, "design-export").getTooltip ().contains ("CH 1"),
+               "Persistent headings and package tooltip distinguish assignment from separate export");
         workspace.setSize (975, 732); // Actual minimum space beside the shared preset sidebar/header.
         settle (workspace);
-        for (const auto* name : { "design-assign", "design-export", "design-target-channel", "design-target-zone", "design-export-slot" })
+        for (const auto* name : { "design-assign", "design-recall", "design-export", "design-target-channel", "design-target-zone", "design-export-slot", "design-assignment-heading", "design-package-heading" })
         {
             auto& field { control<juce::Component> (workspace, name) };
             const auto bounds { workspace.getLocalArea (&field, field.getLocalBounds ()) };
@@ -550,7 +683,7 @@ struct WaveformWorkspaceTestAccess
         control<juce::ComboBox> (workspace, "design-mode").setSelectedId (3, juce::sendNotificationSync);
         check (juce::JSON::toString (toJson (workspace.getSettings ())) == retainedLayers, "Mode switching preserves individual voice edits");
         control<juce::TextEditor> (workspace, "design-name").setText (".", false);
-        click (workspace, "Export package...");
+        click (workspace, "Export new package...");
         check (control<juce::Label> (workspace, "design-status").getText ().contains ("usable design name"), "Invalid export name is rejected before opening a chooser or writing files");
         check (! find (workspace, "design-open-export")->isVisible (), "Open exported folder stays hidden until a successful explicit export");
         click (workspace, "Back to preset");
@@ -564,4 +697,5 @@ void testWaveformWorkspace ()
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
     WaveformWorkspaceTestAccess::assignmentWorkflow ();
+    WaveformWorkspaceTestAccess::recallWorkflow ();
 }

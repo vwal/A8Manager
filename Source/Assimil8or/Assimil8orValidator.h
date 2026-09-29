@@ -23,6 +23,7 @@ public:
     void init (juce::ValueTree rootPropertiesVT);
 
 private:
+    friend struct GeneratedSidecarValidatorTestAccess;
     enum class ValdatationState
     {
         idle,

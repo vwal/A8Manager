@@ -73,6 +73,8 @@ set(ASSIMIL8OR_AUDIO_FILES
     Source/Assimil8or/Audio/WaveformDesignExport.h
     Source/Assimil8or/Audio/WaveformDesignAssignment.cpp
     Source/Assimil8or/Audio/WaveformDesignAssignment.h
+    Source/Assimil8or/Audio/WaveformDesignSidecars.h
+    Source/Assimil8or/Audio/WaveformDesignRecall.h
     Source/Assimil8or/Audio/AudioManager.cpp
     Source/Assimil8or/Audio/AudioManager.h
     Source/Assimil8or/Audio/AudioPlayer.cpp

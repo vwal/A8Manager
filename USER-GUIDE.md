@@ -454,7 +454,10 @@ available; an occupied independent neighbour is not overwritten.
 settings and returns them to independent default modes. It preserves the samples,
 zone assignments and zone markers on both sides. To clear the assignments, use
 **Clear All Zones** on the left/master channel; this clears both partners but does
-not delete audio files. Individual **Purge this zone** also operates on both sides.
+not delete audio files. To clear every zone **and** reset the channel settings,
+use **Purge this channel...** from either partner's channel TOOLS menu or by
+right-clicking its CH tab. The confirmation identifies both channels; they become
+independent Master channels. Individual **Purge this zone** also operates on both sides.
 
 ## Zone selection voltages
 
@@ -558,6 +561,24 @@ For a stereo pair, purge from the left/master channel. The corresponding right
 zone is cleared and its later zones shift in step with the left. The confirmation
 explicitly identifies this. A stereo-right zone cannot be purged independently.
 
+### Purging an entire channel
+
+Open the channel's **TOOLS** menu, or right-click its **CH tab**, and choose
+**Purge this channel...**. Review the confirmation and click **Purge** to clear
+all eight zones and restore every channel setting to its default. Cancel leaves
+the channel unchanged. This is broader than Default, which retains the zones.
+
+On a stereo pair, invoking this from either side purges **both** channels and
+returns them to independent **Master** channels. Other channels remain unchanged.
+Audition stops and the purged channel selects its first empty zone. Purging a CV
+channel also releases its CV-only Mix lock, allowing ordinary audio to be assigned
+to the now-empty channel.
+
+WAV files and waveform recipes on disk are **not deleted**. Purge changes the
+open preset only; click **SAVE** to keep the changes. There is no dedicated purge
+undo. If you change the preset or working folder while confirmation is open,
+the old confirmation cannot clear the newly selected or changed preset.
+
 ## Saving and moving your work
 
 **SAVE** writes the current preset to its file in the working folder. It becomes
@@ -623,15 +644,35 @@ CV and audio cannot share a channel. Known CV channels have Mix and Mix modulati
 locked **Off**, including when imported through Samples. Use separate channels
 for oscillator/audio and modulation content.
 
-**Export package...** remains available for a standalone folder containing WAVs,
+**Export new package...** remains available for a standalone folder containing WAVs,
 a selectable preset number (001–199), `design.json` and loading instructions.
-It does not change the selected preset. An existing folder is never overwritten.
+It does not change the selected preset or use the Target channel/zone fields:
+the new package starts its voices at CH 1. To fill an empty CH 3 beside an
+existing CH 1/2 stereo pair, use **Generate & Assign...**, then **SAVE** instead.
+An existing folder is never overwritten.
 Use **Open in Sample workspace** to inspect the result; any unsaved preset is
 protected by the usual confirmation. Or copy the entire generated folder onto
 your Assimil8or SD card and load the chosen preset number on the module.
+The validator lists recognized designer recipes and loading instructions as
+informational desktop files, not unknown-file warnings. Unrelated or malformed
+JSON/text files still produce warnings.
 
 The [Waveform Designer guide](WAVEFORM-DESIGNER.md) explains the controls,
 supersaw layering, sample-length matching, DC safety, and voltage calibration.
+To edit an existing generated waveform, select its channel/zone in Samples and
+choose **TOOLS → Edit selected waveform in designer...**, or use **Recall
+assigned...** for the designer's chosen target. **Load recipe / WAV...** also
+opens a saved JSON recipe or a generated WAV with its recipe beside it. Any bank
+voice recalls the entire saved bank. Recall asks before replacing the design,
+and does not change the preset or files; regenerate/assign and Save after editing.
+Keep the companion recipe: the WAV alone cannot restore the shaping controls.
+
+The Samples TOOLS item is greyed out for ordinary samples, empty zones, missing
+files or an invalid/missing associated recipe. It is enabled only when the
+selected generated WAV and its saved recipe are recognized together. If you
+renamed the files or have an older untagged export, use **Load recipe / WAV...**
+to select the JSON recipe explicitly instead.
+
 Use **Start audition** to hear an Audio Cycle or the complete Layer Bank while
 shaping it. Bank audition includes each voice's detune, phase, pan and level.
 Monitor level and transpose affect listening only, not exported WAVs or presets;
@@ -642,6 +683,8 @@ ONCE/LOOP buttons and a **CV sample / Speaker audition disabled** notice. Either
 side of a stereo pair being CV blocks the pair. You can still edit its markers
 and preset. Known CV channels keep Mix Off for individual-output use; verify
 the module displays Off before connecting a mix output to speakers.
+Audio Cycle and Layer Bank WAVs remain ordinary auditionable audio in Samples;
+the CV restriction does not apply to them.
 
 Older CV exports are recognised beside their original matching recipe; arbitrary
 unmarked files or files with stripped metadata cannot reliably be detected.

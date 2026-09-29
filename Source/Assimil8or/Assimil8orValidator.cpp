@@ -1,6 +1,7 @@
 #include "Assimil8orValidator.h"
 #include "Assimil8orPreset.h"
 #include "FileTypeHelpers.h"
+#include "Audio/WaveformDesignSidecars.h"
 #include "Validator/ValidatorResultProperties.h"
 #include "../SystemServices.h"
 #include "oolib/Debug/DebugLog.h"
@@ -537,8 +538,18 @@ std::tuple<uint64_t, std::optional<std::map<juce::String, uint64_t>>> Assimil8or
     }
     else
     {
-        LogValidation ("  File (unknown)");
-        validatorResultProperties.update (ValidatorResultProperties::ResultTypeWarning, "(unknown file type)", false);
+        const auto sidecar { WaveformDesignSidecars::identify (file) };
+        if (sidecar != WaveformDesignSidecars::Kind::unknown)
+        {
+            validatorResultProperties.update (ValidatorResultProperties::ResultTypeInfo,
+                sidecar == WaveformDesignSidecars::Kind::recipe ? "A8Manager waveform design recipe (desktop-only; not a hardware preset)"
+                                                              : "A8Manager waveform export instructions (desktop-only)", false);
+        }
+        else
+        {
+            LogValidation ("  File (unknown)");
+            validatorResultProperties.update (ValidatorResultProperties::ResultTypeWarning, "(unknown file type)", false);
+        }
     }
 
     return {};

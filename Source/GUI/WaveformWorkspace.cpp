@@ -1,6 +1,7 @@
 #include "WaveformWorkspace.h"
 #include "ModernTheme.h"
 #include "../Assimil8or/Audio/WaveformDesignExport.h"
+#include "../Assimil8or/Audio/WaveformDesignRecall.h"
 #include "../Assimil8or/Preset/PresetProperties.h"
 #include <atomic>
 #include <condition_variable>
@@ -346,7 +347,7 @@ namespace
                 state->exportFinished = true;
                 state->exportFailed = result.failed ();
                 state->exportedFolder = result.wasOk () ? output.folder : juce::File {};
-                state->exportMessage = result.wasOk () ? "Created " + juce::String (output.waves.size ()) + " WAV file(s), preset and recipe in " + output.folder.getFullPathName () : result.getErrorMessage ();
+                state->exportMessage = result.wasOk () ? "Separate package created; current preset unchanged. " + juce::String (output.waves.size ()) + " WAV file(s), preset and recipe in " + output.folder.getFullPathName () : result.getErrorMessage ();
             }
             else if (renderRequest)
             {
@@ -445,13 +446,15 @@ struct WaveformWorkspace::Impl
     Settings settings { startingPoint (Mode::oscillator, Shape::sine) };
     std::array<std::optional<Settings>, 3> modeDesigns;
     ModernLookAndFeel look;
-    juce::Label title, subtitle, summary, status, nameLabel, renderStats, auditionTitle, auditionHint;
-    juce::TextButton close { "Back to preset" }, load { "Load recipe..." }, create { "Export package..." }, openExport { "Open in Sample workspace" }, assign { "Generate & Assign..." };
+    juce::Label title, subtitle, summary, status, nameLabel, renderStats, auditionTitle, auditionHint, assignmentHeading, packageHeading;
+    juce::TextButton close { "Back to preset" }, load { "Load recipe / WAV..." }, create { "Export new package..." }, openExport { "Open in Sample workspace" }, assign { "Generate & Assign..." }, recall { "Recall assigned..." };
     juce::TextEditor fileName;
     Field mode { "Workspace", "design-mode" }, shape { "Shape", "design-shape" }, preset { "Starting point", "design-preset" };
     Field targetChannel { "Target channel", "design-target-channel" }, targetZone { "Target zone", "design-target-zone" }, exportSlot { "Package preset", "design-export-slot" };
     std::optional<WaveformWorkspace::AssignmentContext> assignmentContext;
     bool assignmentBusy { false }, assignmentConfirming { false };
+    bool recallConfirming { false };
+    unsigned recallConfirmation { 0 };
     unsigned assignmentConfirmation { 0 };
     int targetVoiceCount { 0 };
     Preview preview;
@@ -522,6 +525,11 @@ struct WaveformWorkspace::Impl
         status.setName ("design-status");
         status.setColour (juce::Label::textColourId, Theme::muted);
         styleLabel (nameLabel, "Design name", 12.0f);
+        styleLabel (assignmentHeading, "CURRENT PRESET - assign to the channel / zone below, then Save", 12.0f, true);
+        assignmentHeading.setName ("design-assignment-heading");
+        assignmentHeading.setColour (juce::Label::textColourId, Theme::accent);
+        styleLabel (packageHeading, "SEPARATE PACKAGE - new folder, voices start at CH 1; current preset unchanged", 12.0f, true);
+        packageHeading.setName ("design-package-heading");
         fileName.setName ("design-name");
         fileName.setText ("New Waveform", false);
         fileName.setTooltip ("A name for generated WAVs and the repeatable recipe. Assignment creates unique files; package export creates a new folder.");
@@ -549,19 +557,22 @@ struct WaveformWorkspace::Impl
         preview.setName ("design-compact-preview");
         expand.setName ("design-expand-preview");
         expand.setTooltip ("Open a larger, resizable source-waveform view. It follows design edits and mode changes. Escape or X closes only the view, not audition.");
-        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &close, &load, &create, &assign, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &audioSettings, &monitorLevel, &monitorTranspose, &viewport })
+        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &assignmentHeading, &packageHeading, &close, &load, &create, &assign, &recall, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &audioSettings, &monitorLevel, &monitorTranspose, &viewport })
             owner.addAndMakeVisible (component);
         viewport.setViewedComponent (&content, false);
         viewport.setName ("design-controls");
         viewport.setScrollBarsShown (true, false);
         viewport.setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::never);
         for (auto* card : { &tone, &output, &timing, &envelope, &drawing, &layers }) content.addAndMakeVisible (card);
-        create.setColour (juce::TextButton::buttonColourId, Theme::accent.darker (0.6f));
         create.setName ("design-export");
+        create.setTooltip ("Create a separate folder and preset with voices starting at CH 1. Target channel/zone above are NOT used. To fill them in the current preset, use Generate & Assign, then Save.");
         assign.setName ("design-assign");
         assign.setColour (juce::TextButton::buttonColourId, Theme::accent.darker (0.6f));
         assign.setEnabled (false);
         assign.setTooltip ("Create WAVs and a recipe in the current folder, then update the selected preset in memory. Click Save in the shared preset header to save it.");
+        recall.setName ("design-recall");
+        recall.setTooltip ("Reopen the saved design behind the WAV in Target channel / Target zone. A bank restores all its voices. Requires the original recipe beside the WAV; does not change the preset.");
+        load.setTooltip ("Open a saved JSON recipe, or a generated WAV with its recipe still beside it. Ordinary audio cannot be reverse-engineered into design controls.");
         openExport.setName ("design-open-export");
         openExport.setTooltip ("Open the last successfully exported folder in the sample workspace. The usual unsaved-preset check runs before changing folders. No automatic playback.");
         owner.addChildComponent (openExport);
@@ -797,6 +808,7 @@ struct WaveformWorkspace::Impl
         spreadButton.onClick = [this] { spreadVoices (settings, settings.voiceCount, detuneSpread, phaseSpread, panSpread); sync (); changed (); };
         supersaw.onClick = [this] { settings = startingPoint (Mode::layers, Shape::saw); spreadVoices (settings, 7, 24, 300, 0.8); sync (); changed (); };
         load.onClick = [this] { loadRecipe (); };
+        recall.onClick = [this] { recallAssigned (targetChannel.box.getSelectedId () - 1, targetZone.box.getSelectedId () - 1); };
         create.onClick = [this] { exportFiles (); };
         assign.onClick = [this] { assignFiles (); };
         targetChannel.box.onChange = [this] { updateAssignmentControls (); };
@@ -897,12 +909,15 @@ struct WaveformWorkspace::Impl
 
     void updateAssignmentControls ()
     {
-        const auto busy { exportBusy || assignmentBusy || assignmentConfirming };
+        const auto busy { exportBusy || assignmentBusy || assignmentConfirming || recallConfirming };
         const auto channel { targetChannel.box.getSelectedId () };
         assign.setEnabled (! busy && assignmentContext && owner.onGetAssignmentContext && owner.onApplyAssignment &&
             channel > 0 && targetChannel.box.isItemEnabled (channel) && targetZone.box.getSelectedId () > 0 && validate (settings).wasOk ());
         targetChannel.setEnabled (! busy && assignmentContext.has_value ());
         targetZone.setEnabled (! busy && assignmentContext.has_value ());
+        const auto zone { targetZone.box.getSelectedId () - 1 };
+        recall.setEnabled (! busy && assignmentContext && channel >= 1 && channel <= 8 && zone >= 0 && zone < 8 &&
+            assignmentContext->preset.getChild (channel - 1).getChild (zone).getProperty (ZoneProperties::SamplePropertyId).toString ().isNotEmpty ());
         exportSlot.setEnabled (! busy);
         create.setEnabled (! busy && validate (settings).wasOk ());
         close.setEnabled (! busy); load.setEnabled (! busy); openExport.setEnabled (! busy);
@@ -974,7 +989,7 @@ struct WaveformWorkspace::Impl
 
     void assignFiles ()
     {
-        if (chooser || exportBusy || assignmentBusy || assignmentConfirming || ! owner.onGetAssignmentContext || ! owner.onApplyAssignment) return;
+        if (chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming || ! owner.onGetAssignmentContext || ! owner.onApplyAssignment) return;
         const auto valid { validate (settings) };
         if (valid.failed ()) { notice (valid.getErrorMessage (), true); return; }
         const auto name { juce::File::createLegalFileName (fileName.getText ().trim ()).trim () };
@@ -1168,7 +1183,7 @@ struct WaveformWorkspace::Impl
             if (! exportBusy && ! exportFinished && ! assignmentBusy && ! assignmentConfirming && ! assignmentFinished)
             {
                 if (displayedGeneration != generation) notice ("Updating visual preview and audition... No changes to the current preset.");
-                else notice (completed->warnings.isEmpty () ? "Ready. Generate & Assign updates this preset; Export package creates a separate A8 folder. Both save an editable recipe."
+                else notice (completed->warnings.isEmpty () ? "Ready. Generate & Assign updates this preset; Export new package creates a separate A8 folder. Both save an editable recipe."
                                                             : completed->warnings.joinIntoString ("  |  "), ! completed->warnings.isEmpty ());
             }
         }
@@ -1208,53 +1223,130 @@ struct WaveformWorkspace::Impl
             }
             assignmentBusy = false;
             refreshContext ();
+            auto destination { juce::String ("this preset") };
+            if (assignedRequest)
+            {
+                const auto count { assignedRequest->settings.mode == Mode::layers ? assignedRequest->settings.voiceCount : 1 };
+                destination = "preset " + assignedRequest->context.preset.getProperty (PresetProperties::IdPropertyId).toString () +
+                    ", CH " + juce::String (assignedRequest->channel + 1) +
+                    (count > 1 ? "-" + juce::String (assignedRequest->channel + count) : juce::String ()) +
+                    ", zone " + juce::String (assignedRequest->zone + 1);
+            }
             notice (assignmentFailed ? "Assignment was not applied: " + assignmentMessage
-                : "Assigned generated WAVs to this preset. Unsaved changes are preserved. Click Save to write the preset; the recipe is in the current folder.", assignmentFailed);
+                : "Assigned to " + destination + ". Click Save to write the preset. Other unsaved edits are preserved.", assignmentFailed);
         }
         updateAuditionControls ();
     }
 
+    void requestRecall (juce::File file, bool fromWave, std::optional<AssignmentContext> context = {}, int channel = -1, int zone = -1)
+    {
+        if (chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming) return;
+        WaveformDesignRecall::RecalledDesign design;
+        const auto result { fromWave ? WaveformDesignRecall::recallWave (file, design) : WaveformDesignRecall::loadRecipe (file, design) };
+        if (result.failed ()) { notice ("Could not recall design: " + result.getErrorMessage (), true); return; }
+        const auto approvedSettings { juce::JSON::toString (toJson (design.settings)) };
+        const auto beforeGeneration { generation };
+        const auto beforeName { fileName.getText () };
+        const auto request { ++recallConfirmation };
+        recallConfirming = true;
+        updateAssignmentControls ();
+        juce::Component::SafePointer<WaveformWorkspace> safe (&owner);
+        owner.confirmRecall ("Recall the design from " + design.recipe.getFileName () + "?\n\n" +
+            (design.settings.mode == Mode::layers ? "This restores the entire bank, including all voices.\n\n" : "") +
+            "The current design in that workspace mode will be replaced. Cancel and generate/assign or export first if you want to keep it.\n\n" +
+            "Preset values and WAV files are not changed. After editing, use Generate & Assign, then Save, to update the preset.",
+            [safe, file, fromWave, context, channel, zone, approvedSettings, beforeGeneration, beforeName, request] (bool accepted)
+        {
+            if (safe == nullptr || safe->impl->recallConfirmation != request) return;
+            auto& self { *safe->impl };
+            ++self.recallConfirmation;
+            self.recallConfirming = false;
+            self.updateAssignmentControls ();
+            if (! accepted) { self.notice ("Recall canceled. Your design and preset are unchanged."); return; }
+            if (self.generation != beforeGeneration || self.fileName.getText () != beforeName)
+            {
+                self.notice ("The design changed while confirmation was open. Nothing was replaced; recall again when ready.", true);
+                return;
+            }
+            if (context)
+            {
+                const auto current { safe->onGetAssignmentContext ? safe->onGetAssignmentContext () : std::nullopt };
+                if (! current || current->revision != context->revision || current->folder != context->folder || ! current->preset.isEquivalentTo (context->preset))
+                {
+                    self.notice ("The preset or folder changed while confirmation was open. Nothing was recalled; select the source again.", true);
+                    return;
+                }
+            }
+            WaveformDesignRecall::RecalledDesign recalled;
+            const auto loaded { fromWave ? WaveformDesignRecall::recallWave (file, recalled) : WaveformDesignRecall::loadRecipe (file, recalled) };
+            if (loaded.failed () || juce::JSON::toString (toJson (recalled.settings)) != approvedSettings)
+            {
+                self.notice ("The saved design changed or became unavailable. Nothing was recalled; select it again.", true);
+                return;
+            }
+            self.clearAudition ();
+            self.modeDesigns[static_cast<size_t> (self.settings.mode)] = self.settings;
+            self.settings = recalled.settings;
+            self.fileName.setText (recalled.displayName, false);
+            self.initialFolder = recalled.recipe.getParentDirectory ();
+            self.sync (); self.changed ();
+            self.refreshContext ();
+            if (context)
+            {
+                auto first { channel };
+                if (recalled.settings.mode == Mode::layers)
+                {
+                    first -= recalled.voiceIndex;
+                    // Only infer a whole bank destination if all original
+                    // voice assignments still occupy the expected channels.
+                    if (first < 0 || first + recalled.settings.voiceCount > 8) first = -1;
+                    for (auto voice { 0 }; first >= 0 && voice < recalled.settings.voiceCount; ++voice)
+                    {
+                        const auto expected { file.getFileNameWithoutExtension ().dropLastCharacters (2) + juce::String (voice + 1).paddedLeft ('0', 2) + ".wav" };
+                        if (context->preset.getChild (first + voice).getChild (zone).getProperty (ZoneProperties::SamplePropertyId).toString () != expected) first = -1;
+                    }
+                }
+                self.targetChannel.box.setSelectedId (first >= 0 && self.targetChannel.box.isItemEnabled (first + 1) ? first + 1 : 0, juce::dontSendNotification);
+                self.targetZone.box.setSelectedId (zone + 1, juce::dontSendNotification);
+                self.updateAssignmentControls ();
+            }
+            self.notice ("Recalled " + recalled.recipe.getFileName () + ". Preset unchanged; edit, Generate & Assign, then Save.");
+        });
+    }
+
+    void recallAssigned (int channel, int zone)
+    {
+        const auto context { owner.onGetAssignmentContext ? owner.onGetAssignmentContext () : std::nullopt };
+        if (! context || channel < 0 || channel >= 8 || zone < 0 || zone >= 8)
+        { notice ("Select a preset and an assigned channel/zone to recall.", true); return; }
+        const auto sample { context->preset.getChild (channel).getChild (zone).getProperty (ZoneProperties::SamplePropertyId).toString () };
+        if (sample.isEmpty ()) { notice ("This zone is empty. Select a zone containing a generated waveform.", true); return; }
+        if (juce::File::isAbsolutePath (sample) || sample.containsAnyOf ("/\\"))
+        { notice ("The zone does not reference a WAV in the current preset folder.", true); return; }
+        requestRecall (context->folder.getChildFile (sample), true, context, channel, zone);
+    }
+
     void loadRecipe ()
     {
-        if (chooser || exportBusy || assignmentBusy || assignmentConfirming) return;
+        if (chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming) return;
         // Cancelling (or rejecting) a recipe must not discard the current
         // design's readiness. A successful replacement clears it below.
         clearAudition (false);
-        chooser = std::make_unique<juce::FileChooser> ("Load waveform design recipe", initialFolder, "*.json");
+        chooser = std::make_unique<juce::FileChooser> ("Load waveform recipe or generated WAV", initialFolder, "*.json;*.wav");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                              [safe = juce::Component::SafePointer<WaveformWorkspace> (&owner)] (const juce::FileChooser& dialog)
         {
             const auto file { dialog.getResult () };
             if (safe == nullptr) return;
             auto& self { *safe->impl };
-            if (file.existsAsFile ())
-            {
-                if (file.getSize () > 1024 * 1024) self.notice ("Recipe is unexpectedly large (limit 1 MB).", true);
-                else
-                {
-                    juce::var json;
-                    auto result { juce::JSON::parse (file.loadFileAsString (), json) };
-                    auto replacement { self.settings };
-                    if (result.wasOk ()) result = fromJson (json, replacement);
-                    if (result.wasOk ())
-                    {
-                        self.clearAudition ();
-                        self.modeDesigns[static_cast<size_t> (self.settings.mode)] = self.settings;
-                        self.settings = replacement;
-                        self.fileName.setText (file.getFileNameWithoutExtension (), false);
-                        self.initialFolder = file.getParentDirectory ();
-                        self.sync (); self.changed ();
-                    }
-                    else self.notice ("Could not load recipe: " + result.getErrorMessage (), true);
-                }
-            }
             self.chooser.reset ();
+            if (file.existsAsFile ()) self.requestRecall (file, file.hasFileExtension ("wav"));
         });
     }
 
     void exportFiles ()
     {
-        if (chooser || exportBusy || assignmentBusy || assignmentConfirming) return;
+        if (chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming) return;
         const auto valid { validate (settings) };
         if (valid.failed ()) { notice (valid.getErrorMessage (), true); return; }
         const auto name { juce::File::createLegalFileName (fileName.getText ().trim ()).trim () };
@@ -1262,7 +1354,7 @@ struct WaveformWorkspace::Impl
         fileName.setText (name, false);
         const auto snapshot { settings };
         const auto presetNumber { exportSlot.box.getSelectedId () };
-        chooser = std::make_unique<juce::FileChooser> ("Choose parent folder - a NEW design folder will be created inside", initialFolder, "");
+        chooser = std::make_unique<juce::FileChooser> ("Export separate package - choose parent folder (current preset unchanged)", initialFolder, "");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                              [safe = juce::Component::SafePointer<WaveformWorkspace> (&owner), snapshot, name, presetNumber] (const juce::FileChooser& dialog)
         {
@@ -1292,7 +1384,7 @@ struct WaveformWorkspace::Impl
         auto heading { bounds.removeFromTop (54) };
         close.setBounds (heading.removeFromRight (126).withHeight (32));
         heading.removeFromRight (10);
-        load.setBounds (heading.removeFromRight (126).withHeight (32));
+        load.setBounds (heading.removeFromRight (160).withHeight (32));
         title.setBounds (heading.removeFromTop (28)); subtitle.setBounds (heading);
         auto toolbar { bounds.removeFromTop (40) };
         const auto third { toolbar.getWidth () / 3 };
@@ -1315,20 +1407,24 @@ struct WaveformWorkspace::Impl
         auditionHint.setBounds (previewRow.removeFromTop (42));
         renderStats.setBounds (previewRow.withTrimmedTop (5));
         summary.setBounds (bounds.removeFromTop (27));
-        auto footer { bounds.removeFromBottom (160) };
+        auto footer { bounds.removeFromBottom (200) };
         status.setBounds (footer.removeFromBottom (31));
         auto nameRow { footer.removeFromTop (31) };
         nameLabel.setBounds (nameRow.removeFromLeft (90));
         fileName.setBounds (nameRow.withWidth (juce::jmin (440, nameRow.getWidth ())));
         footer.removeFromTop (5);
+        assignmentHeading.setBounds (footer.removeFromTop (20));
         auto assignmentRow { footer.removeFromTop (38) };
         assign.setBounds (assignmentRow.removeFromRight (180).reduced (0, 3));
         assignmentRow.removeFromRight (12);
+        recall.setBounds (assignmentRow.removeFromRight (155).reduced (0, 3));
+        assignmentRow.removeFromRight (12);
         targetChannel.setBounds (assignmentRow.removeFromLeft (juce::jmin (340, assignmentRow.getWidth () - 180)).withTrimmedRight (12));
         targetZone.setBounds (assignmentRow.removeFromLeft (200));
+        packageHeading.setBounds (footer.removeFromTop (20));
         auto exportRow { footer.removeFromTop (38) };
         exportSlot.setBounds (exportRow.removeFromLeft (240).withTrimmedRight (12));
-        create.setBounds (exportRow.removeFromLeft (160).reduced (0, 3)); exportRow.removeFromLeft (12);
+        create.setBounds (exportRow.removeFromLeft (180).reduced (0, 3)); exportRow.removeFromLeft (12);
         if (openExport.isVisible ()) openExport.setBounds (exportRow.removeFromLeft (190).reduced (0, 3));
         viewport.setBounds (bounds.withTrimmedBottom (8));
         const int contentWidth { juce::jmax (800, viewport.getWidth () - viewport.getScrollBarThickness ()) };
@@ -1372,13 +1468,19 @@ WaveformWorkspace::WaveformWorkspace () : impl (std::make_unique<Impl> (*this))
     confirmAssignment = [] (const juce::String& message, std::function<void (bool)> callback)
     {
         juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Generate and assign waveform", message, "Generate & Assign", "Cancel", nullptr,
-            juce::ModalCallbackFunction::create ([callback = std::move (callback)] (int response) { callback (response == 1); }));
+            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
+    };
+    confirmRecall = [] (const juce::String& message, std::function<void (bool)> callback)
+    {
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Recall waveform design", message, "Recall", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
     };
     startTimerHz (30);
 }
 WaveformWorkspace::~WaveformWorkspace () { stopTimer (); impl.reset (); }
 void WaveformWorkspace::setInitialFolder (juce::File folder) { impl->initialFolder = std::move (folder); }
 void WaveformWorkspace::refreshAssignmentContext () { impl->refreshContext (); }
+void WaveformWorkspace::recallAssigned (int channel, int zone) { impl->recallAssigned (channel, zone); }
 WaveformDesign::Settings WaveformWorkspace::getSettings () const { return impl->settings; }
 void WaveformWorkspace::timerCallback () { impl->tick (); }
 void WaveformWorkspace::resized () { if (impl) impl->layout (); }

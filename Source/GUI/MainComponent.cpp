@@ -105,6 +105,11 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
         return result;
     };
     waveformWorkspace.onClose = [this] () { showWaveformWorkspace (false); };
+    assimil8orEditorComponent.onRecallWaveform = [this] (int channel, int zone)
+    {
+        showWaveformWorkspace (true);
+        waveformWorkspace.recallAssigned (channel, zone);
+    };
     waveformWorkspace.onMatchDuration = [this] (int region) { return assimil8orEditorComponent.getSelectedDuration (region); };
     waveformWorkspace.onOpenExportedFolder = [this] (juce::File folder)
     {

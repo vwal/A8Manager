@@ -2,6 +2,8 @@
 #include "Assimil8or/Preset/StereoChannelTools.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/PresetManagerProperties.h"
+#include "Assimil8or/Audio/WaveformDesignAssignment.h"
+#include "Assimil8or/Audio/WaveformDesignExport.h"
 #include "SystemServices.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include <iostream>
@@ -19,6 +21,14 @@ namespace
         throw std::runtime_error (("Missing menu action: " + name).toStdString ());
     }
 
+    bool menuEnabled (const juce::PopupMenu& menu, const juce::String& name)
+    {
+        juce::PopupMenu::MenuItemIterator items (menu);
+        while (items.next ())
+            if (items.getItem ().text == name) return items.getItem ().isEnabled;
+        throw std::runtime_error (("Missing menu item: " + name).toStdString ());
+    }
+
     void checkZonesUnchanged (juce::ValueTree actual, juce::ValueTree before)
     {
         check (actual.getProperty (ChannelProperties::IdPropertyId) == before.getProperty (ChannelProperties::IdPropertyId), "Channel reset retains its ID");
@@ -33,7 +43,8 @@ struct StereoChannelUiTestAccess
     static void run ()
     {
         // Use the real, fully initialized parent and all 64 zone editors, but
-        // only in-memory properties/audio: no device, scanner or preferences.
+        // in-memory properties/audio plus owned recall files: no device,
+        // scanner or persisted user preferences.
         juce::ValueTree root { "Root" };
         PersistentRootProperties persistent (root, PersistentRootProperties::WrapperType::owner, PersistentRootProperties::EnableCallbacks::no);
         RuntimeRootProperties runtime (root, RuntimeRootProperties::WrapperType::owner, RuntimeRootProperties::EnableCallbacks::no);
@@ -105,6 +116,110 @@ struct StereoChannelUiTestAccess
         check (std::abs (editor->getSelectedDuration (2).value_or (-1.0) - 300.5 / 48000.0) < 1.0e-9,
                "Designer gets master loop timing when the stereo right channel is selected");
         editor->channelTabs.setCurrentTabIndex (0);
+
+        std::function<void ()> disposedRecall;
+        {
+            const auto beforeRecall { tree.createCopy () };
+            const auto beforeFolder { preferences.getMostRecentFolder () };
+            const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-recall-menu", "", false) };
+            check (folder.createDirectory ().wasOk (), "Create owned recall-menu fixture folder");
+            struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+            auto cycle { WaveformDesign::startingPoint (WaveformDesign::Mode::oscillator, WaveformDesign::Shape::sine) };
+            cycle.cycleFrames = 64;
+            WaveformDesign::ExportResult package;
+            check (WaveformDesign::exportDesign (cycle, folder, "UI recall", package).wasOk (), "Create actual exported audio package for Samples menu recognition");
+            auto bank { WaveformDesign::startingPoint (WaveformDesign::Mode::layers, WaveformDesign::Shape::saw) };
+            bank.cycleFrames = 64;
+            WaveformDesign::AssignmentResult assignment;
+            check (WaveformDesign::prepareAssignment (bank, package.folder, "UI bank", defaults.createCopy (), 0, 0, assignment).wasOk (),
+                   "Create actual uniquely named assigned bank for Samples menu recognition");
+            const auto ordinary { package.folder.getChildFile ("ordinary-sample.wav") };
+            check (package.waves[0].copyFileTo (ordinary), "Create ordinary WAV without a generated recipe naming association");
+            preferences.setMostRecentFolder (package.folder.getFullPathName ());
+            int recalledChannel { -1 }, recalledZone { -1 }, recallCount { 0 };
+            editor->onRecallWaveform = [&] (int channel, int zone)
+            {
+                recalledChannel = channel;
+                recalledZone = zone;
+                ++recallCount;
+            };
+            const juce::String actionName { "Edit selected waveform in designer..." };
+            auto setSample = [&] (int channel, int zone, const juce::String& filename)
+            {
+                ZoneProperties properties (tree.getChild (channel).getChild (zone), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                properties.setSample (filename, false);
+            };
+            auto expectEnabled = [&] (bool enabled, const char* message)
+            {
+                check (editor->canRecallSelectedWaveform () == enabled, message);
+                check (menuEnabled (editor->createPresetToolsMenu (), actionName) == enabled,
+                       "The actual Samples TOOLS item has the same enabled/greyed-out state as validated waveform recognition");
+            };
+            setSample (0, 0, package.waves[0].getFileName ());
+            expectEnabled (true, "An exported audio cycle can be recalled from Samples");
+            const auto enabledMenu { editor->createPresetToolsMenu () };
+            auto enabledAction { menuAction (enabledMenu, actionName) };
+            disposedRecall = enabledAction;
+            const auto beforeDispatch { tree.createCopy () };
+            enabledAction ();
+            check (recalledChannel == 0 && recalledZone == 0 && recallCount == 1,
+                   "Enabled Samples TOOLS recall action dispatches the current zero-based channel and zone");
+            check (tree.isEquivalentTo (beforeDispatch), "Opening a design never edits the preset contents");
+            editor->channelTabs.setCurrentTabIndex (2);
+            editor->channelEditors[2].zoneTabs.setCurrentTabIndex (4);
+            setSample (2, 4, assignment.waves[2].getFileName ());
+            expectEnabled (true, "An assigned bank follower resolves its shared saved recipe");
+            editor->recallSelectedWaveform ();
+            check (recalledChannel == 2 && recalledZone == 4 && recallCount == 2,
+                   "Recall follows the newly selected independent channel and zone rather than a cached selection");
+            editor->channelTabs.setCurrentTabIndex (1);
+            right.zoneTabs.setCurrentTabIndex (3);
+            setSample (1, 3, package.waves[0].getFileName ());
+            expectEnabled (true, "A recognized waveform on the selected stereo side is recallable");
+            editor->recallSelectedWaveform ();
+            check (recalledChannel == 1 && recalledZone == 3 && recallCount == 3,
+                   "Recall reports the exact selected stereo side instead of substituting its master channel");
+
+            editor->channelTabs.setCurrentTabIndex (0);
+            left.zoneTabs.setCurrentTabIndex (0);
+            for (const auto& filename : { ordinary.getFileName (), juce::String (), juce::String ("missing.wav"), juce::String ("../voice-01.wav") })
+            {
+                setSample (0, 0, filename);
+                expectEnabled (false, "Ordinary, empty, missing and nonflat sample references cannot be recalled as saved designs");
+                editor->recallSelectedWaveform ();
+                enabledAction ();
+                menuAction (editor->createPresetToolsMenu (), actionName) ();
+                check (recallCount == 3, "Disabled or previously enabled recall actions recheck the current sample instead of dispatching ordinary files");
+            }
+            setSample (0, 0, package.waves[0].getFileName ());
+            const auto recipeContents { package.recipe.loadFileAsString () };
+            check (package.recipe.deleteFile (), "Remove only the owned recipe fixture");
+            expectEnabled (false, "A generated filename with a missing recipe is greyed out");
+            enabledAction ();
+            check (recallCount == 3, "A stale menu cannot recall after its recipe disappears");
+            check (package.recipe.replaceWithText ("{invalid JSON"), "Write malformed owned recipe fixture");
+            expectEnabled (false, "A generated filename with a malformed recipe is greyed out");
+            enabledAction ();
+            check (recallCount == 3, "A stale menu cannot recall a malformed recipe");
+            check (package.recipe.replaceWithText (recipeContents), "Restore genuine exported recipe fixture");
+            expectEnabled (true, "Restoring the valid saved recipe restores menu availability");
+            preferences.setMostRecentFolder (folder.getFullPathName ());
+            expectEnabled (false, "Recall uses the current preset folder rather than a cached source folder");
+            enabledAction ();
+            check (recallCount == 3, "A previously enabled menu does not dispatch after switching to a folder without the design");
+            preferences.setMostRecentFolder (package.folder.getFullPathName ());
+            editor->onRecallWaveform = nullptr;
+            expectEnabled (false, "Recall is greyed out when no workspace callback is installed");
+            editor->recallSelectedWaveform ();
+            enabledAction ();
+            check (recallCount == 3, "Recall safely ignores a missing workspace callback");
+            PresetProperties::copyTreeProperties (beforeRecall, tree);
+            preferences.setMostRecentFolder (beforeFolder);
+            check (tree.isEquivalentTo (beforeRecall), "Recall eligibility fixtures restore all original preset data");
+            editor->channelEditors[2].zoneTabs.setCurrentTabIndex (0);
+            left.zoneTabs.setCurrentTabIndex (0);
+            editor->channelTabs.setCurrentTabIndex (0);
+        }
 
         int leftCallbacks { 0 }, rightCallbacks { 0 };
         const auto leftCallback { left.onSelectedZoneChanged }, rightCallback { right.onSelectedZoneChanged };
@@ -186,7 +301,7 @@ struct StereoChannelUiTestAccess
             check (item.subMenu == nullptr, "Right Tools must not expose independent clone/edit/explode operations");
             if (item.action) ++actionCount;
         }
-        check (actionCount == 1, "Right Tools exposes only pair-aware Default");
+        check (actionCount == 2, "Right Tools exposes only pair-aware Default and Purge");
         for (const int origin : { 1, 0 })
         {
             rightProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, true);
@@ -248,7 +363,8 @@ struct StereoChannelUiTestAccess
         editor->setLookAndFeel (nullptr);
         editor.reset ();
         disposedDefault ();
-        std::cout << "PASS: actual stereo UI tab synchronization, audition isolation, right-pan editing/contrast, restricted tools, pair Default and channel Revert\n";
+        disposedRecall ();
+        std::cout << "PASS: actual stereo UI tab synchronization, audition isolation, right-pan editing/contrast, restricted tools, pair Default/channel Revert and validated Samples recall availability\n";
     }
 };
 

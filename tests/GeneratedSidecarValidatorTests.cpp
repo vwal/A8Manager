@@ -1,0 +1,107 @@
+#include "Assimil8or/Assimil8orValidator.h"
+#include "Assimil8or/Audio/WaveformDesignAssignment.h"
+#include "Assimil8or/Audio/WaveformDesignExport.h"
+#include "Assimil8or/Audio/WaveformDesignSidecars.h"
+#include "Assimil8or/Preset/ParameterPresetsSingleton.h"
+#include "Assimil8or/Validator/ValidatorResultProperties.h"
+#include <iostream>
+#include <stdexcept>
+
+struct GeneratedSidecarValidatorTestAccess
+{
+    static void run ()
+    {
+        auto check = [] (bool ok, const char* message) { if (! ok) throw std::runtime_error (message); };
+        using namespace WaveformDesign;
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-sidecar-validation", "", false) };
+        check (folder.createDirectory ().wasOk (), "Create owned sidecar-validation fixture directory");
+        struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+        AudioManager audio;
+        Assimil8orValidator validator;
+        // Exercise the real file validator synchronously. No init/scan request,
+        // directory walker, message-loop pumping or native window is needed.
+        validator.audioManager = &audio;
+        auto validateSidecar = [&] (const juce::File& file, bool recognized)
+        {
+            ValidatorResultProperties result;
+            result.update (ValidatorResultProperties::ResultTypeInfo, "File: " + file.getFileName (), false);
+            const auto [ram, preset] { validator.validateFile (file, result.getValueTree ()) };
+            check (ram == 0 && ! preset && result.getNumFixerEntries () == 0,
+                   "Sidecars and unrelated files do not count as sample RAM, presets or conversion fixes");
+            check (result.getType () == (recognized ? ValidatorResultProperties::ResultTypeInfo : ValidatorResultProperties::ResultTypeWarning),
+                   "Only recognized designer artifacts are informational; unrelated or invalid files remain warnings");
+            check (result.getText ().contains (recognized ? "desktop-only" : "unknown file type"),
+                   "Validation explains generated desktop sidecars without hiding unknown files");
+        };
+
+        juce::String genuineReadme;
+        for (const auto mode : { Mode::oscillator, Mode::modulation, Mode::layers })
+        {
+            auto settings { startingPoint (mode, mode == Mode::modulation ? Shape::triangle : Shape::saw) };
+            settings.cycleFrames = 64;
+            settings.durationSeconds = 0.001;
+            settings.voiceCount = 2;
+            ExportResult output;
+            check (exportDesign (settings, folder, "Mode-" + juce::String (static_cast<int> (mode)), output, 47).wasOk (), "Export actual audio, CV and bank package fixtures");
+            validateSidecar (output.recipe, true);
+            validateSidecar (output.folder.getChildFile ("README.txt"), true);
+            genuineReadme = output.folder.getChildFile ("README.txt").loadFileAsString ().replace ("\r\n", "\n");
+
+            ValidatorResultProperties wavResult, presetResult;
+            const auto [waveRam, wavePreset] { validator.validateFile (output.waves[0], wavResult.getValueTree ()) };
+            check (waveRam > 0 && ! wavePreset && wavResult.getType () == ValidatorResultProperties::ResultTypeInfo,
+                   "Recognizing sidecars does not bypass actual generated WAV validation or memory accounting");
+            const auto [presetRam, presetSamples] { validator.validateFile (output.folder.getChildFile ("prst047.yml"), presetResult.getValueTree ()) };
+            check (presetRam == 0 && presetSamples && ! presetSamples->empty () && presetResult.getType () == ValidatorResultProperties::ResultTypeInfo,
+                   "Generated hardware presets still validate and contribute their actual sample references");
+        }
+
+        auto settings { startingPoint (Mode::oscillator, Shape::sine) };
+        settings.cycleFrames = 64;
+        const auto defaults { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType) };
+        AssignmentResult assigned;
+        check (prepareAssignment (settings, folder, "Assigned waveform", defaults.createCopy (), 0, 0, assigned).wasOk (), "Create a real uniquely named assigned design recipe");
+        check (assigned.recipe.getFileName ().endsWith (".design.json"), "Assignment fixture uses the shared-preset recipe naming format");
+        validateSidecar (assigned.recipe, true);
+
+        auto write = [&] (const juce::String& name, const juce::String& contents)
+        {
+            const auto file { folder.getChildFile (name) };
+            check (file.replaceWithText (contents), "Write owned sidecar validation fixture");
+            return file;
+        };
+        const auto validJson { juce::JSON::toString (toJson (settings)) };
+        validateSidecar (write ("ordinary.json", validJson), false);
+        validateSidecar (write ("other.txt", genuineReadme), false);
+        validateSidecar (write ("design.json", "{\"name\":\"unrelated application\"}"), false);
+        validateSidecar (write ("other.design.json", "{\"type\":\"A8Manager.WaveformDesign\",\"version\":1}"), false);
+        validateSidecar (write ("README.txt", "An ordinary readme for somebody else's files."), false);
+        validateSidecar (write ("README.txt", "A8Manager Waveform Design\n\nAn unrelated or incomplete document."), false);
+        validateSidecar (write ("README.txt", genuineReadme.replace ("\n", "\r\n")), true);
+        validateSidecar (write ("design.json", "{invalid JSON"), false);
+        validateSidecar (write ("design.json", validJson + "\nTrailing unrelated content"), false);
+        auto future { toJson (settings) };
+        future.getDynamicObject ()->setProperty ("version", 999);
+        validateSidecar (write ("design.json", juce::JSON::toString (future)), false);
+        auto invalidSettings { toJson (settings) };
+        invalidSettings["settings"].getDynamicObject ()->setProperty ("amplitude", 2.0);
+        validateSidecar (write ("design.json", juce::JSON::toString (invalidSettings)), false);
+        const auto deep { validJson.trimEnd ().dropLastCharacters (1) + ",\"extra\":" + juce::String::repeatedString ("[", 64) +
+            "0" + juce::String::repeatedString ("]", 64) + "}" };
+        validateSidecar (write ("design.json", deep), false);
+        validateSidecar (write ("design.json", validJson + juce::String::repeatedString (" ", 1024 * 1024)), false);
+        const auto binary { folder.getChildFile ("design.json") };
+        const char invalidUtf8[] { static_cast<char> (0xff), 'a' };
+        check (binary.replaceWithData (invalidUtf8, sizeof (invalidUtf8)), "Write invalid UTF-8 fixture");
+        validateSidecar (binary, false);
+        const char embeddedNull[] { '{', '}', '\0', 'x' };
+        check (binary.replaceWithData (embeddedNull, sizeof (embeddedNull)), "Write embedded-NUL fixture");
+        validateSidecar (binary, false);
+        check (WaveformDesignSidecars::identify (folder.getChildFile ("missing.design.json")) == WaveformDesignSidecars::Kind::unknown,
+               "Missing candidate sidecars are not recognized");
+
+        std::cout << "PASS: generated recipe/readme validation, real package and assignment outputs, preserved unknown warnings and bounded schema checks\n";
+    }
+};
+
+void testGeneratedSidecarValidator () { GeneratedSidecarValidatorTestAccess::run (); }
