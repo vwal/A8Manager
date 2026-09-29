@@ -46,7 +46,7 @@ WaveformDisplay::WaveformDisplay ()
     waveform.onBeginRegionMove = [this] (juce::Point<float> point) { return beginRegionMove (point); };
     waveform.onMoveRegion = [this] (double delta)
     {
-        if (hasSample () && movingRegion && movingRegion->fileLength == getSampleLength ())
+        if (canEdit () && hasSample () && movingRegion && movingRegion->fileLength == getSampleLength ())
             RegionMove::apply (zoneProperties, *movingRegion, delta);
     };
     for (auto* button : std::array<juce::Button*, 6> { &expandButton, &menuButton, &zoomIn, &zoomOut, &zoomInfo, &simulationButton })
@@ -90,12 +90,6 @@ WaveformDisplay::WaveformDisplay ()
     auditionRateSlider.setValue (1.0, juce::dontSendNotification);
     auditionRateSlider.setDoubleClickReturnValue (true, 1.0);
     auditionRateSlider.setScrollWheelEnabled (false);
-    auditionRateSlider.setColour (juce::Slider::thumbColourId, Theme::accent);
-    auditionRateSlider.setColour (juce::Slider::trackColourId, Theme::accent.darker (0.4f));
-    auditionRateSlider.setColour (juce::Slider::backgroundColourId, Theme::border);
-    auditionRateSlider.setColour (juce::Slider::textBoxTextColourId, Theme::text);
-    auditionRateSlider.setColour (juce::Slider::textBoxBackgroundColourId, Theme::field);
-    auditionRateSlider.setColour (juce::Slider::textBoxOutlineColourId, Theme::border);
     auditionRateSlider.setTooltip ("Audition speed: 0.0625x to 4x. Drag or type; double-click the slider for 1x. "
                                    "With Keep pitch on, speed changes duration without transposing. "
                                    "Zone PITCH OFFSET is applied separately. With it off, speed and pitch are linked. "
@@ -103,17 +97,18 @@ WaveformDisplay::WaveformDisplay ()
     auditionRateLabel.setTooltip (auditionRateSlider.getTooltip ());
     auditionRateSlider.onValueChange = [this] ()
     {
-        audioPlayerProperties.setAuditionRate (auditionRateSlider.getValue (), false);
+        if (canEdit ()) audioPlayerProperties.setAuditionRate (auditionRateSlider.getValue (), false);
     };
     addAndMakeVisible (auditionRateSlider);
     preservePitchButton.setToggleState (true, juce::dontSendNotification);
-    preservePitchButton.setColour (juce::ToggleButton::textColourId, Theme::text);
-    preservePitchButton.setColour (juce::ToggleButton::tickColourId, Theme::accent);
     preservePitchButton.setTooltip ("Time-stretched preview: keep pitch steady as speed changes, then apply the zone's PITCH OFFSET. "
                                     "Extreme rates and very short loops may produce artifacts. "
                                     "Turn off for ordinary sampler-style varispeed (not a full hardware emulation). "
                                     "Preview mode/speed are not saved into the preset.");
-    preservePitchButton.onClick = [this] () { audioPlayerProperties.setPreservePitch (preservePitchButton.getToggleState (), false); };
+    preservePitchButton.onClick = [this] ()
+    {
+        if (canEdit ()) audioPlayerProperties.setPreservePitch (preservePitchButton.getToggleState (), false);
+    };
     addAndMakeVisible (preservePitchButton);
     scrollbar.addListener (this);
     scrollbar.setAutoHide (false);
@@ -156,8 +151,21 @@ void WaveformDisplay::setLoopSelected (bool value)
     updateDurations ();
 }
 
+void WaveformDisplay::setReadOnly (bool value)
+{
+    if (readOnly == value) return;
+    readOnly = value;
+    // Keep navigation/menus/expansion enabled, but make handle gestures pass
+    // through to view navigation and cancel pending edits and confirmations.
+    markerOverlay.setEnabled (! readOnly);
+    auditionRateSlider.setEnabled (! readOnly);
+    preservePitchButton.setEnabled (! readOnly);
+    enablementChanged ();
+}
+
 void WaveformDisplay::selectRegion (bool value)
 {
+    if (! canEdit ()) return;
     setLoopSelected (value);
     if (onRegionSelected) onRegionSelected (value);
 }
@@ -165,7 +173,7 @@ void WaveformDisplay::selectRegion (bool value)
 bool WaveformDisplay::beginRegionMove (juce::Point<float> point)
 {
     movingRegion.reset ();
-    if (! isEnabled () || ! hasSample ()) return false;
+    if (! canEdit () || ! hasSample ()) return false;
     const auto handle { markerOverlay.markerAt (point) };
     auto targetLoop { loopSelected };
     if (handle >= 0) targetLoop = handle >= kLoopStart;
@@ -209,6 +217,19 @@ void WaveformDisplay::setupColours ()
     waveformColours.sampleDot  = Theme::text;
     waveform.setColourScheme (waveformColours);
 
+}
+
+void WaveformDisplay::lookAndFeelChanged ()
+{
+    setupColours ();
+    // Colours only: do not reset marker positions, audition, zoom, or dragging.
+    for (auto marker { 0 }; marker < markerOverlay.getNumMarkers (); ++marker)
+    {
+        auto style { markerOverlay.getStyle (marker) };
+        style.colour = WaveformPresentation::markerColours[static_cast<size_t> (marker)];
+        markerOverlay.setStyle (marker, style);
+    }
+    repaint ();
 }
 
 void WaveformDisplay::setupMarkers ()
@@ -432,12 +453,12 @@ void WaveformDisplay::refreshSimulationControls ()
     const auto active { isSimulatingThisZone () };
     simulationButton.setButtonText (active ? "Stop simulation" : "Sample > Loop");
     simulationButton.setToggleState (active, juce::dontSendNotification);
-    simulationButton.setEnabled (isEnabled () && (active || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
+    simulationButton.setEnabled (canEdit () && (active || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
 }
 
 void WaveformDisplay::triggerSimulation ()
 {
-    if (! isEnabled ()) return;
+    if (! canEdit ()) return;
     if (isSimulatingThisZone ())
         audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
     else if (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())
@@ -496,7 +517,7 @@ void WaveformDisplay::jumpToMarker (int marker)
 juce::PopupMenu WaveformDisplay::buildWaveformMenu (std::optional<double> clickedSample)
 {
     const auto available { hasSample () };
-    const auto editable { available && isEnabled () };
+    const auto editable { available && canEdit () };
     juce::PopupMenu menu, nudgeMenu, matchMenu;
     menu.addSectionHeader ("ZOOM");
     menu.addItem (1, "Reset Zoom", available);
@@ -535,7 +556,7 @@ juce::PopupMenu WaveformDisplay::buildWaveformMenu (std::optional<double> clicke
     menu.addSectionHeader ("AUDITION");
     const auto simulating { isSimulatingThisZone () };
     menu.addItem (50, simulating ? "Stop sample into loop simulation" : "Trigger sample into loop simulation",
-                  isEnabled () && (simulating || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
+                  canEdit () && (simulating || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
     return menu;
 }
 
@@ -544,11 +565,12 @@ void WaveformDisplay::showWaveformMenu (std::optional<double> clickedSample)
     auto menu { buildWaveformMenu (clickedSample) };
     auto options { juce::PopupMenu::Options () };
     if (! clickedSample) options = options.withTargetComponent (&menuButton);
-    menu.showMenuAsync (options, [safe = juce::Component::SafePointer<WaveformDisplay> (this), generation = sourceGeneration, clickedSample] (int action)
+    menu.showMenuAsync (options, [safe = juce::Component::SafePointer<WaveformDisplay> (this), generation = sourceGeneration, editGeneration = matchGeneration, clickedSample] (int action)
     {
         // A zone/sample may change, or the component may disappear, while a
         // native asynchronous menu is open. Never edit a different source.
-        if (safe != nullptr && safe->sourceGeneration == generation) safe->applyMenuAction (action, clickedSample);
+        if (safe != nullptr && safe->sourceGeneration == generation && safe->matchGeneration == editGeneration)
+            safe->applyMenuAction (action, clickedSample);
     });
 }
 
@@ -558,10 +580,37 @@ void WaveformDisplay::applyMenuAction (int action, std::optional<double> clicked
     else if (action == 2) focusZone ();
     else if (action == 3) focusLoop ();
     else if (action >= 10 && action < 14) jumpToMarker (action - 10);
-    else if (isEnabled () && action >= 20 && action < 28) nudgeMarker ((action - 20) / 2, action % 2 != 0);
-    else if (isEnabled () && action >= 30 && action < 34 && clickedSample) setMarker (action - 30, *clickedSample);
-    else if (isEnabled () && action >= 40 && action < 48) matchMarker ((action - 40) / 2, action % 2 != 0);
+    else if (canEdit () && action >= 20 && action < 28) nudgeMarker ((action - 20) / 2, action % 2 != 0);
+    else if (canEdit () && action >= 30 && action < 34 && clickedSample) setMarker (action - 30, *clickedSample);
+    else if (canEdit () && action >= 40 && action < 48) matchMarker ((action - 40) / 2, action % 2 != 0);
     else if (action == 50) triggerSimulation ();
+}
+
+juce::PopupMenu WaveformDisplay::boundaryAdjustmentMenu (int marker)
+{
+    juce::PopupMenu menu;
+    if (marker < kSampleStart || marker > kLoopEnd) return menu;
+    // The mini join preview and numeric-field menus use the exact same async
+    // search, >50 ms approval and stale-source protection as the main waveform.
+    for (const auto matching : { false, true })
+    {
+        juce::PopupMenu directions;
+        for (const auto right : { false, true })
+        {
+            juce::PopupMenu::Item item { right ? "Right >>" : "Left <<" };
+            item.itemID = (matching ? 40 : 20) + marker * 2 + (right ? 1 : 0);
+            item.isEnabled = canEdit () && hasSample ();
+            item.action = [safe = juce::Component::SafePointer<WaveformDisplay> (this),
+                           source = sourceGeneration, edit = matchGeneration, marker, right, matching] ()
+            {
+                if (safe != nullptr && safe->sourceGeneration == source && safe->matchGeneration == edit)
+                    safe->beginBoundaryMove (marker, right, matching);
+            };
+            directions.addItem (std::move (item));
+        }
+        menu.addSubMenu (matching ? "Match Opposite Boundary" : "Zero Crossing Nudge", directions, canEdit () && hasSample ());
+    }
+    return menu;
 }
 
 void WaveformDisplay::nudgeMarker (int marker, bool right)
@@ -586,14 +635,14 @@ struct WaveformDisplay::BoundaryMoveRequest
 
 bool WaveformDisplay::isCurrentMove (const BoundaryMoveRequest& request)
 {
-    return isEnabled () && hasSample () && matchGeneration == request.generation && sourceGeneration == request.source &&
+    return canEdit () && hasSample () && matchGeneration == request.generation && sourceGeneration == request.source &&
         sampleProperties.getAudioBufferPtr () == request.buffer && sampleProperties.getSampleRate () == request.rate &&
         getDisplayChannel () == request.side && channelProperties.getLoopLengthIsEnd () == request.endMode;
 }
 
 void WaveformDisplay::beginBoundaryMove (int marker, bool right, bool matching)
 {
-    if (! hasSample () || ! isEnabled () || marker < kSampleStart || marker > kLoopEnd) return;
+    if (! hasSample () || ! canEdit () || marker < kSampleStart || marker > kLoopEnd) return;
     const auto* buffer { sampleProperties.getAudioBufferPtr () };
     if (buffer == nullptr) return;
     // Starting either command supersedes pending matches and nudge approvals,
@@ -737,7 +786,7 @@ void WaveformDisplay::markerMoved (int markerIndex)
 
 void WaveformDisplay::setMarker (int markerIndex, double proposedPosition, bool keepOppositeBoundary)
 {
-    if (! hasSample () || ! isEnabled () || ! std::isfinite (proposedPosition)) return;
+    if (! hasSample () || ! canEdit () || ! std::isfinite (proposedPosition)) return;
     const auto sampleLength { getSampleLength () };
     const auto position { static_cast<juce::int64> (constrainMarker (markerIndex, std::round (std::clamp (proposedPosition, 0.0, static_cast<double> (sampleLength))), keepOppositeBoundary)) };
     selectRegion (markerIndex >= kLoopStart);
@@ -783,8 +832,8 @@ void WaveformDisplay::setMarker (int markerIndex, double proposedPosition, bool 
 }
 
 //==============================================================================
-// Disabling the display stops it being edited, but panning, zooming and the
-// timeline's unit menu only change the view, so they stay live.
+// Cancel edits whenever enablement/read-only state changes. Stereo-right uses
+// read-only rather than disabling the component, keeping navigation live.
 void WaveformDisplay::enablementChanged ()
 {
     ++matchGeneration;

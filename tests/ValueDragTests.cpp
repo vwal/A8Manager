@@ -5,6 +5,7 @@
 void DebugLog (juce::String, juce::String) {}
 void FlushDebugLog () {}
 void testRootFolderSelection ();
+void testAppearance ();
 void testPlayback ();
 void testStereoPreview ();
 void testEditorRefinements ();
@@ -137,6 +138,7 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI initialise;
     try
     {
+        if (argc == 2 && juce::String (argv[1]) == "--appearance") { testAppearance (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--sample-loop-simulation") { testSampleLoopSimulation (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--simulation-ui") { testSimulationUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--channel-purge-ui") { testChannelPurgeUi (); return 0; }

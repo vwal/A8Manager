@@ -77,8 +77,20 @@ layout are remembered.
 
 Hover over a control for its tooltip, including useful ranges or explanations.
 **Quick help** gives a short reminder of the main gestures.
-**SETTINGS** at the bottom opens the computer's audition audio-device settings.
-It is separate from the preset's MIDI SETUP selection.
+**Audio Settings**, between **UI size** and **Quick help** in the fixed top bar,
+opens the computer's audition audio-device settings. It remains reachable when
+the editor is scrolled. A second fixed header row holds the workspace buttons,
+the current **Output** device and the **Appearance** selector. **Output: none**
+means there is no active computer audition output; choose one in Audio Settings.
+The indicator follows device changes, not just the saved device preference. Hover
+over a truncated device name to see it in full.
+It is separate from the preset's MIDI SETUP selection. The three editor menus
+are named **Preset tools**, **Channel tools**, and **Zone tools** to clarify
+which part of the preset they affect.
+
+Choose **Appearance → Dark / Light** to change the interface immediately. The
+choice is remembered independently of your presets. Numeric parameter fields use
+a monospaced font so sample positions and decimal values are easier to compare.
 
 ### Jumping to a different folder
 
@@ -117,6 +129,11 @@ works even when the mouse/OS translates it into horizontal scrolling. For exact
 positions, you can also type a value. Values are limited to each parameter's allowed
 range, so a boundary field may stop moving when it reaches another boundary or
 the end of the file.
+
+Direct numeric entry and manual adjustment do not need a 50 ms confirmation:
+you choose the position yourself. Automated **Zero Crossing Nudge** and **Match
+Opposite Boundary** commands still ask before moves greater than 50 ms, including
+when invoked from a numeric field's context menu or the small join preview.
 
 **Revert** is not a general undo history: where offered, it restores the saved
 or loaded reference value. **Default** restores that parameter's default.
@@ -321,6 +338,10 @@ Nudge and Match Opposite Boundary remain submenus below a separator:
 - **Set Marker Here** (right-click menu only): place a chosen marker at the
   right-clicked source position, clamped to its valid limits.
 
+Right-click **END** (left half) or **START** (right half) in the small join
+preview to access those same directional nudge/match commands for the selected
+**SAMPLE** or **LOOP** boundary, without going to the larger waveform.
+
 The same **50 ms confirmation rule** applies to both matching and zero-crossing
 nudges. Zero crossings are often nearby in audio, but slow or offset waveforms
 can have distant crossings or none at all. **No**, Enter or Escape cancels a
@@ -487,6 +508,12 @@ left/master channel. **PAN and its CV controls remain independently editable
 on the right channel**; these are saved hardware settings, not an audition pan
 effect. Selecting a zone on either channel selects the same zone on its partner.
 
+The right channel's waveform remains available for **read-only inspection**:
+zoom, pan, jump to markers, and expand/collapse work normally. Marker dragging,
+region moves, Set Marker Here, nudges and boundary matching are unavailable
+there; make those edits on the left/master channel. Inspecting the right side
+does not change the sample/loop audition selection.
+
 Dropping a replacement sample onto either side of an existing pair updates both
 assignments together. Stereo files use the left and right sides respectively;
 mono files use the same mono source on both channels. Loading a stereo file into
@@ -498,7 +525,7 @@ settings and returns them to independent default modes. It preserves the samples
 zone assignments and zone markers on both sides. To clear the assignments, use
 **Clear All Zones** on the left/master channel; this clears both partners but does
 not delete audio files. To clear every zone **and** reset the channel settings,
-use **Purge this channel...** from either partner's channel TOOLS menu or by
+use **Purge this channel...** from either partner's **Channel tools** menu or by
 right-clicking its CH tab. The confirmation identifies both channels; they become
 independent Master channels. Individual **Purge this zone** also operates on both sides.
 
@@ -540,7 +567,7 @@ four evenly balanced zones across −5 V to +5 V:
 | 4 | −5.00 V | −5.00 to −2.50 V | −3.75 V |
 
 These are example boundaries, not the automatic result of every new zone you
-add. Zone **TOOLS → Balance → 10V** distributes existing zones across this full
+add. **Zone tools → Balance → 10V** distributes existing zones across this full
 range. Check the updated access values and adjust your external CV source after
 editing boundaries or adding zones. Hover over a zone tab for its range and
 access-value explanation. Targets are rounded for display, using extra decimal
@@ -606,7 +633,7 @@ explicitly identifies this. A stereo-right zone cannot be purged independently.
 
 ### Purging an entire channel
 
-Open the channel's **TOOLS** menu, or right-click its **CH tab**, and choose
+Open **Channel tools**, or right-click its **CH tab**, and choose
 **Purge this channel...**. Review the confirmation and click **Purge** to clear
 all eight zones and restore every channel setting to its default. Cancel leaves
 the channel unchanged. This is broader than Default, which retains the zones.
@@ -634,7 +661,7 @@ stays open after a failed save. Preset **Move** goes to the adjacent numbered sl
 target follow the moved preset. A failed move attempts to restore both originals;
 if recovery needs assistance, the error gives the backup location.
 
-The preset-level **TOOLS** menu offers import/export of **Settings Only** or
+The **Preset tools** menu offers import/export of **Settings Only** or
 **Settings and Samples**. Use the latter when you need a portable copy that
 includes the audio, rather than expecting the preset settings alone to contain
 it. Settings and Samples exports a ZIP archive; extract it before copying its
@@ -703,14 +730,14 @@ JSON/text files still produce warnings.
 The [Waveform Designer guide](WAVEFORM-DESIGNER.md) explains the controls,
 supersaw layering, sample-length matching, DC safety, and voltage calibration.
 To edit an existing generated waveform, select its channel/zone in Samples and
-choose **TOOLS → Edit selected waveform in designer...**, or use **Recall
+choose **Preset tools → Edit selected waveform in designer...**, or use **Recall
 assigned...** for the designer's chosen target. **Load recipe / WAV...** also
 opens a saved JSON recipe or a generated WAV with its recipe beside it. Any bank
 voice recalls the entire saved bank. Recall asks before replacing the design,
 and does not change the preset or files; regenerate/assign and Save after editing.
 Keep the companion recipe: the WAV alone cannot restore the shaping controls.
 
-The Samples TOOLS item is greyed out for ordinary samples, empty zones, missing
+This **Preset tools** item is greyed out for ordinary samples, empty zones, missing
 files or an invalid/missing associated recipe. It is enabled only when the
 selected generated WAV and its saved recipe are recognized together. If you
 renamed the files or have an older untagged export, use **Load recipe / WAV...**
@@ -743,7 +770,7 @@ the module, work through the [hardware test checklist](HARDWARE-TEST-CHECKLIST.m
 
 **Why is there no sound?**  
 Check that the zone has a successfully loaded sample, the selected region has
-nonzero length, and ONCE or LOOP is running. Open SETTINGS to check the computer's
+nonzero length, and ONCE or LOOP is running. Open **Audio Settings** to check the computer's
 audio output device and routing, and check its volume. Review validation errors
 if the sample is missing or cannot be loaded.
 If the zone displays **CV sample / Speaker audition disabled**, silence is

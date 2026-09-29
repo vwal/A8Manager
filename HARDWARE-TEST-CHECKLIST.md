@@ -1,9 +1,164 @@
-# Waveform Designer: hardware test checklist
+# A8Manager validation: software first, hardware acceptance second
 
-This is a test plan, not a claim that every combination has already been verified
-on hardware. Use a separate test folder and start with simple settings before
-trying complex layers or modulation. Keep the exported `design.json` and
-`README.txt` with your observations so a result can be reproduced.
+This is a test plan, not a claim that every combination has been verified on
+hardware. The main question is whether A8Manager generates the correct files and
+presets, not whether Assimil8or's oscillator/DAC works. Sample-level software
+checks are the primary test of generation; a short hardware session checks our
+preset assumptions and the analog properties that a WAV cannot establish.
+
+Use a separate test folder. Keep the exported recipe (`design.json` or the
+assigned WAV's `.design.json`), preset, WAVs and observations together.
+
+## What needs which kind of test?
+
+| Property | Primary check | Hardware measurement needed? |
+| --- | --- | --- |
+| Shape, frame count, sample rate, amplitude, phase, DC offset, harmonics, loop seam | Generated PCM samples and independent renderer regression checks | No |
+| Export fidelity, file names, metadata, recipe recall, preset settings | Reopen WAVs; parse/round-trip presets and recipes | No, except interpretation of preset settings |
+| Trigger/loop behavior, stereo/link routing, marker interpretation, saved-preset recall | A small set of module acceptance tests; recordings can capture results | Module needed, scope usually not needed |
+| Actual CV volts, polarity and sustained DC | Individual output measured at known gain/load | Yes: DC-coupled scope or suitable calibrated meter |
+| CV excluded from both stereo mix outputs | Module displays Off **and** no corresponding signal at either mix output | Yes: DC-coupled scope preferred |
+| Nominal audio pitch and relative phase/timing | Software first; an optional captured audio comparison | Scope optional |
+
+The exporter rereads every generated PCM24 sample and compares it to the rendered
+buffer within quantization tolerance. This checks export integrity, not by itself
+that the renderer's mathematics are correct. Separate waveform-design tests check
+the shapes, PolyBLEP correction, phase, harmonic filtering, DC preservation and
+timing. See [regression coverage and run commands](tests/README.md). Passing these
+does not establish voltage calibration or every module behavior.
+
+## Minimum useful test session
+
+Do these first; the extended checklists below are optional follow-up, not a
+requirement to measure every waveform with the scope. Read
+[Before starting](#before-starting) before using the SD card or connecting outputs.
+
+1. **Software:** run the regression tests for the build being evaluated. Keep the
+   test result/build identifier. Check one export/recall round-trip and one
+   non-001 shared preset assignment. Confirm the resulting slot and WAV contents
+   survive saving/reopening.
+2. **Load and route:** load one Audio Cycle preset and one two-voice bank on the
+   module. Confirm the files, channel/zone assignments, Master/Link modes and pan
+   match the export. Trigger the master; both bank voices should respond. This
+   establishes triggering, not sample-accurate phase lock between outputs.
+3. **Playback acceptance:** try One Shot, Loop and Gated loop using a clearly
+   recognizable audio signal and both short and long gates. Then check three
+   forward sample-to-loop cases: loop wholly inside the sample, loop extending
+   beyond Sample End, and Loop Start after Sample End. Record/listen for the
+   expected initial passage and repetition; in the last case, the striped bridge
+   must be traversed. Do not count loop-before-sample or all gate/release edge
+   cases as verified by our forward simulation.
+4. **Essential analog CV checks:** follow the setup below. Measure zero, modest
+   positive and negative constant levels and a slow varying CV at the individual
+   output. Confirm polarity, sustained DC and the actual intended voltage range.
+   Confirm Mix Off on the module and verify **both** mix outputs against an idle
+   baseline. Keep all tested outputs disconnected from speakers/headphones.
+5. **Save/reload:** save a copy on the module, reload it and compare its preset
+   back in A8Manager. Check the settings that matter here: mode, boundaries,
+   pitch, pan, zone assignment and CV Mix Off. Retain any changed representation,
+   especially the hardware's representation of Off.
+
+An oscillator-frequency spot check (512 frames at 48 kHz: 93.75 Hz at zero pitch)
+is optional. Repeated scope measurements of every shape, transpose and amplitude
+are not needed when the sample-level tests pass. Hardware pitch/duration checks
+remain useful if a preset setting appears to be interpreted incorrectly.
+
+### Essential analog session: RIGOL MHO98
+
+These are settings to verify, not a requirement to change Assimil8or's factory
+calibration. For accurate absolute-voltage calibration, use an instrument with
+appropriate stated accuracy; a high-resolution screen is not proof of millivolt
+accuracy. RIGOL specifies warm-up of more than 30 minutes for its stated specs.
+
+- [ ] Disconnect the tested individual and mix outputs from monitors/headphones.
+  Use scope **inputs**, not its waveform-generator outputs. Start at low digital
+  amplitude with no external CV, unchanged channel/zone gain and no modulation.
+- [ ] Select **DC coupling, 1 MΩ input** on each used scope channel. Do **not** use
+  50 Ω termination. Choose the **20 MHz bandwidth limit** for these slow tests.
+- [ ] A plain BNC-to-3.5 mm TS patch cable uses a **1×** probe setting. If using a
+  passive probe instead, match the scope setting to its physical switch (e.g.
+  **10×**). Connect the tip to signal and the ground clip to the patch sleeve.
+  Scope channel grounds are common: never attach a ground clip to a signal tip
+  or measure between two active outputs as if the inputs were isolated. Do not
+  remove protective earth. If uncertain about the cable/pinout, stop and check.
+- [ ] For initial low-level CV, try **1 V/div** with zero visible and about
+  **500 ms/div**, Auto acquisition. Adjust the vertical scale to keep the whole
+  waveform visible. For a constant plateau, Auto/roll is easier than waiting for
+  an edge that never arrives. These are starting settings, not pass limits.
+- [ ] Measure the individual output before playback, then exported constants:
+  amplitude 0%, offset 0%, +10%, and -10%, each with Loop playback. Record the
+  settled levels and whether they remain steady for several seconds. Digital
+  +10% does **not** mean +1 V unless that scaling has actually been established.
+- [ ] Play a 2-second slow CV sine/steps at a modest level; record its extrema
+  and polarity. Increase only as needed to check the voltage range you intend
+  to use. Measure under the intended gain/output/load before connecting another
+  module. Do not infer a safe full-scale range solely from a low-level test.
+- [ ] To verify isolation, use scope CH 1 for the chosen A8 individual output,
+  scope CH 2 for Mix L and scope CH 3 for Mix R. Mute other channels, disable
+  sampling-input monitoring and leave the fourth lead unused or as a reference.
+  Compare each mix output while stopped and while the slow CV is running.
+  **Pass:** the module says Off and neither mix has a repeatable component
+  matching the CV above the measured baseline/noise. Record the measurement
+  resolution; do not require a mathematically exact 0 V trace. If CV appears in
+  either mix, stop and report before using speaker monitoring.
+
+These MHO98 coupling, impedance, attenuation and bandwidth-limit settings are
+listed in [RIGOL's official MHO98 data sheet, pp. 6-8](https://www.rigol.com/dam/global/downloads/brochures/en/data-sheet/oscilloscopes/MHO98-DataSheet.pdf?t=1760514458060).
+Assimil8or's DC-coupled playback and separate individual/mix paths are documented
+by [Rossum](https://www.rossum-electro.com/products/assimil8or).
+
+### Recording-based comparisons
+
+A recording is often more useful than a scope screenshot for audio timing,
+relative phase, missing/extra sections, loop seams and routing.
+
+- Record the tested output and a reference simultaneously through a suitable
+  interface at known sample rate, with adequate input attenuation/headroom.
+  Do not assume a Eurorack output is safe for every line input. Disable AGC,
+  effects, normalization, noise suppression and automatic tempo stretching.
+- Preserve the original capture, export recipe/preset, channel mapping and the
+  actual gate/stop sequence. Trigger and gate transitions are part of the test,
+  not an arbitrary choice to discard in analysis.
+- Align captures for fixed latency and account for independent recorder/module
+  clock rates. Estimate drift from more than one known point over the recording;
+  record any resampling/alignment applied. Do not stretch away a wrong duration
+  or onset and then call the result a pass.
+- Compare expected event order, section lengths, frequency ratios, relative
+  timing, polarity and routing. DAC reconstruction, playback interpolation,
+  analog gain/noise and the recorder's ADC mean a hardware recording should
+  **not** be bit-identical to the WAV. Use stated tolerances for each property.
+- An ordinary AC-coupled recording cannot establish CV DC level, polarity of a
+  sustained offset or absolute output volts. Only use recordings for that if the
+  entire capture path is suitable, DC-coupled and voltage-calibrated; otherwise
+  use the scope/meter checks above.
+
+### Would start/end sonic markers help?
+
+**Yes, as an optional test-package feature; it is not implemented.** Prefer a
+separate reference track/output with recognizable short, low-level coded tone
+bursts, rather than adding sounds to the sample or CV under test. A manifest
+would state the exact source frame positions, sample rate, expected gate events
+and intended section durations. Start/end markers should use distinct patterns.
+
+- Reserve an otherwise unused A8 channel for a one-shot reference and capture
+  its individual output beside the output under test. Leave its Mix Off, avoid
+  changing the tested channel and keep normal exports unchanged. A bank using
+  all eight channels would need an external recorded reference/gate instead.
+- A shared trigger does not prove that reference and test channels start at the
+  same sample. Measure their fixed offset/retrigger variation first. A marker
+  emitted by the **computer** is a host event, not proof of the A8 playback time.
+- A reference-file end marker identifies the scheduled end of the test window,
+  not proof that the tested sample ended. Analyze the test output itself too.
+  Never put the only end marker after a region that loops forever: playback may
+  never reach it. For continuous/gated tests, capture the actual gate or a safely
+  recorded event reference and define a deliberate stop; log live marker edits.
+- Markers must not be inserted into generated CV, routed to speakers by default,
+  or allowed to alter the loop seam, sample length or voltage. No automatic
+  timing/voltage verdict should be issued without checking alignment and levels.
+
+For today's tests, ordinary captures with a documented trigger/gate sequence are
+sufficient. This feature would make repeatable automated capture analysis easier
+later; it is not a prerequisite for the minimum acceptance session.
 
 ## Before starting
 
@@ -18,14 +173,15 @@ trying complex layers or modulation. Keep the exported `design.json` and
 - [ ] Begin with no external pitch/modulation CV or MIDI, no latched channel,
   and unchanged exported gain settings. Trigger/gate channel 1 explicitly.
   Automatic triggering is off in generated presets.
-- [ ] Load the test folder and preset 001. Confirm there are no missing-sample
-  errors. Keep `prst001.yml` and all `voice-XX.wav` files together.
+- [ ] Load the test folder and selected preset number (001 for a default
+  standalone package). Confirm there are no missing-sample errors. Keep its
+  `prstNNN.yml` and referenced WAV files together.
 
 Record observations rather than changing several controls at once. For a failed
 test, note the recipe, exact settings, output, trigger/gate sequence, expected
 result and actual result. A short scope capture or recording is useful.
 
-## Shared-preset assignment checks
+## Extended checks: shared-preset assignment
 
 Use a disposable folder, not the only copy of existing samples/presets. The tests
 below supplement the standalone preset-001 tests in the rest of this checklist.
@@ -65,17 +221,25 @@ instrument, and record it with the measurement.
 
 | Test | Expected result at the listed settings | Actual result / tolerance | Pass / Fail / Not tested |
 | --- | --- | --- | --- |
-| 48 kHz, 512-frame sine, zero pitch | 93.75 Hz | | |
-| Same file, hardware PITCH +12 | 187.5 Hz | | |
-| 96 kHz, 512-frame sine, zero pitch | 187.5 Hz | | |
-| Amplitude 25% to 50%, same output/gain | Approximately 2x signal amplitude | | |
-| Two linked voices, detune -10/+10 cents | Distinct pitches and slow beating | | |
-| One Shot / Loop / Gated loop | Behaviors in section 4 | | |
-| CV 2 seconds, 1 cycle, zero pitch | 2-second period | | |
-| CV constant positive/negative offsets | Sustained levels of corresponding polarity | | |
-| Repeated same-name export | New folder; original files unchanged | | |
+| Software regression/build identifier | Tests pass; record output, not hardware claims | | |
+| Preset load and save/reload | Intended assignments/settings survive | | |
+| One Shot / Loop / Gated loop | Behaviors in Extended 4 | | |
+| Forward sample-to-loop cases | Initial passage, bridge when applicable, then repeated loop | | |
+| Essential CV constants: 0 / +10% / -10% | Record actual volts; correct polarity, sustained DC | | |
+| Essential CV intended operating range | Measured extrema safe for the intended destination | | |
+| Essential Mix L and Mix R isolation | Both Off; no CV-correlated signal above recorded baseline | | |
+| Optional 48 kHz, 512-frame sine, zero pitch | 93.75 Hz | | |
+| Optional same file, hardware PITCH +12 | 187.5 Hz | | |
+| Optional 96 kHz, 512-frame sine, zero pitch | 187.5 Hz | | |
+| Optional amplitude 25% to 50%, same output/gain | Approximately 2x signal amplitude | | |
+| Optional two linked voices, detune -10/+10 cents | Distinct pitches and slow beating | | |
+| Optional CV 2 seconds, 1 cycle, zero pitch | 2-second period | | |
+| Optional repeated same-name export | New folder; original files unchanged | | |
 
-## 1. Single-cycle audio: file, pitch and level
+## Extended 1. Single-cycle audio: file, pitch and level
+
+The frequency/amplitude/shape measurements here are **optional diagnostic spot
+checks**. Prefer sample-level tests; do not repeat every variant on the scope.
 
 Create an **Audio Cycle / Sine** with 512 frames, 48 kHz, bipolar output,
 25% amplitude, zero offset, zero phase, symmetry 50%, no drive/fold, and
@@ -98,15 +262,17 @@ Create an **Audio Cycle / Sine** with 512 frames, 48 kHz, bipolar output,
 - [ ] Compare 25% and 50% amplitude exports using the same output and gain.
   The latter should have roughly twice the signal amplitude, without an
   unexpected extra level adjustment. Digital percentages are not voltages.
-- [ ] Compare phase 0 and 90 degrees on a triggered scope capture. The starting
-  phase should move by a quarter cycle without changing the frequency or
-  steady-state amplitude. A phase change alone need not sound different.
+- [ ] Compare phase 0 and 90 degrees in the WAVs; optionally compare captured
+  outputs with a common recorded trigger reference. Account for trigger latency
+  and capture alignment rather than treating the first acquired point as sample
+  zero. The steady frequency/amplitude should remain unchanged. A phase change
+  alone need not sound different.
 - [ ] Try triangle, saw and pulse, then brightness/harmonics, drive and fold.
   Confirm the differences are retained after exporting/reloading. Listen
   conservatively at high transpositions: band-limited file creation does not
   guarantee alias-free playback at every hardware pitch.
 
-## 2. Computer audition versus exported settings
+## Extended 2. Computer-only audition and interface checks
 
 Use the designer's audio audition at a low **Monitor level** first. It is a
 convenient preview, not a bit-exact model of Assimil8or's DAC, mixer, interpolation,
@@ -123,6 +289,16 @@ DC removal and short fades/crossfades. Those measures do not modify exported WAV
   Start sample playback again: it should take over from the designer.
 - [ ] Change the computer audio device while auditioning: the designer should
   stop and require an explicit restart on the selected output.
+- [ ] Check the header's audio-output name follows the selected device and
+  reports none when no output is selected. Open Audio Settings without scrolling.
+  Try light/dark appearance and UI sizes; numeric entries should remain legible.
+- [ ] Right-click the small END/START preview on each half. The offered boundary
+  commands should affect the corresponding end/start of the selected Sample or
+  Loop. Automated zero-crossing and opposite-boundary moves beyond 50 ms must
+  ask first; Cancel must leave markers unchanged. Explicit numeric entry is
+  intentional and should not show that automated-movement confirmation.
+- [ ] Select the right side of a stereo pair. Zoom, pan the waveform and open its
+  expanded view; neither view may independently change sample/loop markers.
 - [ ] Change **Transpose** in LIVE AUDITION by +12 semitones. The computer preview
   should rise an octave, but the recipe's synthesis parameters and exported preset
   channel PITCH must remain unchanged. Restore the monitor transpose to zero
@@ -154,7 +330,7 @@ DC removal and short fades/crossfades. Those measures do not modify exported WAV
 - [ ] Expand and close the waveform preview while auditioning. The expanded
   view should remain a view of the same design, not a second audio player.
 
-## 3. Layer bank: detune, phase, pan and gain
+## Extended 3. Layer bank: detune, phase, pan and gain
 
 Start with two voices and a simple sine or saw. Use 512 frames at 48 kHz,
 zero overall offset, moderate amplitude, equal per-voice gains, and **Loop**.
@@ -167,9 +343,11 @@ their detune, phase, pan and gain values.
   should read -0.10 and +0.10 semitones. Individually measured frequencies
   should follow `93.75 * 2^(cents / 1200)`. Together they should produce slow
   beating; the computer designer audition should also demonstrate that beating.
-- [ ] Set both detunes to zero and different phases. The relative phase should
-  now stay fixed: there should not be detune-induced beating. Compare a
-  triggered scope capture rather than assuming phase must alter the solo sound.
+- [ ] Set both detunes to zero and different phases. Check the phase difference
+  in the files first. Optionally capture both individual outputs simultaneously:
+  there should be no detune-induced beating. Record the relative phase and its
+  repeatability across triggers rather than assuming Master/Link guarantees
+  sample-accurate phase-locked onset.
 - [ ] Hard-pan one voice left and the other right. Verify the stereo **mix**
   outputs separate them. Each individual channel output should still carry its
   own voice; pan is not meant to attenuate individual outputs.
@@ -185,10 +363,12 @@ Computer and hardware pan laws, summation and output levels can differ. Compare
 voice count, pitch, beating, phase behavior and stereo direction first; a matching
 overall loudness is not proof of identical mixing.
 
-## 4. Trigger and loop behavior
+## Extended 4. Trigger and loop behavior
 
 Export separate copies with each playback selection so the test is repeatable.
 Generated attack/release are zero and no fades are added to the sample itself.
+These are the designer's three export combinations, not an exhaustive test of
+all independent Play Mode and Loop Mode combinations.
 
 | Exported choice | What to test on Assimil8or |
 | --- | --- |
@@ -201,8 +381,18 @@ Generated attack/release are zero and no fades are added to the sample itself.
 - [ ] On a copy of the preset, try a small hardware attack/release for audio
   and note the difference. Those are hardware edits, not designer monitor
   settings. Keep the original export unchanged for later comparison.
+- [ ] If investigating gate-release behavior, use an audible release and a
+  sample tail beyond Loop End. Zero release hides the difference between
+  decaying in a Normal loop and leaving a Gated loop to play toward Sample End.
+  Keep the gate trace/event record. Loop-before-sample, equal markers and live
+  CV marker movement remain a separate characterization task, not a claim made
+  by the forward sample-to-loop simulation.
 
-## 5. CV/DC: range, polarity and timing
+## Extended 5. CV/DC: range, polarity and timing
+
+Absolute volts, DC retention and Mix Off are essential analog checks; detailed
+shape/step timing and repeatability can normally be checked in the WAV. A scope
+capture is useful only when diagnosing hardware playback or voltage behavior.
 
 Disconnect speakers/headphones from the tested outputs. Use an **individual
 channel output** and a DC-coupled scope/meter; a normal AC-coupled audio input
@@ -238,8 +428,9 @@ input until its range and polarity have been measured.
   contour. Its attack/decay/release are fractions of a file cycle, not a live
   hardware ADSR responding independently to every gate edge.
 - [ ] Try steps with zero and nonzero glide. Check the step timing and final-to-
-  first transition on a scope. Try a drawn curve with deliberately different
-  endpoints so the loop seam is visible, then make the endpoints agree.
+  first transition in the WAV, optionally with a DC-coupled capture. Try a drawn
+  curve with deliberately different endpoints so the loop seam is visible, then
+  make the endpoints agree.
 - [ ] Repeat a seeded random export. The pattern should repeat consistently,
   rather than produce new random values forever.
 - [ ] Change hardware PITCH by +12: a 2-second CV file should take approximately
@@ -249,7 +440,7 @@ input until its range and polarity have been measured.
 No software clipping warning means the file stayed within digital full scale;
 it does not certify that a connected module accepts the resulting voltage.
 
-## 6. Files, recipes and repeatability
+## Extended 6. Files, recipes and repeatability
 
 - [ ] Export twice with the same name. Confirm that the second export has a new
   numbered folder and that the original WAVs, preset and recipe are untouched.

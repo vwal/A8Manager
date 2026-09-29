@@ -11,7 +11,6 @@
 namespace
 {
     using namespace WaveformDesign;
-    constexpr auto amber { 0xffffc472 };
 
     juce::String durationText (double seconds)
     {
@@ -24,7 +23,7 @@ namespace
     {
         label.setText (text, juce::dontSendNotification);
         label.setFont (juce::FontOptions (size, bold ? juce::Font::bold : juce::Font::plain));
-        label.setColour (juce::Label::textColourId, Theme::text);
+        Theme::bindColour (label, juce::Label::textColourId, [] { return Theme::text; });
         label.setBorderSize ({ 0, 0, 0, 0 });
     }
 
@@ -42,10 +41,6 @@ namespace
             slider.setRange (low, high, step);
             slider.setTextValueSuffix (suffix);
             slider.setScrollWheelEnabled (false);
-            slider.setColour (juce::Slider::thumbColourId, Theme::accent);
-            slider.setColour (juce::Slider::trackColourId, Theme::accent.darker (0.35f));
-            slider.setColour (juce::Slider::textBoxBackgroundColourId, Theme::field);
-            slider.setColour (juce::Slider::textBoxOutlineColourId, Theme::border);
             addAndMakeVisible (label);
             addAndMakeVisible (slider);
         }
@@ -83,9 +78,9 @@ namespace
         Card (const juce::String& name, const juce::String& help)
         {
             styleLabel (title, name, 15.0f, true);
-            title.setColour (juce::Label::textColourId, Theme::accent);
+            Theme::bindColour (title, juce::Label::textColourId, [] { return Theme::accent; });
             styleLabel (hint, help, 11.5f);
-            hint.setColour (juce::Label::textColourId, Theme::muted);
+            Theme::bindColour (hint, juce::Label::textColourId, [] { return Theme::muted; });
             hint.setMinimumHorizontalScale (1.0f);
             addAndMakeVisible (title);
             addAndMakeVisible (hint);
@@ -500,17 +495,17 @@ struct WaveformWorkspace::Impl
         owner.setLookAndFeel (&look);
         owner.setName ("waveform-workspace");
         styleLabel (title, "WAVEFORM WORKSPACE", 22.0f, true);
-        title.setColour (juce::Label::textColourId, Theme::accent);
+        Theme::bindColour (title, juce::Label::textColourId, [] { return Theme::accent; });
         styleLabel (subtitle, "Design audio cycles, CV curves and layers; assign to this preset or export a separate package.", 12.0f);
-        subtitle.setColour (juce::Label::textColourId, Theme::muted);
+        Theme::bindColour (subtitle, juce::Label::textColourId, [] { return Theme::muted; });
         styleLabel (summary, "", 12.0f);
         summary.setName ("design-summary");
         styleLabel (renderStats, "Preparing waveform statistics...", 12.0f);
         renderStats.setName ("design-render-stats");
-        renderStats.setColour (juce::Label::textColourId, Theme::muted);
+        Theme::bindColour (renderStats, juce::Label::textColourId, [] { return Theme::muted; });
         renderStats.setJustificationType (juce::Justification::topLeft);
         styleLabel (auditionTitle, "LIVE AUDITION", 14.0f, true);
-        auditionTitle.setColour (juce::Label::textColourId, Theme::accent);
+        Theme::bindColour (auditionTitle, juce::Label::textColourId, [] { return Theme::accent; });
         styleLabel (auditionHint, "Monitor only: loops continuously. Level and transpose do not affect export.", 12.0f);
         auditionHint.setName ("design-audition-hint");
         auditionHint.setJustificationType (juce::Justification::topLeft);
@@ -523,11 +518,11 @@ struct WaveformWorkspace::Impl
         auditionButton.setEnabled (false);
         styleLabel (status, "Audition starts only when requested. CV mode is always visual-only.", 12.0f);
         status.setName ("design-status");
-        status.setColour (juce::Label::textColourId, Theme::muted);
+        Theme::bindColour (status, juce::Label::textColourId, [] { return Theme::muted; });
         styleLabel (nameLabel, "Design name", 12.0f);
         styleLabel (assignmentHeading, "CURRENT PRESET - assign to the channel / zone below, then Save", 12.0f, true);
         assignmentHeading.setName ("design-assignment-heading");
-        assignmentHeading.setColour (juce::Label::textColourId, Theme::accent);
+        Theme::bindColour (assignmentHeading, juce::Label::textColourId, [] { return Theme::accent; });
         styleLabel (packageHeading, "SEPARATE PACKAGE - new folder, voices start at CH 1; current preset unchanged", 12.0f, true);
         packageHeading.setName ("design-package-heading");
         fileName.setName ("design-name");
@@ -567,7 +562,8 @@ struct WaveformWorkspace::Impl
         create.setName ("design-export");
         create.setTooltip ("Create a separate folder and preset with voices starting at CH 1. Target channel/zone above are NOT used. To fill them in the current preset, use Generate & Assign, then Save.");
         assign.setName ("design-assign");
-        assign.setColour (juce::TextButton::buttonColourId, Theme::accent.darker (0.6f));
+        Theme::bindColour (assign, juce::TextButton::buttonColourId, [] { return Theme::accent.darker (0.6f); });
+        assign.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
         assign.setEnabled (false);
         assign.setTooltip ("Create WAVs and a recipe in the current folder, then update the selected preset in memory. Click Save in the shared preset header to save it.");
         recall.setName ("design-recall");
@@ -628,7 +624,7 @@ struct WaveformWorkspace::Impl
         for (size_t i { 0 }; i < 8; ++i)
         {
             styleLabel (voiceLabels[i], "CH " + juce::String (static_cast<int> (i + 1)), 12.0f, true);
-            voiceLabels[i].setColour (juce::Label::textColourId, Theme::accent.withRotatedHue (static_cast<float> (i) * 0.085f));
+            Theme::bindColour (voiceLabels[i], juce::Label::textColourId, [i] { return Theme::accent.withRotatedHue (static_cast<float> (i) * 0.085f); });
             voiceRows[i].addAndMakeVisible (voiceLabels[i]);
             layers.addRow (voiceRows[i], 40);
             auto voiceControl = [&] (int column, const juce::String& label, double low, double high, double step, const juce::String& suffix, double Voice::* member)
@@ -904,7 +900,7 @@ struct WaveformWorkspace::Impl
     {
         status.setText (message, juce::dontSendNotification);
         status.setTooltip (message);
-        status.setColour (juce::Label::textColourId, error ? juce::Colour (amber) : Theme::muted);
+        Theme::bindColour (status, juce::Label::textColourId, [error] { return error ? Theme::warning : Theme::muted; });
     }
 
     void updateAssignmentControls ()
@@ -1081,7 +1077,8 @@ struct WaveformWorkspace::Impl
         monitorLevel.setEnabled (! cv); monitorTranspose.setEnabled (! cv);
         audioSettings.setEnabled (owner.onAudioSettings != nullptr);
         auditionTitle.setText (cv ? "CV - VISUAL ONLY" : "LIVE AUDITION", juce::dontSendNotification);
-        auditionHint.setColour (juce::Label::textColourId, cv || auditionError.isNotEmpty () ? juce::Colour (amber) : Theme::muted);
+        const auto warn { cv || auditionError.isNotEmpty () };
+        Theme::bindColour (auditionHint, juce::Label::textColourId, [warn] { return warn ? Theme::warning : Theme::muted; });
         auditionHint.setText (cv ? "CV speaker audition is disabled. Check DC/slow CV with a suitable meter or scope, not speakers."
                               : auditionError.isNotEmpty () ? auditionError
                               : active ? "Monitor loops continuously; edits update live. Level and transpose do not affect export."

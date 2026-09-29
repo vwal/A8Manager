@@ -2,6 +2,7 @@
 #include "GUI/Assimil8or/Editor/Envelope/AREnvelopeComponent.h"
 #include "GUI/Assimil8or/Editor/Waveform/WaveformPresentation.h"
 #include "GUI/ModernTheme.h"
+#include "GUI/WorkspaceHeaderLayout.h"
 #include "Assimil8or/Preset/ZonePurge.h"
 #include "Assimil8or/SafeRename.h"
 #include <iostream>
@@ -10,6 +11,30 @@
 namespace
 {
     void check (bool value, const char* message) { if (! value) throw std::runtime_error (message); }
+    void testWorkspaceHeaderLayout ()
+    {
+        for (const auto width : { 800, 900, 1039, 1040, 1400, 3000 })
+        {
+            const auto layout { WorkspaceHeaderLayout::forWidth (width) };
+            const juce::Rectangle<int> header { 0, 0, width, layout.height };
+            const juce::Rectangle<int> title { 16, 5, 250, 40 };
+            const std::array<juce::Rectangle<int>, 9> controls { layout.samples, layout.designer, layout.scaleLabel,
+                layout.scaleSelector, layout.audioSettings, layout.help, layout.outputDevice, layout.appearanceLabel, layout.appearanceSelector };
+            for (size_t i { 0 }; i < controls.size (); ++i)
+            {
+                check (header.contains (controls[i]) && ! controls[i].isEmpty (), "Global header controls remain visible at the minimum window width");
+                check (! title.intersects (controls[i]), "Header controls do not cover the title");
+                for (size_t j { i + 1 }; j < controls.size (); ++j)
+                    check (! controls[i].intersects (controls[j]), "Header controls never overlap");
+            }
+            check (layout.scaleSelector.getRight () < layout.audioSettings.getX () && layout.audioSettings.getRight () < layout.help.getX (),
+                   "Audio Settings stays between UI size and Quick help");
+            check (layout.audioSettings.getWidth () >= 132 && layout.audioSettings.getHeight () >= 32,
+                   "Audio Settings retains a readable, clickable size");
+            check (layout.height == 92 && layout.outputDevice.getWidth () >= 280,
+                   "Output device and appearance remain readable on a second fixed header row at minimum width");
+        }
+    }
     void testRename ()
     {
         const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-rename-regression", "", false) };
@@ -287,6 +312,8 @@ struct ZoneEditorTestAccess
         ModernLookAndFeel look;
         ZoneEditor editor;
         editor.setLookAndFeel (&look);
+        check (editor.toolsButton.getButtonText () == "Zone tools" && editor.toolsButton.getComponentID () == "zoneTools",
+               "Zone menu has its own scope label");
         editor.displayToolsMenu = [] (int) {};
         editor.parentChannelIndex = 0;
         editor.zoneIndex = 0;
@@ -338,6 +365,11 @@ struct ZoneEditorTestAccess
         check (editor.audioPlayerProperties.getSamplePointsSelector () == Selector::LoopPoints, "Looping restores this zone's LOOP choice");
         editor.loopPlayButton.onClick ();
         editor.setSize (182, 520);
+        check (editor.sampleStartTextEditor.getFont ().getTypefaceName () == juce::Font::getDefaultMonospacedFontName () &&
+               editor.sampleEndTextEditor.getFont ().getTypefaceName () == juce::Font::getDefaultMonospacedFontName () &&
+               editor.loopStartTextEditor.getFont ().getTypefaceName () == juce::Font::getDefaultMonospacedFontName () &&
+               editor.loopLengthTextEditor.getFont ().getTypefaceName () == juce::Font::getDefaultMonospacedFontName (),
+               "All four endpoint numeric editors remain monospaced after layout");
         editor.setEditComponentsEnabled (true);
         editor.oneShotPlayButton.setEnabled (true);
         editor.loopPlayButton.setEnabled (true);
@@ -366,6 +398,14 @@ struct ZoneEditorTestAccess
             };
             save (panel, "zone-refinements.png");
             save (envelope, "envelope-refinements.png");
+            Theme::setAppearance (true);
+            Theme::refreshComponentTree (panel);
+            Theme::refreshComponentTree (envelope);
+            save (panel, "zone-refinements-light.png");
+            save (envelope, "envelope-refinements-light.png");
+            Theme::setAppearance (false);
+            Theme::refreshComponentTree (panel);
+            Theme::refreshComponentTree (envelope);
         }
         envelope.setLookAndFeel (nullptr);
         editor.setLookAndFeel (nullptr);
@@ -374,6 +414,7 @@ struct ZoneEditorTestAccess
 
 void testEditorRefinements ()
 {
+    testWorkspaceHeaderLayout ();
     testCrossings ();
     testBoundaryMatching ();
     testRename ();

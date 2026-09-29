@@ -445,6 +445,7 @@ void AudioPlayer::shutdownAudio ()
     audioSourcePlayer.setSource (nullptr);
     audioDeviceManager.removeAudioCallback (&audioSourcePlayer);
     audioDeviceManager.closeAudioDevice ();
+    audioPlayerProperties.setOutputDeviceName ({}, false);
     playbackPosition.store (-1.0);
 }
 
@@ -516,6 +517,18 @@ void AudioPlayer::configureAudioDevice (juce::String config)
 
     audioDeviceManager.addAudioCallback (&audioSourcePlayer);
     audioSourcePlayer.setSource (this);
+    publishOutputDevice ();
+}
+
+void AudioPlayer::publishOutputDevice ()
+{
+    // Device-manager change notifications run on the message thread. Never
+    // touch the UI's ValueTree from prepareToPlay/releaseResources callbacks.
+    auto* device { audioDeviceManager.getCurrentAudioDevice () };
+    const auto name { device != nullptr && device->isOpen () && device->isPlaying ()
+                      && ! device->getActiveOutputChannels ().isZero () ? device->getName () : juce::String {} };
+    if (audioPlayerProperties.getOutputDeviceName () != name)
+        audioPlayerProperties.setOutputDeviceName (name, false);
 }
 
 void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState)
@@ -581,8 +594,8 @@ void AudioPlayer::showConfigDialog ()
 {
     juce::DialogWindow::LaunchOptions o;
     o.escapeKeyTriggersCloseButton = true;
-    o.dialogBackgroundColour = juce::Colours::grey;
-    o.dialogTitle = "AUDIO SETTTINGS";
+    o.dialogBackgroundColour = juce::Desktop::getInstance ().getDefaultLookAndFeel ().findColour (juce::ResizableWindow::backgroundColourId);
+    o.dialogTitle = "Audio Settings";
     audioSetupComp.setBounds (0, 0, 400, 600);
     o.content.set (&audioSetupComp, false);
     o.launchAsync ();
@@ -662,6 +675,7 @@ void AudioPlayer::prepareAuditionResampler ()
 
 void AudioPlayer::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    publishOutputDevice ();
     LogAudioPlayer ("audio device settings changed");
     auto audioDeviceSettings { audioDeviceManager.createStateXml () };
     if (audioDeviceSettings != nullptr)

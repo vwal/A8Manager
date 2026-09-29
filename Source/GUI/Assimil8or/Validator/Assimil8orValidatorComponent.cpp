@@ -242,15 +242,15 @@ void Assimil8orValidatorComponent::paintCell (juce::Graphics& g, int rowNumber, 
 {
     if (rowNumber < validatorResultsQuickLookupList.size ())
     {
-        g.setColour (juce::Colours::lightsteelblue);
+        g.setColour (Theme::border);
         g.fillRect (width - 1, 0, 1, height);
         ValidatorResultProperties validatorResultProperties (validatorResultsQuickLookupList [rowNumber],
                                                              ValidatorResultProperties::WrapperType::client, ValidatorResultProperties::EnableCallbacks::no);
         auto textColor { Theme::text };
         if (validatorResultProperties.getType () == ValidatorResultProperties::ResultTypeWarning)
-            textColor = juce::Colours::orange.darker (0.3f);
+            textColor = Theme::warning;
         else if (validatorResultProperties.getType () == ValidatorResultProperties::ResultTypeError)
-            textColor = juce::Colours::red.darker (0.3f);
+            textColor = Theme::error;
 
         juce::String outputText { "  " };
         switch (columnId)
@@ -351,7 +351,7 @@ void Assimil8orValidatorComponent::handleAsyncUpdate ()
 
     options.content->setSize (area.getWidth (), area.getHeight ());
     options.dialogTitle = "Locate Missing Files";
-    options.dialogBackgroundColour = juce::Colour (juce::Colours::grey);
+    options.dialogBackgroundColour = Theme::panel;
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = false;
     options.resizable = true;
@@ -375,7 +375,7 @@ void Assimil8orValidatorComponent::rename (juce::File file, int maxLength)
 
     options.content->setSize (area.getWidth (), area.getHeight ());
     options.dialogTitle = "Rename";
-    options.dialogBackgroundColour = juce::Colour (juce::Colours::lightgrey);
+    options.dialogBackgroundColour = Theme::panel;
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = false;
     options.resizable = false;

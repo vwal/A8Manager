@@ -47,10 +47,9 @@ ChannelEditor::ChannelEditor ()
     // TODO - these lambdas are copies of what is in ChannelEditor::setupChannelComponents, need to DRY
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
-        label.setColour (juce::Label::ColourIds::textColourId, textColor);
+        Theme::bindColour (label, juce::Label::textColourId, [] { return Theme::muted; });
         label.setFont (label.getFont ().withPointHeight (fontSize));
         label.setMinimumHorizontalScale (1.0f);
         label.setText (text, juce::NotificationType::dontSendNotification);
@@ -58,9 +57,10 @@ ChannelEditor::ChannelEditor ()
     };
 
     setupLabel (zonesLabel, "ZONES", kMediumLabelSize, juce::Justification::centredLeft);
-    zonesLabel.setColour (juce::Label::ColourIds::textColourId, juce::Colours::white);
+    Theme::bindColour (zonesLabel, juce::Label::textColourId, [] { return Theme::text; });
     setupLabel (zoneMaxVoltage, "+5.00", 10.0, juce::Justification::centredLeft);
-    zoneMaxVoltage.setColour (juce::Label::ColourIds::textColourId, juce::Colours::white.darker (0.1f));
+    Theme::bindColour (zoneMaxVoltage, juce::Label::textColourId, [] { return Theme::text; });
+    zoneMaxVoltage.setFont (Theme::numericFont (zoneMaxVoltage.getFont ().getHeight ()));
 
     for (auto curZoneIndex { 0 }; curZoneIndex < 8; ++curZoneIndex)
     {
@@ -75,7 +75,7 @@ ChannelEditor::ChannelEditor ()
         const auto before { channelTree.createCopy () };
         juce::PopupMenu menu;
         menu.addItem (1, "Purge this zone...", channelProperties.getChannelMode () != ChannelProperties::ChannelMode::stereoRight && zoneProperties[index].getSample ().isNotEmpty ());
-        // Keep construction outside the nested capture for MSVC compatibility.
+        // The menu can outlive this editor; resolve its lifetime before acting.
         const auto safe { juce::Component::SafePointer<ChannelEditor> (this) };
         menu.showMenuAsync ({}, [safe, index, channelTree, before] (int choice)
         {
@@ -124,7 +124,8 @@ ChannelEditor::ChannelEditor ()
         defaultZoneProperties.wrap (defaultChannelProperties.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
     }
 
-    toolsButton.setButtonText ("TOOLS");
+    toolsButton.setButtonText ("Channel tools");
+    toolsButton.setComponentID ("channelTools");
     toolsButton.setTooltip ("Channel Tools");
     toolsButton.onClick = [this] ()
     {
@@ -179,6 +180,12 @@ ChannelEditor::ChannelEditor ()
     };
     for (auto index { 0 }; index < 8; ++index)
     {
+        zoneEditors[index].createBoundaryAdjustmentMenu = [this, index] (int marker)
+        {
+            // Commands always belong to the displayed source; a hidden zone
+            // must never borrow the current waveform's edit routing.
+            return zoneTabs.getCurrentTabIndex () == index ? sampleWaveformDisplay.boundaryAdjustmentMenu (marker) : juce::PopupMenu {};
+        };
         zoneEditors[index].onRegionSelected = [this, index] (bool loop)
         {
             if (zoneTabs.getCurrentTabIndex () == index) sampleWaveformDisplay.setLoopSelected (loop);
@@ -661,10 +668,9 @@ void ChannelEditor::setupChannelComponents ()
 
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
-        label.setColour (juce::Label::ColourIds::textColourId, textColor);
+        Theme::bindColour (label, juce::Label::textColourId, [] { return Theme::muted; });
         label.setFont (label.getFont ().withPointHeight (fontSize));
         label.setText (text, juce::NotificationType::dontSendNotification);
         addAndMakeVisible (label);
@@ -673,7 +679,7 @@ void ChannelEditor::setupChannelComponents ()
     {
         setupLabel (label, text, kLargeLabelSize, juce::Justification::centredLeft);
         label.setFont (label.getFont ().boldened ());
-        label.setColour (juce::Label::textColourId, Theme::accent.interpolatedWith (Theme::muted, 0.35f));
+        Theme::bindColour (label, juce::Label::textColourId, [] { return Theme::accent.interpolatedWith (Theme::muted, 0.35f); });
     };
     auto setupTextEditor = [this, &parameterToolTipData] (juce::TextEditor& textEditor, juce::Justification justification, int maxLen, juce::String validInputCharacters,
                                                           juce::String parameterName)
@@ -702,7 +708,7 @@ void ChannelEditor::setupChannelComponents ()
     {
         textButton.setButtonText (text);
         textButton.setClickingTogglesState (true);
-        textButton.setColour (juce::TextButton::ColourIds::buttonOnColourId, textButton.findColour (juce::TextButton::ColourIds::buttonOnColourId).brighter (0.5));
+        Theme::bindColour (textButton, juce::TextButton::buttonOnColourId, [] { return Theme::accent.darker (0.35f); });
         textButton.setTooltip (parameterToolTipData.getToolTip ("Channel", parameterName));
         textButton.onClick = onClickCallback;
         addAndMakeVisible (textButton);
@@ -2338,8 +2344,7 @@ void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree u
         zoneEditor.copyToNext = [this, zoneIndex] (bool continueSlice) { copyToNextZone (zoneIndex, continueSlice); };
         zoneEditor.displayToolsMenu = [this] (int zoneIndex)
         {
-            auto* popupMenuLnF { new juce::LookAndFeel_V4 };
-            popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+            auto* popupMenuLnF { new ModernLookAndFeel };
             juce::PopupMenu toolsMenu;
             toolsMenu.setLookAndFeel (popupMenuLnF);
             toolsMenu.addSectionHeader ("Zone " + juce::String (zoneProperties [zoneIndex].getId ()));
@@ -2539,14 +2544,6 @@ void ChannelEditor::setupChannelPropertiesCallbacks ()
 void ChannelEditor::checkStereoRightOverlay ()
 {
     const auto isStereoRightMode { channelProperties.getChannelMode () == ChannelProperties::ChannelMode::stereoRight };
-    if (isStereoRightMode && waveformExpanded)
-    {
-        // A newly paired right channel must not hide its editable Pan behind
-        // an expanded waveform whose close button is about to be disabled.
-        waveformExpanded = false;
-        sampleWaveformDisplay.setExpanded (false);
-        resized ();
-    }
     stereoRightTransparantOverly.setVisible (isStereoRightMode);
 
     aliasingTextEditor.setEnabled (! isStereoRightMode);
@@ -2605,7 +2602,7 @@ void ChannelEditor::checkStereoRightOverlay ()
     zonesCVComboBox.setEnabled (! isStereoRightMode);
     zonesRTComboBox.setEnabled (! isStereoRightMode);
     arEnvelopeComponent.setEnabled (! isStereoRightMode);
-    sampleWaveformDisplay.setEnabled (! isStereoRightMode);
+    sampleWaveformDisplay.setReadOnly (isStereoRightMode);
     // The parent offers only the safe pair-aware Default action on the R side.
     toolsButton.setEnabled (true);
     for (auto zoneIndex { 0 }; zoneIndex < 8; ++zoneIndex)
@@ -2628,7 +2625,7 @@ void ChannelEditor::paint ([[maybe_unused]] juce::Graphics& g)
     zoneMaxVoltageBounds = zoneMaxVoltageBounds.withX (zoneMaxVoltageBounds.getX () - 1).withY (zoneMaxVoltageBounds.getY () - 2).withHeight (zoneMaxVoltageBounds.getHeight () + 6).withTrimmedRight (5);
     g.setColour (zoneTabs.getTabBackgroundColour (0).darker (0.2f));
     g.fillRoundedRectangle (zoneMaxVoltageBounds.toFloat (), 2.0f);
-    g.setColour (juce::Colours::white.darker (0.2f));
+    g.setColour (Theme::border);
     g.drawRoundedRectangle (zoneMaxVoltageBounds.toFloat (), 1.5f, 0.4f);
 }
 
@@ -2881,7 +2878,7 @@ void ChannelEditor::resized ()
     stereoRightTransparantOverly.setBounds (getLocalBounds ());
 
     jassert (displayToolsMenu != nullptr);
-    toolsButton.setBounds (5, getHeight () - 5 - 20, 40, 20);
+    toolsButton.setBounds (5, getHeight () - 5 - 20, 108, 20);
 
     // layout the Zones section. ie. the tabs and the channel level controls
     auto zoneColumn { getLocalBounds ().removeFromRight (236) }; // preserve the zone editor's width
@@ -2924,6 +2921,7 @@ void ChannelEditor::resized ()
         activeAreas.add (channelModeLabel.getBounds ().getUnion (channelModeComboBox.getBounds ()).expanded (2));
     }
     activeAreas.add (toolsButton.getBounds ().expanded (2));
+    activeAreas.add (sampleWaveformDisplay.getBounds ());
     stereoRightTransparantOverly.setUndimmedAreas (std::move (activeAreas));
 }
 

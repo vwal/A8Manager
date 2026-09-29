@@ -37,7 +37,7 @@ files may be useful independently and are not automatically deleted.
 **CV and audio must use separate channels**, though they may coexist on different
 channels of one preset. This includes every zone, not just the selected zone.
 Even replacing the only zone with the opposite content type requires purging
-that channel first. In Samples, use the channel's **TOOLS → Purge this channel...**
+that channel first. In Samples, use **Channel tools → Purge this channel...**
 or right-click its CH tab, then confirm. This resets all eight zones and channel
 settings, not the WAV/recipe files. A stereo pair is purged together and becomes
 two independent Master channels. Click **SAVE** to keep the preset change.
@@ -80,14 +80,14 @@ add to sample RAM; unrelated or malformed JSON/text files still get warnings.
 
 ## Recalling and editing a saved design
 
-- In **Samples**, select the channel and zone, then choose **TOOLS → Edit selected
+- In **Samples**, select the channel and zone, then choose **Preset tools → Edit selected
   waveform in designer...**.
 - In the designer, choose an occupied **Target channel / Target zone** and click
   **Recall assigned...**.
 - Or use **Load recipe / WAV...** to select a package's `design.json`, an assigned
   design's uniquely named `.design.json`, or its generated WAV directly.
 
-The Samples TOOLS command is greyed out unless the selected zone contains a
+The Samples **Preset tools** command is greyed out unless the selected zone contains a
 recognized generated WAV with a valid associated recipe in the current folder.
 Ordinary samples, empty zones and missing/invalid companion files cannot be
 recalled this way. Any voice in a generated bank can enable the command.

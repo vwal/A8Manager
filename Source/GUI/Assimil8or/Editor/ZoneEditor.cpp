@@ -32,16 +32,16 @@ ZoneEditor::ZoneEditor ()
 
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
-        label.setColour (juce::Label::ColourIds::textColourId, textColor);
+        Theme::bindColour (label, juce::Label::textColourId, [] { return Theme::muted; });
         label.setFont (label.getFont ().withHeight (fontSize));
         label.setText (text, juce::NotificationType::dontSendNotification);
         addAndMakeVisible (label);
     };
 
-    toolsButton.setButtonText ("TOOLS");
+    toolsButton.setButtonText ("Zone tools");
+    toolsButton.setComponentID ("zoneTools");
     toolsButton.setTooltip ("Zone Tools");
     toolsButton.onClick = [this] ()
     {
@@ -58,6 +58,11 @@ ZoneEditor::ZoneEditor ()
     updateNextButtons ();
 
     addAndMakeVisible (loopPointsView);
+    loopPointsView.onContextMenu = [this] (bool start)
+    {
+        auto menu { getLoopPointsMenu (start) };
+        if (menu.getNumItems () > 0) menu.showMenuAsync ({});
+    };
 
     setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector::SamplePoints, true);
 
@@ -97,7 +102,7 @@ ZoneEditor::ZoneEditor ()
     oneShotPlayButton.setTooltip ("Plays the currently selected SOURCE in one shot mode");
     setupPlayButton (oneShotPlayButton, "ONCE", AudioPlayerProperties::PlayState::play);
     setupLabel (cvAuditionNotice, "CV sample\nSpeaker audition disabled", 10.0f, juce::Justification::centred);
-    cvAuditionNotice.setColour (juce::Label::textColourId, juce::Colour (0xffffc472));
+    Theme::bindColour (cvAuditionNotice, juce::Label::textColourId, [] { return Theme::warning; });
     cvAuditionNotice.setTooltip ("This sample or its stereo partner is marked as control voltage (CV). Speaker/headphone audition is blocked. The waveform and preset remain editable for Assimil8or hardware.");
     cvAuditionNotice.setVisible (false);
     setupZoneComponents ();
@@ -109,8 +114,8 @@ ZoneEditor::ZoneEditor ()
         label->setTooltip ("Region length in minutes:seconds at this zone's PITCH OFFSET; excludes audition speed, Keep pitch and channel pitch/CV.");
         addAndMakeVisible (label);
     }
-    sampleDurationLabel.setColour (juce::Label::textColourId, WaveformPresentation::markerColours[1]);
-    loopDurationLabel.setColour (juce::Label::textColourId, WaveformPresentation::markerColours[3]);
+    Theme::bindColour (sampleDurationLabel, juce::Label::textColourId, [] { return WaveformPresentation::markerColours[1]; });
+    Theme::bindColour (loopDurationLabel, juce::Label::textColourId, [] { return WaveformPresentation::markerColours[3]; });
     sampleDurationLabel.addMouseListener (&selectSamplePointsClickListener, false);
     loopDurationLabel.addMouseListener (&selectLoopPointsClickListener, false);
     setEditComponentsEnabled (false);
@@ -273,87 +278,23 @@ void ZoneEditor::updateDurations ()
 
 juce::PopupMenu ZoneEditor::getSampleAdjustMenu (SampleMarker marker)
 {
-    juce::PopupMenu adjustMenu;
-    juce::PopupMenu zeroCrossingMenu;
-    const auto source { zoneProperties.getValueTree () };
-    const auto before { source.createCopy () };
-    for (const auto right : { false, true })
-        zeroCrossingMenu.addItem (right ? "Right >>" : "Left  <<", true, false,
-            [safe = juce::Component::SafePointer<ZoneEditor> (this), source, before, marker, right] ()
-            {
-                if (safe != nullptr && safe->zoneProperties.getValueTree () == source && source.isEquivalentTo (before))
-                    safe->nudgeSampleMarker (marker, right);
-            });
-    adjustMenu.addSubMenu ("Zero Crossing", zeroCrossingMenu);
-    return adjustMenu;
+    return createBoundaryAdjustmentMenu ? createBoundaryAdjustmentMenu (static_cast<int> (marker)) : juce::PopupMenu {};
 }
 
-bool ZoneEditor::nudgeSampleMarker (SampleMarker marker, bool right)
+juce::PopupMenu ZoneEditor::getLoopPointsMenu (bool start)
 {
-    if (isStereoRightChannelMode || sampleProperties.getStatus () != SampleStatus::exists ||
-        sampleProperties.getAudioBufferPtr () == nullptr) return false;
-    const auto fileLength { std::min (sampleProperties.getLengthInSamples (),
-        static_cast<juce::int64> (sampleProperties.getAudioBufferPtr ()->getNumSamples ())) };
-    const auto loop { marker == SampleMarker::loopStart || marker == SampleMarker::loopEnd };
-    if (fileLength <= 0 || (loop && fileLength < 4)) return false;
-    const auto sampleStart { zoneProperties.getSampleStart ().value_or (0) };
-    const auto sampleEnd { zoneProperties.getSampleEnd ().value_or (fileLength) };
-    const auto loopStart { zoneProperties.getLoopStart ().value_or (0) };
-    const auto loopLength { zoneProperties.getLoopLength ().value_or (static_cast<double> (fileLength - loopStart)) };
-    if (! std::isfinite (loopLength)) return false;
-    auto minimum { juce::int64 { 0 } }, maximum { fileLength };
-    double position { 0.0 };
-    const auto endBoundary { marker == SampleMarker::sampleEnd || marker == SampleMarker::loopEnd };
-    switch (marker)
+    const auto marker { isLoopSelected () ? (start ? SampleMarker::loopStart : SampleMarker::loopEnd)
+                                        : (start ? SampleMarker::sampleStart : SampleMarker::sampleEnd) };
+    auto menu { getSampleAdjustMenu (marker) };
+    if (menu.getNumItems () > 0)
     {
-        case SampleMarker::sampleStart:
-            position = static_cast<double> (sampleStart);
-            maximum = std::clamp (sampleEnd - 1, juce::int64 { 0 }, fileLength - 1);
-            break;
-        case SampleMarker::sampleEnd:
-            position = static_cast<double> (sampleEnd);
-            minimum = std::clamp (sampleStart + 1, juce::int64 { 1 }, fileLength);
-            break;
-        case SampleMarker::loopStart:
-        {
-            position = static_cast<double> (loopStart);
-            const auto limit { treatLoopLengthAsEndInUi ? loopStart + loopLength - 4.0 : fileLength - loopLength };
-            maximum = static_cast<juce::int64> (std::floor (std::clamp (limit, 0.0, static_cast<double> (fileLength - 4))));
-            break;
-        }
-        case SampleMarker::loopEnd:
-            position = loopStart + loopLength;
-            minimum = std::clamp (loopStart + 4, juce::int64 { 4 }, fileLength);
-            break;
+        juce::PopupMenu titled;
+        titled.addSectionHeader (WaveformPresentation::markerNames[static_cast<size_t> (marker)]);
+        for (juce::PopupMenu::MenuItemIterator items (menu); items.next ();)
+            titled.addItem (items.getItem ());
+        return titled;
     }
-    const auto result { WaveformPresentation::zeroCrossing (*sampleProperties.getAudioBufferPtr (), zoneProperties.getSide (),
-        position, minimum, maximum, right, endBoundary) };
-    if (! result) return false;
-    setActiveSamplePoints (loop ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false);
-    switch (marker)
-    {
-        case SampleMarker::sampleStart:
-            zoneProperties.setSampleStart (*result == 0 ? -1 : *result, true);
-            break;
-        case SampleMarker::sampleEnd:
-            zoneProperties.setSampleEnd (*result == fileLength ? -1 : *result, true);
-            break;
-        case SampleMarker::loopStart:
-        {
-            // Match the waveform handle: End mode preserves the opposite end;
-            // Length mode preserves length, including an implicit EOF length.
-            const auto length { treatLoopLengthAsEndInUi ? loopStart + loopLength - *result : loopLength };
-            auto setStart = [&] () { zoneProperties.setLoopStart (*result == 0 ? -1 : *result, true); };
-            auto setLength = [&] () { zoneProperties.setLoopLength (length, true); };
-            if (*result >= loopStart) { setLength (); setStart (); }
-            else { setStart (); setLength (); }
-            break;
-        }
-        case SampleMarker::loopEnd:
-            zoneProperties.setLoopLength (*result == fileLength && loopStart == 0 ? -1.0 : static_cast<double> (*result - loopStart), true);
-            break;
-    }
-    return true;
+    return menu;
 }
 
 void ZoneEditor::setupZoneComponents ()
@@ -369,10 +310,9 @@ void ZoneEditor::setupZoneComponents ()
 
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { Theme::muted };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
-        label.setColour (juce::Label::ColourIds::textColourId, textColor);
+        Theme::bindColour (label, juce::Label::textColourId, [] { return Theme::muted; });
         label.setFont (label.getFont ().withHeight (fontSize));
         label.setText (text, juce::NotificationType::dontSendNotification);
         addAndMakeVisible (label);
@@ -391,8 +331,8 @@ void ZoneEditor::setupZoneComponents ()
     setupLabel (sampleNameLabel, "FILE", 15.0, juce::Justification::centredLeft);
 
     // SAMPLE FILE SELECTOR
-    sampleNameSelectLabel.setColour (juce::Label::ColourIds::textColourId, levelOffsetTextEditor.findColour (juce::TextEditor::ColourIds::textColourId));
-    sampleNameSelectLabel.setColour (juce::Label::ColourIds::backgroundColourId, levelOffsetTextEditor.findColour (juce::TextEditor::ColourIds::backgroundColourId));
+    Theme::bindColour (sampleNameSelectLabel, juce::Label::textColourId, [] { return Theme::text; });
+    Theme::bindColour (sampleNameSelectLabel, juce::Label::backgroundColourId, [] { return Theme::field; });
     sampleNameSelectLabel.setOutline (levelOffsetTextEditor.findColour (juce::TextEditor::ColourIds::outlineColourId));
     sampleNameSelectLabel.setBorderSize ({ 0, 2, 0, 0 });
     sampleNameSelectLabel.setDialogTitle ("Please select the Assimil8or Preset file you want to load...");
@@ -424,10 +364,10 @@ void ZoneEditor::setupZoneComponents ()
     // AUDIO FILE CHANNEL SELECT BUTTONS
     auto setupChannelSelectButton = [this] (juce::TextButton& channelSelectButton, juce::String buttonText, int side)
     {
-        channelSelectButton.setColour (juce::TextButton::ColourIds::buttonOnColourId, Theme::accent);
-        channelSelectButton.setColour (juce::TextButton::ColourIds::textColourOnId, Theme::field);
-        channelSelectButton.setColour (juce::TextButton::ColourIds::buttonColourId, Theme::field);
-        channelSelectButton.setColour (juce::TextButton::ColourIds::textColourOffId, Theme::text);
+        Theme::bindColour (channelSelectButton, juce::TextButton::buttonOnColourId, [] { return Theme::accent; });
+        Theme::bindColour (channelSelectButton, juce::TextButton::textColourOnId, [] { return Theme::field; });
+        Theme::bindColour (channelSelectButton, juce::TextButton::buttonColourId, [] { return Theme::field; });
+        Theme::bindColour (channelSelectButton, juce::TextButton::textColourOffId, [] { return Theme::text; });
         channelSelectButton.setButtonText (buttonText);
         channelSelectButton.setTooltip ("Use the " + juce::String (side == 0 ? "left" : "right") + " channel of this audio file for the zone");
         channelSelectButton.setEnabled (false);
@@ -741,7 +681,7 @@ void ZoneEditor::setupZoneComponents ()
     setupTextEditor (levelOffsetTextEditor, juce::Justification::centred, 0, "+-.0123456789", "LevelOffset");
     const std::array<juce::Label*, 4> markerLabels { &sampleStartLabel, &sampleEndLabel, &loopStartLabel, &loopLengthLabel };
     for (size_t marker { 0 }; marker < markerLabels.size (); ++marker)
-        markerLabels[marker]->setColour (juce::Label::textColourId, WaveformPresentation::markerColours[marker]);
+        Theme::bindColour (*markerLabels[marker], juce::Label::textColourId, [marker] { return WaveformPresentation::markerColours[marker]; });
 }
 
 void ZoneEditor::init (juce::ValueTree zonePropertiesVT, juce::ValueTree uneditedZonePropertiesVT, juce::ValueTree rootPropertiesVT)
@@ -1069,7 +1009,7 @@ void ZoneEditor::resized ()
     auto scaleWidth = [width] (float scaleAmount) { return static_cast<int> (width * scaleAmount); };
 
     jassert (displayToolsMenu != nullptr);
-    toolsButton.setBounds (getWidth () - 5 - 40, getHeight () - 5 - 20, 40, 20);
+    toolsButton.setBounds (getWidth () - 5 - 92, getHeight () - 5 - 20, 92, 20);
 
     const auto sampleNameLabelScale { 0.156f };
     const auto sampleNameInputScale { 1.f - sampleNameLabelScale };
@@ -1324,7 +1264,7 @@ void ZoneEditor::pitchOffsetUiChanged (double pitchOffset)
 void ZoneEditor::updateSampleFileInfo (juce::String sample)
 {
     jassert (! sample.isEmpty ());
-    auto textColor { juce::Colours::white };
+    auto textColor { Theme::text };
     if (sampleProperties.getStatus () == SampleStatus::exists)
     {
         if (! zoneProperties.getSampleEnd ().has_value ())
@@ -1334,10 +1274,11 @@ void ZoneEditor::updateSampleFileInfo (juce::String sample)
     }
     else
     {
-        textColor = juce::Colours::red;
+        textColor = Theme::error;
     }
     loopPointsView.repaint ();
-    sampleNameSelectLabel.setColour (juce::Label::ColourIds::textColourId, textColor);
+    const auto valid { textColor != Theme::error };
+    Theme::bindColour (sampleNameSelectLabel, juce::Label::textColourId, [valid] { return valid ? Theme::text : Theme::error; });
 }
 
 void ZoneEditor::updateSamplePositionInfo ()

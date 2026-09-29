@@ -9,7 +9,6 @@ LocateFileComponent::LocateFileComponent (std::vector<juce::File> theMissingFile
     locatedFilesCallback = theLocatedFilesCallback;
     cancelCallback = theCancelCallback;
 
-    missingFilesLabel.setColour (juce::Label::ColourIds::textColourId, juce::Colours::black);
     missingFilesLabel.setText ("MISSING FILES", juce::NotificationType::dontSendNotification);
     addAndMakeVisible (missingFilesLabel);
     openButton.onClick = [this] ()

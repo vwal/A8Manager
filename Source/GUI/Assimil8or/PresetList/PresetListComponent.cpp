@@ -309,7 +309,7 @@ void PresetListComponent::paintListBoxItem (int row, juce::Graphics& g, int widt
         else
         {
             rowColor = Theme::field;
-            textColor = juce::Colours::whitesmoke;
+            textColor = Theme::text;
         }
         auto [presetNumber, thisPresetExists, presetName] { presetInfoList [row] };
         if (thisPresetExists)
@@ -470,8 +470,7 @@ void PresetListComponent::listBoxItemClicked (int row, [[maybe_unused]] const ju
         if (! thisPresetExists)
             presetName = "(preset)";
 
-        auto* popupMenuLnF { new juce::LookAndFeel_V4 };
-        popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+        auto* popupMenuLnF { new ModernLookAndFeel };
         juce::PopupMenu pm;
         pm.setLookAndFeel (popupMenuLnF);
         pm.addSectionHeader (juce::String (presetNumber) + " - " + presetName);

@@ -137,6 +137,7 @@ private:
     };
 
     void configureAudioDevice (juce::String deviceName);
+    void publishOutputDevice ();
     void handlePlayState (AudioPlayerProperties::PlayState playState);
     void handleAuditionRate (double rate);
     void handlePreservePitch (bool preserve);

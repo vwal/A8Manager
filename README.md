@@ -36,7 +36,9 @@ including its WAV final-padding and CoreAudio fixes:
 git submodule update --init --recursive
 ```
 
-Then configure and build with CMake 3.24 or newer:
+Then configure and build with CMake 3.24 or newer and a C++20-capable compiler.
+CMake requires standard C++20 (without compiler extensions) for the application
+and regression tests:
 
 ```
 cmake -B cmake_build

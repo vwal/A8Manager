@@ -242,7 +242,7 @@ void FileViewComponent::paintListBoxItem (int row, juce::Graphics& g, int width,
     if (rowIsSelected)
         lastSelectedRow = row;
 
-    juce::Colour textColor { juce::Colours::whitesmoke };
+    juce::Colour textColor { Theme::text };
     juce::String fileListItem;
     if (! isRootFolder && row == 0)
     {
@@ -342,8 +342,7 @@ void FileViewComponent::listBoxItemClicked (int row, [[maybe_unused]] const juce
         if (isEntryAFolder ())
         {
             auto directoryEntry { getEntryFile () };
-            auto* popupMenuLnF { new juce::LookAndFeel_V4 };
-            popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+            auto* popupMenuLnF { new ModernLookAndFeel };
             juce::PopupMenu pm;
             pm.setLookAndFeel (popupMenuLnF);
             pm.addSectionHeader (directoryEntry.getFileName ());
@@ -371,8 +370,7 @@ void FileViewComponent::listBoxItemClicked (int row, [[maybe_unused]] const juce
         else if (getEntryType () == audioFileTypeId)
         {
             auto directoryEntry { getEntryFile () };
-            auto* popupMenuLnF { new juce::LookAndFeel_V4 };
-            popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+            auto* popupMenuLnF { new ModernLookAndFeel };
             juce::PopupMenu pm;
             pm.setLookAndFeel (popupMenuLnF);
             pm.addSectionHeader (directoryEntry.getFileName ());

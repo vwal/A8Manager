@@ -2,7 +2,7 @@
 
 #include <JuceHeader.h>
 #include "oolib/GUI/CustomComboBox.h"
-#include "oolib/GUI/NoArrowComboBoxLnF.h"
+#include "../../ModernTheme.h"
 
 class CvInputComboBox : public juce::Component
 {
@@ -28,7 +28,7 @@ public:
 private:
     CustomComboBox cvInputComboBox;
     int startingIndex { 0 };
-    NoArrowComboBoxLnF noArrowComboBoxLnF;
+    ModernNoArrowComboBoxLookAndFeel noArrowComboBoxLnF;
 
     void resized () override;
 };

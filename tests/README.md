@@ -23,10 +23,33 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers thirty-three tests, with 60- or 90-second timeouts. Use `ctest --test-dir
+CTest registers thirty-four tests, with 60- or 90-second timeouts. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
+
+Both test executables use the same required C++20 dialect as the application.
+EditorRefinementRegression checks the fixed header layout from the minimum
+800-pixel window width through wide layouts, including non-overlapping Audio
+Settings, UI size, Quick help, live output status, appearance and workspace controls. StereoChannelUiRegression
+and EditorRefinementRegression also verify the scope-specific tool-button labels.
+
+**AppearanceRegression** checks Dark/Light switching, saved-preference migration
+and XML round-trip, text/marker contrast, live label and compact-combo palettes,
+validation/error and disabled numeric colours, monospaced endpoint/slider fields,
+unchanged numeric values and safe handling of destroyed colour-binding targets.
+EditorRefinementRegression also checks real resized zone endpoint fonts and can
+render dark/light zone and envelope artifacts. WaveformWorkspaceRegression can
+render the light designer. Set `A8MANAGER_TEST_ARTIFACTS` to a temporary directory.
+
+**AudioAuditRegression** checks all four mini END/START and numeric boundary-menu
+routes, directional nudges/matches, >50 ms approval/cancellation, stale menu
+rejection and unrestricted intentional numeric entry. **WaveformWorkflowRegression**
+checks that read-only waveform navigation cannot edit markers, select audition
+regions, start simulation, or commit an older pending confirmation.
+**WaveformAuditionRoutingRegression** also checks live-output property
+notifications and clearing a stale device name without opening an audio device;
+physical hot-plug remains a manual integration check.
 
 - **ParserCvRegression:** unknown parameters at global, preset, channel, and zone
   scopes produce diagnostics without losing the scope of subsequent known
@@ -211,8 +234,8 @@ oversized batches and missing files.
 **StereoChannelUiRegression** exercises the real channel editors and parent
 callbacks: paired zone selection, independent right-channel pan/CV controls,
 safe right-channel Tools access (Default and Purge) and pair-aware Default while
-preserving zone trees and channel IDs. It covers collapsing a previously expanded waveform when
-its channel becomes Stereo Right, stale/reset callbacks after edits/destruction,
+preserving zone trees and channel IDs. It covers keeping an expanded waveform navigable
+when its channel becomes Stereo Right while blocking independent edits, stale/reset callbacks after edits/destruction,
 and Channel Revert restoring the correct saved channel. Genuine exported audio
 and assigned-bank fixtures verify the actual Samples TOOLS recall item's enabled
 state and selected channel/zone dispatch. Ordinary, empty, missing and nonflat

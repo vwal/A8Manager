@@ -172,19 +172,19 @@ public:
 #define COLORIZE_VOLTAGE_VALUES 1
 #if COLORIZE_VOLTAGE_VALUES
             if (auto minVoltage { minVoltageString.getDoubleValue () }; minVoltage > 0.01)
-                col = juce::Colours::white.darker (0.1f);
+                col = Theme::text;
             else if (minVoltage <= 0.01 && minVoltage >= -0.01)
-                col = juce::Colours::lightgrey.darker (0.3f);
+                col = Theme::muted;
             else
                 col = Theme::muted;
 #else
             col = kZeroVoltageColor;
 #endif
             const auto minVoltageBounds { textArea.removeFromTop (rowHeight) };
-            g.setFont (juce::FontOptions (juce::jmin (12.0f, rowHeight * 0.85f)));
+            g.setFont (Theme::numericFont (juce::jmin (12.0f, rowHeight * 0.85f)));
             g.setColour (col);
             g.drawText (minVoltageString, minVoltageBounds, juce::Justification::centred, false);
-            g.setFont (juce::FontOptions (juce::jmin (11.0f, rowHeight * 0.85f)));
+            g.setFont (Theme::numericFont (juce::jmin (11.0f, rowHeight * 0.85f)));
             g.setColour (Theme::accent.withMultipliedAlpha (alpha));
             g.drawFittedText (accessVoltageString, textArea.toNearestInt (), juce::Justification::centred, 1);
         }
@@ -351,7 +351,7 @@ private:
     AREnvelopeComponent arEnvelopeComponent;
     AREnvelopeProperties arEnvelopeProperties;
 
-    NoArrowComboBoxLnF noArrowComboBoxLnF;
+    ModernNoArrowComboBoxLookAndFeel noArrowComboBoxLnF;
     ZonesTabbedLookAndFeel zonesTabbedLookAndFeel;
 
     WaveformDisplay sampleWaveformDisplay;

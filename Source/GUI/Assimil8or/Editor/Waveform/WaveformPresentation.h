@@ -3,13 +3,16 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include "../../../ModernTheme.h"
 
 namespace WaveformPresentation
 {
     // Shared by the waveform, its handles/labels, and the zone parameter keys.
-    inline const std::array<juce::Colour, 4> markerColours {
-        juce::Colour (0xffff8585), juce::Colour (0xff8fcaff),
-        juce::Colour (0xffffc879), juce::Colour (0xfff39db5) };
+    struct MarkerColours
+    {
+        juce::Colour operator[] (size_t index) const { return Theme::markerColour (index); }
+    };
+    inline const MarkerColours markerColours;
     inline const std::array<juce::String, 4> markerNames { "Sample Start", "Sample End", "Loop Start", "Loop End" };
 
     inline juce::String samples (double value)

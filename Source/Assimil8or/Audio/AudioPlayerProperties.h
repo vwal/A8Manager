@@ -26,6 +26,9 @@ public:
     void setAuditionRate (double rate, bool includeSelfCallback);
     void setPreservePitch (bool preserve, bool includeSelfCallback);
     void showConfigDialog (bool includeSelfCallback);
+    // Actual active computer output, not the last saved device configuration.
+    void setOutputDeviceName (const juce::String& name, bool includeSelfCallback);
+    juce::String getOutputDeviceName ();
 
     PlayState getPlayState ();
     std::tuple<int, int> getSampleSource ();
@@ -39,6 +42,7 @@ public:
     std::function<void (std::tuple<int, int> channelAndZoneIndecies)> onSampleSourceChanged;
     std::function<void (SamplePointsSelector samplePointsSelector)> onSamplePointsSelectorChanged;
     std::function<void ()> onShowConfigDialog;
+    std::function<void (juce::String)> onOutputDeviceNameChange;
     std::function<void (double)> onPlaybackPositionChange;
     std::function<void (SimulationPhase)> onSimulationPhaseChange;
     std::function<void (double)> onAuditionRateChange;
@@ -53,6 +57,7 @@ public:
     static inline const juce::Identifier SimulationPhasePropertyId      { "simulationPhase" };
     static inline const juce::Identifier AuditionRatePropertyId         { "auditionRate" };
     static inline const juce::Identifier PreservePitchPropertyId        { "preservePitch" };
+    static inline const juce::Identifier OutputDeviceNamePropertyId     { "outputDeviceName" };
 
     void initValueTree ();
     void processValueTree () {}

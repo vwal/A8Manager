@@ -2,6 +2,7 @@
 #include "GUI/Assimil8or/Editor/ZoneEditor.h"
 #include "GUI/Assimil8or/Editor/Waveform/WaveformDisplay.h"
 #include "Assimil8or/Audio/AudioPlayer.h"
+#include "oolib/Properties/RuntimeRootProperties.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -163,26 +164,128 @@ struct AudioAuditTestAccess
         editor.zoneProperties.setLoopStart (0, false);
         editor.zoneProperties.setLoopLength (12.0, false);
         editor.zoneProperties.setSide (0, false);
+
+        juce::ValueTree root { "Root" };
+        RuntimeRootProperties runtime (root, RuntimeRootProperties::WrapperType::owner, RuntimeRootProperties::EnableCallbacks::no);
+        SampleManagerProperties manager (runtime.getValueTree (), SampleManagerProperties::WrapperType::owner, SampleManagerProperties::EnableCallbacks::no);
+        auto channel { ChannelProperties::create (1) };
+        channel.addChild (editor.zoneProperties.getValueTree (), -1, nullptr);
+        editor.parentChannelProperties.wrap (channel, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        editor.parentChannelProperties.setLoopLengthIsEnd (true, false);
+        auto sample { manager.getSamplePropertiesVT (0, 0) };
+        sample.copyPropertiesFrom (editor.sampleProperties.getValueTree (), nullptr);
+        editor.sampleProperties.wrap (sample, SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        editor.sampleProperties.setNumChannels (2, false);
+        WaveformDisplay view;
+        view.setSize (600, 200);
+        view.init (channel, root);
+        view.onRegionSelected = [&] (bool loop) { editor.selectLoop (loop); };
+        editor.createBoundaryAdjustmentMenu = [&] (int marker) { return view.boundaryAdjustmentMenu (marker); };
         using Marker = ZoneEditor::SampleMarker;
-        check (editor.nudgeSampleMarker (Marker::sampleStart, true) && editor.zoneProperties.getSampleStart () == 4,
+        auto invoke = [] (const juce::PopupMenu& menu, int id)
+        {
+            for (juce::PopupMenu::MenuItemIterator items (menu, true); items.next ();)
+            {
+                const auto& item { items.getItem () };
+                if (item.itemID == id && item.isEnabled && item.action) { item.action (); return true; }
+            }
+            return false;
+        };
+        auto nudge = [&] (Marker marker, bool right)
+        {
+            const auto before { editor.zoneProperties.getValueTree ().createCopy () };
+            invoke (editor.getSampleAdjustMenu (marker), 20 + static_cast<int> (marker) * 2 + (right ? 1 : 0));
+            return ! before.isEquivalentTo (editor.zoneProperties.getValueTree ());
+        };
+        check (nudge (Marker::sampleStart, true) && editor.zoneProperties.getSampleStart () == 4,
                "Field start nudge selects quieter crossing frame");
-        check (editor.nudgeSampleMarker (Marker::sampleEnd, false) && editor.zoneProperties.getSampleEnd () == 5,
+        check (nudge (Marker::sampleEnd, false) && editor.zoneProperties.getSampleEnd () == 5,
                "Field end nudge preserves quieter frame before exclusive boundary");
-        check (editor.nudgeSampleMarker (Marker::sampleEnd, true) && ! editor.zoneProperties.getSampleEnd (),
+        check (nudge (Marker::sampleEnd, true) && ! editor.zoneProperties.getSampleEnd (),
                "Field end can nudge to final exact zero at EOF");
-        check (editor.nudgeSampleMarker (Marker::loopStart, true) && editor.zoneProperties.getLoopStart () == 4 &&
+        check (nudge (Marker::loopStart, true) && editor.zoneProperties.getLoopStart () == 4 &&
                editor.zoneProperties.getLoopLength () == 8.0 && editor.isLoopSelected (), "End-mode start nudge keeps loop end fixed and selects LOOP");
         editor.setLoopLengthIsEnd (false);
+        editor.parentChannelProperties.setLoopLengthIsEnd (false, true);
         editor.zoneProperties.setLoopStart (0, false);
         editor.zoneProperties.setLoopLength (8.0, false);
-        check (editor.nudgeSampleMarker (Marker::loopStart, true) && editor.zoneProperties.getLoopStart () == 4 &&
+        check (nudge (Marker::loopStart, true) && editor.zoneProperties.getLoopStart () == 4 &&
                editor.zoneProperties.getLoopLength () == 8.0, "Length-mode start nudge retains loop length");
         editor.zoneProperties.setSide (1, false);
-        check (! editor.nudgeSampleMarker (Marker::loopEnd, false), "Field nudge respects selected stereo side with no crossing");
+        check (! nudge (Marker::loopEnd, false), "Field nudge respects selected stereo side with no crossing");
         editor.zoneProperties.setSide (0, false);
-        check (! editor.nudgeSampleMarker (Marker::loopEnd, false), "Loop end nudge cannot violate four-frame minimum");
+        check (! nudge (Marker::loopEnd, false), "Loop end nudge cannot violate four-frame minimum");
         editor.sampleProperties.setStatus (SampleStatus::doesNotExist, false);
-        check (! editor.nudgeSampleMarker (Marker::sampleStart, true), "Field nudge safely ignores unavailable audio");
+        check (! nudge (Marker::sampleStart, true), "Field nudge safely ignores unavailable audio");
+
+        auto previewCallback { editor.loopPointsView.onContextMenu };
+        juce::Array<bool> clickedStarts;
+        editor.loopPointsView.onContextMenu = [&] (bool start) { clickedStarts.add (start); };
+        editor.loopPointsView.setSize (200, 80);
+        for (const auto flags : { juce::ModifierKeys::leftButtonModifier, juce::ModifierKeys::rightButtonModifier })
+            for (const auto x : { 20.0f, 180.0f })
+            {
+                const juce::Point<float> point { x, 30.0f };
+                const juce::MouseEvent event { juce::Desktop::getInstance ().getMainMouseSource (), point, juce::ModifierKeys (flags),
+                    1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &editor.loopPointsView, &editor.loopPointsView,
+                    juce::Time::getCurrentTime (), point, juce::Time::getCurrentTime (), 1, false };
+                static_cast<juce::Component&> (editor.loopPointsView).mouseDown (event);
+            }
+        check (clickedStarts == juce::Array<bool> { false, true }, "Only right-click opens the preview menu: left half END, right half START");
+        editor.loopPointsView.onContextMenu = std::move (previewCallback);
+
+        // Every mini-preview half addresses the correct absolute boundary,
+        // including LOOP LENGTH mode, where the right-half action is still Start.
+        for (const auto loop : { false, true })
+        {
+            editor.selectLoop (loop);
+            for (const auto start : { false, true })
+            {
+                const auto menu { editor.getLoopPointsMenu (start) };
+                const auto marker { (loop ? 2 : 0) + (start ? 0 : 1) };
+                juce::PopupMenu::MenuItemIterator items (menu, true);
+                auto commands { 0 };
+                while (items.next ())
+                {
+                    const auto id { items.getItem ().itemID };
+                    if (id == 20 + marker * 2 || id == 21 + marker * 2 || id == 40 + marker * 2 || id == 41 + marker * 2) ++commands;
+                }
+                check (commands == 4, "Each END/START preview half exposes both directions of zero crossing and matching for its selected region");
+            }
+        }
+
+        // A distant zero from a numeric-field menu follows the same approval
+        // policy as a waveform action; typing a numeric endpoint stays direct.
+        audio.setSize (2, 10000);
+        for (auto frame { 0 }; frame < 10000; ++frame) audio.setSample (0, frame, frame == 8000 ? 0.0f : 0.5f);
+        editor.sampleProperties.setLengthInSamples (10000, false);
+        editor.sampleProperties.setStatus (SampleStatus::exists, false);
+        editor.zoneProperties.setSampleStart (0, false);
+        editor.zoneProperties.setSampleEnd (5000, false);
+        auto prompts { 0 };
+        std::function<void (bool)> answer;
+        view.confirmBoundaryMatch = [&] (const juce::String&, std::function<void (bool)> callback) { ++prompts; answer = std::move (callback); };
+        check (! nudge (Marker::sampleEnd, true) && prompts == 1 && answer, "Distant numeric-menu nudge waits for confirmation");
+        answer (false);
+        check (editor.zoneProperties.getSampleEnd () == 5000, "Cancelled numeric-menu nudge leaves the endpoint unchanged");
+        editor.selectLoop (false);
+        invoke (editor.getLoopPointsMenu (false), 23);
+        check (prompts == 2 && editor.zoneProperties.getSampleEnd () == 5000, "Mini-preview nudge uses the same confirmation path");
+        answer (true);
+        check (editor.zoneProperties.getSampleEnd () == 8001, "Approved preview end nudge includes the quiet frame before the exclusive boundary");
+        editor.sampleEndTextEditor.setValue (4000);
+        check (prompts == 2 && editor.zoneProperties.getSampleEnd () == 4000, "An intentional numeric endpoint edit never invokes automated-move confirmation");
+
+        const auto staleMenu { editor.getSampleAdjustMenu (Marker::sampleEnd) };
+        editor.zoneProperties.setSampleEnd (4500, false);
+        invoke (staleMenu, 23);
+        check (prompts == 2 && editor.zoneProperties.getSampleEnd () == 4500, "A field menu opened before a marker edit cannot act on changed state");
+        for (auto frame { 0 }; frame < 10000; ++frame) audio.setSample (0, frame, 0.6f);
+        audio.setSample (0, 0, -0.25f);
+        audio.setSample (0, 7200, -0.25f);
+        invoke (editor.getLoopPointsMenu (false), 43);
+        check (prompts == 3 && editor.zoneProperties.getSampleEnd () == 4500, "Mini-preview opposite-boundary matching also confirms moves beyond 50 ms");
+        answer (false);
     }
 };
 

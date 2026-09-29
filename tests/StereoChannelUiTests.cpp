@@ -107,6 +107,16 @@ struct StereoChannelUiTestAccess
         auto& leftProperties { editor->channelProperties[0] };
         auto& rightProperties { editor->channelProperties[1] };
 
+        auto checkTools = [&] (juce::Component& component, const char* id, const char* caption, int minimumWidth)
+        {
+            auto* button { dynamic_cast<juce::TextButton*> (component.findChildWithID (id)) };
+            check (button != nullptr && button->getButtonText () == caption, "Tool buttons identify their preset/channel scope");
+            check (button->getWidth () >= minimumWidth && component.getLocalBounds ().contains (button->getBounds ()),
+                   "Renamed tool buttons remain readable and inside their editor");
+        };
+        checkTools (*editor, "presetTools", "Preset tools", 100);
+        checkTools (left, "channelTools", "Channel tools", 108);
+
         editor->channelTabs.setCurrentTabIndex (0);
         check (std::abs (editor->getSelectedDuration (0).value_or (-1.0) - 1024.0 / 48000.0) < 1.0e-9,
                "Designer gets the loaded file duration through the real editor");
@@ -251,7 +261,10 @@ struct StereoChannelUiTestAccess
         right.sampleWaveformDisplay.onExpandRequested ();
         check (right.waveformExpanded, "Independent channel can expand its waveform before pairing");
         rightProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, true);
-        check (! right.waveformExpanded && right.panTextEditor.isVisible (), "Entering Stereo Right restores access to Pan instead of trapping an expanded waveform");
+        check (right.waveformExpanded && right.sampleWaveformDisplay.isEnabled () && right.sampleWaveformDisplay.isReadOnly (),
+               "Entering Stereo Right preserves the expanded viewer and keeps its close control usable");
+        right.sampleWaveformDisplay.onExpandRequested ();
+        check (! right.waveformExpanded && right.panTextEditor.isVisible (), "Read-only expanded waveform can close to restore Pan controls");
         check (left.getSelectedZoneIndex () == 4 && right.getSelectedZoneIndex () == 4, "Forming a pair adopts the currently selected right channel's zone");
         leftProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, true);
         right.zoneTabs.setCurrentTabIndex (7);
@@ -262,7 +275,8 @@ struct StereoChannelUiTestAccess
         check (editor->channelEditors[6].getSelectedZoneIndex () == 5, "Channel eight safely resolves a preceding Link-mode controller");
 
         check (right.panTextEditor.isEnabled () && right.panModComboBox.isEnabled () && right.panModTextEditor.isEnabled (), "Stereo Right exposes Pan and modulation controls");
-        check (! right.pitchTextEditor.isEnabled () && ! right.mixLevelTextEditor.isEnabled () && ! right.sampleWaveformDisplay.isEnabled (), "Stereo Right keeps inherited parameters read-only");
+        check (! right.pitchTextEditor.isEnabled () && ! right.mixLevelTextEditor.isEnabled () && right.sampleWaveformDisplay.isEnabled ()
+               && right.sampleWaveformDisplay.isReadOnly (), "Stereo Right keeps inherited parameters read-only without disabling waveform navigation");
         check (right.toolsButton.isEnabled (), "Stereo Right can open its safe Default menu");
         right.panTextEditor.setValue (0.45);
         right.panModComboBox.setSelectedItemText ("1A");
@@ -276,6 +290,8 @@ struct StereoChannelUiTestAccess
                && overlay.getPixelAt (right.panModComboBox.getBounds ().getCentreX (), right.panModComboBox.getBounds ().getCentreY ()).getAlpha () == 0,
                "Right Pan and CV controls are visibly excluded from the disabled overlay");
         check (overlay.getPixelAt (right.pitchTextEditor.getBounds ().getCentreX (), right.pitchTextEditor.getBounds ().getCentreY ()).getAlpha () > 0, "Inherited pitch remains visually dimmed");
+        check (overlay.getPixelAt (right.sampleWaveformDisplay.getBounds ().getCentreX (), right.sampleWaveformDisplay.getBounds ().getCentreY ()).getAlpha () == 0,
+               "Navigable stereo-right waveform is excluded from the disabled overlay");
         const auto artifacts { juce::SystemStats::getEnvironmentVariable ("A8MANAGER_TEST_ARTIFACTS", {}) };
         if (artifacts.isNotEmpty ())
         {

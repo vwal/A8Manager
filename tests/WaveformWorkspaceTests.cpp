@@ -1,4 +1,5 @@
 #include "GUI/WaveformWorkspace.h"
+#include "GUI/ModernTheme.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/Preset/PresetProperties.h"
 #include <iostream>
@@ -617,6 +618,14 @@ struct WaveformWorkspaceTestAccess
                && workspace.getSettings ().phaseDegrees == 45, "Actual sliders update the generation model");
         check (! find (workspace, "design-width")->isVisible (), "Sine hides irrelevant pulse width");
         settle (workspace); snapshot (workspace, "waveform-workspace-audio");
+        const auto beforeAppearance { juce::JSON::toString (toJson (workspace.getSettings ())) };
+        Theme::setAppearance (true);
+        Theme::refreshComponentTree (workspace);
+        snapshot (workspace, "waveform-workspace-audio-light");
+        Theme::setAppearance (false);
+        Theme::refreshComponentTree (workspace);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == beforeAppearance,
+               "Changing designer appearance does not alter its waveform settings");
 
         control<juce::ComboBox> (workspace, "design-mode").setSelectedId (2, juce::sendNotificationSync);
         check (workspace.getSettings ().mode == Mode::modulation && ! find (workspace, "design-harmonics")->isVisible (), "CV mode hides inactive harmonic controls");

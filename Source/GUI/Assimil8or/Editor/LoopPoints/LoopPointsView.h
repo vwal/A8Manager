@@ -10,6 +10,7 @@ public:
     LoopPointsView ();
     void setAudioBuffer (juce::AudioBuffer<float>* theAudioBuffer);
     void setLoopPoints (juce::int64 theSampleOffset, juce::int64 theNumSamples, int theSide);
+    std::function<void (bool start)> onContextMenu;
 
 private:
     juce::AudioBuffer<float>* audioBuffer { nullptr };
@@ -18,4 +19,5 @@ private:
     int side { 0 };
 
     void paint (juce::Graphics& g);
+    void mouseDown (const juce::MouseEvent& event) override;
 };

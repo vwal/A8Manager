@@ -5,7 +5,14 @@
 LoopPointsView::LoopPointsView ()
 {
     setTooltip ("Loop join: the end of the selected region is on the left, its beginning on the right. "
-                "Both traces share automatic visual gain; audio volume is unchanged.");
+                "Both traces share automatic visual gain; audio volume is unchanged. "
+                "Right-click END or START for directional zero-crossing nudges and opposite-boundary matching.");
+}
+
+void LoopPointsView::mouseDown (const juce::MouseEvent& event)
+{
+    if (event.mods.isPopupMenu () && onContextMenu)
+        onContextMenu (event.position.x >= getWidth () * 0.5f);
 }
 
 void LoopPointsView::setAudioBuffer (juce::AudioBuffer<float>* theAudioBuffer)
@@ -31,7 +38,7 @@ void LoopPointsView::paint (juce::Graphics& g)
     const auto seam { getWidth () * 0.5f };
     const auto centreY { (getHeight () + 12.0f) * 0.5f };
     const auto halfHeight { (getHeight () - 16.0f) * 0.5f };
-    const auto endColour { juce::Colour (0xffffc879) };
+    const auto endColour { Theme::markerColour (2) };
     g.setColour (Theme::border);
     g.drawHorizontalLine (juce::roundToInt (centreY), 1.0f, getWidth () - 1.0f);
 

@@ -22,6 +22,16 @@ struct WaveformAuditionRoutingTestAccess
         // Use the real shared output callback and properties, but never init an
         // audio device or access the user's preset/preferences/sample files.
         AudioPlayer player;
+        AudioPlayerProperties observer (player.audioPlayerProperties.getValueTree (), AudioPlayerProperties::WrapperType::client,
+                                        AudioPlayerProperties::EnableCallbacks::yes);
+        check (observer.getOutputDeviceName ().isEmpty (), "No device is reported before an output is actually open");
+        juce::String displayedDevice;
+        observer.onOutputDeviceNameChange = [&] (juce::String name) { displayedDevice = name; };
+        player.audioPlayerProperties.setOutputDeviceName ("Test output", false);
+        check (displayedDevice == "Test output", "Output device updates propagate to the UI observer");
+        player.publishOutputDevice ();
+        check (displayedDevice.isEmpty () && observer.getOutputDeviceName ().isEmpty (),
+               "An absent live device clears a stale name instead of reporting a saved configuration");
         player.audioPlayerProperties.enableCallbacks (true);
         player.audioPlayerProperties.onPlayStateChange = [&] (State state) { player.handlePlayState (state); };
         player.audioPlayerProperties.onAuditionRateChange = [&] (double value) { player.handleAuditionRate (value); };
@@ -108,6 +118,7 @@ struct WaveformAuditionRoutingTestAccess
         player.prepareToPlay (128, 44100.0);
         check (! player.isWaveformAuditionActive () && player.startWaveformAudition ().wasOk (), "Device-rate change requires explicit restart with retained design");
         player.shutdownAudio ();
+        check (observer.getOutputDeviceName ().isEmpty (), "Shutdown publishes no active output");
         process ();
         check (! player.isWaveformAuditionActive () && player.startWaveformAudition ().failed () && block.getMagnitude (0, 128) < 1.0e-8f,
                "Shutdown leaves shared output silent and unavailable");

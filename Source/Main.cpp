@@ -188,6 +188,7 @@ public:
     {
         guiControlProperties.wrap (runtimeRootProperties.getValueTree (), GuiControlProperties::WrapperType::owner, GuiControlProperties::EnableCallbacks::no);
         guiProperties.wrap (persistentRootProperties.getValueTree (), GuiProperties::WrapperType::owner, GuiProperties::EnableCallbacks::no);
+        Theme::setAppearance (guiProperties.getLightAppearance ());
         mainWindow.reset (new MainWindow (getApplicationName () + " - " + getVersionDisplayString (), rootProperties.getValueTree ()));
     }
 

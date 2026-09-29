@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "../../ModernTheme.h"
 #include "oolib/Directory/DirectoryValueTree.h"
 
 class DirectoryViewerComponent : public juce::Component,
@@ -101,7 +102,7 @@ private:
         {
             if (! isRootFolder && rowNumber == 0)
             {
-                g.setColour (juce::Colours::white);
+                g.setColour (Theme::text);
                 g.drawText (" > ..", juce::Rectangle<float>{ 0.0f, 0.0f, (float) width, (float) height }, juce::Justification::centredLeft, true);
             }
             else
@@ -109,12 +110,12 @@ private:
                 const auto directoryEntry { juce::File (directoryListQuickLookupList [rowNumber - (isRootFolder ? 0 : 1)].getProperty (FileProperties::NamePropertyId).toString ()) };
                 if (directoryEntry.isDirectory ())
                 {
-                    g.setColour (juce::Colours::white);
+                    g.setColour (Theme::text);
                     g.drawText (" > " + directoryEntry.getFileName (), juce::Rectangle<float>{ 0.0f, 0.0f, (float) width, (float) height }, juce::Justification::centredLeft, true);
                 }
                 else
                 {
-                    g.setColour (juce::Colours::forestgreen);
+                    g.setColour (Theme::accent);
                     g.drawText (" - " + directoryEntry.getFileName (), juce::Rectangle<float>{ 0.0f, 0.0f, (float) width, (float) height }, juce::Justification::centredLeft, true);
                 }
             }
@@ -159,7 +160,7 @@ private:
     {
         if (rowNumber < missingFilesList.size ())
         {
-            g.setColour (juce::Colours::red.darker (0.2f));
+            g.setColour (Theme::error);
             g.drawText (" " + missingFilesList [rowNumber].getFileName (), juce::Rectangle<float>{ 0.0f, 0.0f, (float) width, (float) height }, juce::Justification::centredLeft, true);
         }
     }

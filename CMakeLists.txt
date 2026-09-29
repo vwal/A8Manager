@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.24)
 
 project(A8Manager VERSION 3.0.0)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 # Header-only DSP libraries, pinned for reproducible pitch-preserving audition.
 # Downloads are cached in the build tree, not added to the JUCE/oolib submodules.
 include(FetchContent)

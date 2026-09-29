@@ -1,7 +1,10 @@
 #pragma once
 #include "MainComponent.h"
 #include "ModernTheme.h"
+#include "WorkspaceHeaderLayout.h"
+#include "../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "oolib/Properties/PersistentRootProperties.h"
+#include "oolib/Properties/RuntimeRootProperties.h"
 
 // Scale the complete editor, including its fonts and hit targets. A viewport
 // keeps all controls reachable when the window is smaller than the layout.
@@ -41,6 +44,31 @@ public:
             resized ();
         };
         addAndMakeVisible (scaleSelector);
+        RuntimeRootProperties runtime (root, RuntimeRootProperties::WrapperType::client, RuntimeRootProperties::EnableCallbacks::no);
+        audioPlayerProperties.wrap (runtime.getValueTree (), AudioPlayerProperties::WrapperType::owner, AudioPlayerProperties::EnableCallbacks::yes);
+        outputDevice.setComponentID ("workspaceOutputDevice");
+        outputDevice.setJustificationType (juce::Justification::centredLeft);
+        outputDevice.setFont (juce::FontOptions (14.0f));
+        audioPlayerProperties.onOutputDeviceNameChange = [this] (juce::String name) { updateOutputDevice (name); };
+        updateOutputDevice (audioPlayerProperties.getOutputDeviceName ());
+        addAndMakeVisible (outputDevice);
+        appearanceSelector.setComponentID ("workspaceAppearance");
+        appearanceSelector.addItem ("Dark", 1);
+        appearanceSelector.addItem ("Light", 2);
+        appearanceSelector.setSelectedId (preferences.getLightAppearance () ? 2 : 1, juce::dontSendNotification);
+        appearanceSelector.setTooltip ("Choose a light or dark interface. This does not change audio or preset settings.");
+        appearanceSelector.onChange = [this] ()
+        {
+            const auto light { appearanceSelector.getSelectedId () == 2 };
+            preferences.setLightAppearance (light);
+            Theme::setAppearance (light);
+        };
+        addAndMakeVisible (appearanceSelector);
+        audioSettings.setButtonText ("Audio Settings");
+        audioSettings.setComponentID ("workspaceAudioSettings");
+        audioSettings.setTooltip ("Choose the computer audio output device used for auditioning. This does not change the preset.");
+        audioSettings.onClick = [this] () { audioPlayerProperties.showConfigDialog (false); };
+        addAndMakeVisible (audioSettings);
         help.setButtonText ("Quick help");
         help.onClick = [this] ()
         {
@@ -54,7 +82,8 @@ public:
                 "Audition speed: drag or type a multiplier (0.0625x to 4x); double-click the slider for 1x. Keep pitch preserves pitch while changing duration; turn it off for sampler-style varispeed. Zone PITCH OFFSET is heard in either mode. Extreme stretching can introduce artifacts. These preview controls do not change the preset.\n\n"
                 "Loop join preview: END (left) meets START (right). Automatic visual gain makes quiet audio visible without changing its volume. Gear/right-click > Match Opposite Boundary > marker > Left << / Right >> stops at the nearest crossing of the opposite boundary's amplitude, even away from zero. It does not chase a distant, slightly better match; if the nearest crossing does not improve the join, nothing moves. The opposite marker stays fixed, including in Loop Length mode. Move START left or END right to retain material near the edge. Matching AND Zero Crossing Nudge require Yes/No confirmation for moves over 50 ms at the source sample rate. Unlike matching, nudging Loop Start in Length mode moves Loop End with it to preserve the length. Audition the result: matching amplitudes does not guarantee matching slopes or the other stereo side.\n\n"
                 "Zones: Copy > next duplicates the current zone; Continue > next starts the next slice at the current end. Occupied zones require confirmation. Parenthesized voltages below the boundaries are read-only midpoint CV targets for external zone selection.\n\n"
-                "UI size scales text and controls together. Changes are kept in separate preferences. Preset files are only changed when you save.");
+                "Right-click END or START in the small join preview for that boundary's directional nudge/match commands. Direct typed positions do not need a distance confirmation; automated moves over 50 ms do. Stereo-right waveforms support read-only zoom, pan, marker jumps and expansion; edit their shared markers from the left channel.\n\n"
+                "Audio Settings in the top bar selects the computer's audition output device. Output shows the live device or none. Appearance switches between Dark and Light; numeric parameters use monospaced text. Preset tools, Channel tools and Zone tools act on their named scopes. UI size scales text and controls together. Changes are kept in separate preferences. Preset files are only changed when you save.");
         };
         addAndMakeVisible (help);
         setSize (1400, 880);
@@ -62,26 +91,35 @@ public:
 
 private:
     GuiProperties preferences;
+    AudioPlayerProperties audioPlayerProperties;
     MainComponent editor;
     juce::Component canvas;
     juce::Viewport viewport;
-    juce::ComboBox scaleSelector;
-    juce::TextButton help;
+    juce::ComboBox scaleSelector, appearanceSelector;
+    juce::Label outputDevice;
+    juce::TextButton help, audioSettings;
     juce::TextButton samples, designer;
     double scale { 1.25 };
+
+    void updateOutputDevice (const juce::String& name)
+    {
+        outputDevice.setText ("Output: " + (name.isEmpty () ? juce::String ("none") : name), juce::dontSendNotification);
+        outputDevice.setTooltip (name.isEmpty () ? "No active computer audio output. Choose one in Audio Settings."
+                                               : "Computer audition output: " + name + ". Change it in Audio Settings.");
+    }
 
     void resized () override
     {
         auto bounds { getLocalBounds () };
-        auto toolbar { bounds.removeFromTop (52).reduced (16, 10) };
-        help.setBounds (toolbar.removeFromRight (104));
-        toolbar.removeFromRight (12);
-        scaleSelector.setBounds (toolbar.removeFromRight (92));
-        toolbar.removeFromRight (78); // Space for the UI size label.
-        auto workspaceButtons { toolbar.withTrimmedLeft (270) };
-        samples.setBounds (workspaceButtons.removeFromLeft (88));
-        workspaceButtons.removeFromLeft (6);
-        designer.setBounds (workspaceButtons.removeFromLeft (154));
+        const auto header { WorkspaceHeaderLayout::forWidth (getWidth ()) };
+        bounds.removeFromTop (header.height);
+        help.setBounds (header.help);
+        audioSettings.setBounds (header.audioSettings);
+        scaleSelector.setBounds (header.scaleSelector);
+        samples.setBounds (header.samples);
+        designer.setBounds (header.designer);
+        outputDevice.setBounds (header.outputDevice);
+        appearanceSelector.setBounds (header.appearanceSelector);
         viewport.setBounds (bounds);
         const auto width { juce::jmax (1160, static_cast<int> ((bounds.getWidth () - 16) / scale)) };
         const auto height { juce::jmax (800, static_cast<int> ((bounds.getHeight () - 16) / scale)) };
@@ -100,6 +138,8 @@ private:
         g.setFont (juce::FontOptions (12.0f));
         g.drawText ("SAMPLE & PRESET WORKSPACE", 19, 29, 340, 16, juce::Justification::centredLeft);
         g.setFont (juce::FontOptions (16.0f));
-        g.drawText ("UI size", scaleSelector.getX () - 70, 10, 62, 32, juce::Justification::centredRight);
+        g.drawText ("UI size", WorkspaceHeaderLayout::forWidth (getWidth ()).scaleLabel, juce::Justification::centredRight);
+        g.setFont (juce::FontOptions (14.0f));
+        g.drawText ("Appearance", WorkspaceHeaderLayout::forWidth (getWidth ()).appearanceLabel, juce::Justification::centredRight);
     }
 };

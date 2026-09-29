@@ -80,7 +80,7 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
     for (auto* component : std::initializer_list<juce::Component*> { &designerPresetLabel, &designerPresetName, &designerSaveState, &designerSave, &designerFolder })
         addChildComponent (component);
     designerPresetLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-    designerPresetLabel.setColour (juce::Label::textColourId, Theme::accent);
+    Theme::bindColour (designerPresetLabel, juce::Label::textColourId, [] { return Theme::accent; });
     designerPresetName.setFont (juce::FontOptions (16.0f));
     designerPresetName.setInputRestrictions (12, " !\"#$%^&'()#+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~");
     designerPresetName.setSelectAllWhenFocused (true);
@@ -175,7 +175,8 @@ void MainComponent::updateSharedPresetHeader ()
     designerPresetName.setEnabled (bound);
     designerSave.setEnabled (bound && presetSession.isDirty ());
     designerSaveState.setText (! bound ? "Select a preset slot" : presetSession.isDirty () ? "Unsaved changes" : "Saved / unchanged", juce::dontSendNotification);
-    designerSaveState.setColour (juce::Label::textColourId, presetSession.isDirty () ? Theme::accent : Theme::muted);
+    const auto dirty { presetSession.isDirty () };
+    Theme::bindColour (designerSaveState, juce::Label::textColourId, [dirty] { return dirty ? Theme::accent : Theme::muted; });
     if (displayedRevision != presetSession.getRevision ())
     {
         displayedRevision = presetSession.getRevision ();

@@ -66,7 +66,8 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
     channelTabs.onTabPopup = [this] (int channel) { displayChannelToolsMenu (channel); };
 
     // add this AFTER the Channels tabs, because it occupies some of the same space, and ends up behind the tabs if we add it before
-    toolsButton.setButtonText ("TOOLS");
+    toolsButton.setButtonText ("Preset tools");
+    toolsButton.setComponentID ("presetTools");
     toolsButton.setTooltip ("Preset Tools");
     toolsButton.onClick = [this] () { displayToolsMenu (); };
     addAndMakeVisible (toolsButton);
@@ -100,10 +101,9 @@ void Assimil8orEditorComponent::setupPresetComponents ()
 
     auto setupLabel = [this] (juce::Label& label, juce::String text, float fontSize, juce::Justification justification)
     {
-        const auto textColor { juce::Colours::white };
         label.setBorderSize ({ 0, 0, 0, 0 });
         label.setJustificationType (justification);
-        label.setColour (juce::Label::ColourIds::textColourId, textColor);
+        Theme::bindColour (label, juce::Label::textColourId, [] { return Theme::text; });
         label.setFont (label.getFont ().withPointHeight (fontSize));
         label.setMinimumHorizontalScale (1.0f);
         label.setText (text, juce::NotificationType::dontSendNotification);
@@ -185,7 +185,7 @@ void Assimil8orEditorComponent::setupPresetComponents ()
 
         // Xfade Label
         xfadeGroup.xfadeCvLabel.setBorderSize ({ 0, 0, 0, 0 });
-        xfadeGroup.xfadeCvLabel.setColour (juce::Label::ColourIds::textColourId, Theme::muted);
+        Theme::bindColour (xfadeGroup.xfadeCvLabel, juce::Label::textColourId, [] { return Theme::muted; });
         xfadeGroup.xfadeCvLabel.setText ("CV", juce::NotificationType::dontSendNotification);
         addAndMakeVisible (xfadeGroup.xfadeCvLabel);
 
@@ -264,7 +264,7 @@ void Assimil8orEditorComponent::setupPresetComponents ()
 
         // Xfade Group Width Label
         xfadeGroup.xfadeWidthLabel.setBorderSize ({ 0, 0, 0, 0 });
-        xfadeGroup.xfadeWidthLabel.setColour (juce::Label::ColourIds::textColourId, Theme::muted);
+        Theme::bindColour (xfadeGroup.xfadeWidthLabel, juce::Label::textColourId, [] { return Theme::muted; });
         xfadeGroup.xfadeWidthLabel.setText ("Width", juce::NotificationType::dontSendNotification);
         addAndMakeVisible (xfadeGroup.xfadeWidthLabel);
 
@@ -506,8 +506,7 @@ void Assimil8orEditorComponent::addChannelDefaultMenuItem (juce::PopupMenu& menu
 void Assimil8orEditorComponent::displayChannelToolsMenu (int channelIndex)
 {
     if (! channelEditorsInitialized) return;
-    auto popupMenuLnF { std::make_shared<juce::LookAndFeel_V4> () };
-    popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+    auto popupMenuLnF { std::make_shared<ModernLookAndFeel> () };
     auto toolsMenu { createChannelToolsMenu (channelIndex) };
     toolsMenu.setLookAndFeel (popupMenuLnF.get ());
     toolsMenu.showMenuAsync ({}, [popupMenuLnF] (int) {});
@@ -809,8 +808,7 @@ void Assimil8orEditorComponent::recallSelectedWaveform ()
 
 void Assimil8orEditorComponent::displayToolsMenu ()
 {
-    auto popupMenuLnF { std::make_shared<juce::LookAndFeel_V4> () };
-    popupMenuLnF->setColour (juce::PopupMenu::ColourIds::headerTextColourId, juce::Colours::white.withAlpha (0.3f));
+    auto popupMenuLnF { std::make_shared<ModernLookAndFeel> () };
     auto toolsMenu { createPresetToolsMenu () };
     toolsMenu.setLookAndFeel (popupMenuLnF.get ());
     toolsMenu.showMenuAsync ({}, [popupMenuLnF] (int) {});
@@ -1014,7 +1012,7 @@ void Assimil8orEditorComponent::resized ()
     saveButton.setBounds (topRow.removeFromRight (75));
     // Tools Button
     topRow.removeFromRight (6);
-    toolsButton.setBounds (topRow.removeFromRight (54));
+    toolsButton.setBounds (topRow.removeFromRight (100));
 
     // Channel Tabs
     const auto channelSectionY { titleLabel.getBottom () + 3 };

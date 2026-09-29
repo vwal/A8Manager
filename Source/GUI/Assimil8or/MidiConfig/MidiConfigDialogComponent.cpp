@@ -7,7 +7,7 @@ MidiConfigDialogComponent::MidiConfigDialogComponent ()
 {
     setOpaque (true);
     for (auto curMidiSetupIndex { 0 }; curMidiSetupIndex < 9; ++curMidiSetupIndex)
-        midiSetupTabs.addTab (juce::String::charToString ('1' + curMidiSetupIndex), juce::Colours::darkgrey, &midiSetupEditorComponents [curMidiSetupIndex], false);
+        midiSetupTabs.addTab (juce::String::charToString ('1' + curMidiSetupIndex), Theme::panel, &midiSetupEditorComponents [curMidiSetupIndex], false);
     addAndMakeVisible (midiSetupTabs);
 
     saveButton.setButtonText ("SAVE");
@@ -166,7 +166,7 @@ void MidiConfigDialogComponent::resized ()
 
 void MidiConfigDialogComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colours::darkgrey);
-    g.setColour (juce::Colours::black);
+    g.fillAll (Theme::panel);
+    g.setColour (Theme::border);
     g.drawRect (getLocalBounds (), 1);
 }

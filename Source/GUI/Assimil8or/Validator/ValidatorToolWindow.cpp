@@ -5,8 +5,6 @@ ValidatorToolWindow::ValidatorToolWindow ()
 {
     auto setupFilterButton = [this] (juce::TextButton& button, juce::String text, juce::String tooltip, std::function<void ()> clickFunction)
     {
-        button.setColour (juce::TextButton::ColourIds::buttonColourId, juce::Colours::grey);
-        button.setColour (juce::TextButton::ColourIds::buttonOnColourId, juce::Colours::green.darker (0.5f));
         button.setClickingTogglesState (true);
         button.setTooltip (tooltip);
         button.setToggleable (true);

@@ -1,5 +1,6 @@
 #pragma once
 #include "oolib/GUI/CustomTextEditor.h"
+#include "ModernTheme.h"
 #include <cmath>
 #include <limits>
 
@@ -8,7 +9,41 @@
 template <typename Base>
 class DragValueEditor : public Base
 {
+public:
+    DragValueEditor ()
+    {
+        this->setFont (Theme::numericFont (this->getFont ().getHeight ()));
+        updateTextColour ();
+    }
 private:
+    bool updatingTextColour { false };
+    void updateTextColour ()
+    {
+        if (updatingTextColour) return;
+        const juce::ScopedValueSetter<bool> updating (updatingTextColour, true);
+        const auto previous { this->findColour (juce::TextEditor::textColourId) };
+        const auto opaque { previous.withAlpha (1.0f) };
+        // oolib's range validator and enablement handler write white/red into
+        // TextEditor runs. Translate those semantic colours, without changing
+        // its validation or the user's input, for both appearance palettes.
+        const auto invalid { opaque == juce::Colours::red || opaque == juce::Colour (0xffff6666) || opaque == juce::Colour (0xffb21d30) };
+        this->applyColourToAllText ((invalid ? Theme::error : Theme::text).withAlpha (this->isEnabled () ? 1.0f : 0.5f), true);
+    }
+    void colourChanged () override
+    {
+        juce::TextEditor::colourChanged ();
+        updateTextColour ();
+    }
+    void lookAndFeelChanged () override
+    {
+        juce::TextEditor::lookAndFeelChanged ();
+        updateTextColour ();
+    }
+    void enablementChanged () override
+    {
+        juce::TextEditor::enablementChanged ();
+        updateTextColour ();
+    }
     CustomComponentMouseHandler dragHandler;
     CustomComponentMouseHandler wheelHandler;
     bool dragging { false };

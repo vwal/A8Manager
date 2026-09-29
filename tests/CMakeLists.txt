@@ -18,7 +18,7 @@ target_sources(A8ManagerRegressionTests PRIVATE
 target_include_directories(A8ManagerRegressionTests PRIVATE
     ../Source
     ${OOLIB_INCLUDE_DIR})
-target_compile_features(A8ManagerRegressionTests PRIVATE cxx_std_17)
+target_compile_features(A8ManagerRegressionTests PRIVATE cxx_std_20)
 target_compile_definitions(A8ManagerRegressionTests PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -41,6 +41,8 @@ set_tests_properties(ParserCvRegression StereoSplitRegression PROPERTIES TIMEOUT
 juce_add_console_app(A8ManagerInteractionTests PRODUCT_NAME "A8Manager Interaction Tests")
 juce_generate_juce_header(A8ManagerInteractionTests)
 target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
+    AppearanceTests.cpp
+    ../Source/GUI/GuiProperties.cpp
     CvAuditionTests.cpp
     WaveformAuditionTests.cpp
     WaveformAuditionRoutingTests.cpp
@@ -123,12 +125,14 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../submodules/oolib/oolib/GUI/CustomComponentMouseHandler.cpp
     ../submodules/oolib/oolib/GUI/ErrorHelpers.cpp)
 target_include_directories(A8ManagerInteractionTests PRIVATE ../Source ${OOLIB_INCLUDE_DIR})
-target_compile_features(A8ManagerInteractionTests PRIVATE cxx_std_17)
+target_compile_features(A8ManagerInteractionTests PRIVATE cxx_std_20)
 target_compile_definitions(A8ManagerInteractionTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_MP3AUDIOFORMAT=0 DONT_SET_USING_JUCE_NAMESPACE=1)
 target_link_libraries(A8ManagerInteractionTests PRIVATE A8ManagerBinaryData signalsmith-stretch juce::juce_audio_utils juce::juce_data_structures juce::juce_dsp juce::juce_recommended_config_flags)
 set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
 add_test(NAME ValueDragRegression COMMAND A8ManagerInteractionTests)
+add_test(NAME AppearanceRegression COMMAND A8ManagerInteractionTests --appearance)
+set_tests_properties(AppearanceRegression PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME WaveformDesignRegression COMMAND A8ManagerInteractionTests --waveform-design)
 add_test(NAME WaveformDesignExportRegression COMMAND A8ManagerInteractionTests --waveform-design-export)
 add_test(NAME WaveformDesignAssignmentRegression COMMAND A8ManagerInteractionTests --waveform-design-assignment)

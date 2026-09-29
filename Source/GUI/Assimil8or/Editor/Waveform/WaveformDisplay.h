@@ -31,6 +31,9 @@ public:
     void focusZone ();
     void setLoopSelected (bool loopSelected);
     void setExpanded (bool expanded);
+    void setReadOnly (bool readOnly);
+    bool isReadOnly () const { return readOnly; }
+    juce::PopupMenu boundaryAdjustmentMenu (int marker);
     void refreshSimulationControls ();
     std::function<void (bool)> onRegionSelected;
     std::function<void ()> onExpandRequested;
@@ -61,7 +64,8 @@ private:
     SampleProperties sampleProperties;
     AudioPlayerProperties audioPlayerProperties;
     double playheadSample { -1.0 };
-    bool loopSelected { false }, expanded { false };
+    bool loopSelected { false }, expanded { false }, readOnly { false };
+    bool canEdit () const { return isEnabled () && ! readOnly; }
     unsigned int sourceGeneration { 0 };
     unsigned int matchGeneration { 0 };
     WaveformRuler timeline;
@@ -131,6 +135,7 @@ private:
     int getDisplayChannel ();
 
     void setupColours ();
+    void lookAndFeelChanged () override;
     void setupMarkers ();
     void updateAudioSource ();
     void updateDisplayChannel ();

@@ -3,7 +3,7 @@
 #include "../../../Assimil8or/MidiSetup/MidiSetupProperties.h"
 #include "oolib/GUI/CustomComboBox.h"
 #include "../../DragValueEditor.h"
-#include "oolib/GUI/NoArrowComboBoxLnF.h"
+#include "../../ModernTheme.h"
 
 // Mode : Omni, Uni, Multi - 0,1,2
 // Assignment : One set of values for Omni/Uni and another for Multi. The unit seems to remember the setting for each of these
@@ -85,7 +85,7 @@ private:
 
     juce::TextButton toolsButton;
 
-    NoArrowComboBoxLnF noArrowComboBoxLnF;
+    ModernNoArrowComboBoxLookAndFeel noArrowComboBoxLnF;
 
     juce::PopupMenu createMidiSetupCloneMenu (std::function <void (MidiSetupProperties&)> setter);
     juce::PopupMenu createMidiSetupEditMenu (std::function <void (MidiSetupProperties&)> setter, std::function <void ()> resetter, std::function <void ()> reverter);

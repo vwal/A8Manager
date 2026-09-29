@@ -27,6 +27,7 @@ public:
     void selectLoop (bool loop) { setActiveSamplePoints (loop ? AudioPlayerProperties::SamplePointsSelector::LoopPoints : AudioPlayerProperties::SamplePointsSelector::SamplePoints, false); }
     bool isLoopSelected () const { return samplePointsSelector == AudioPlayerProperties::SamplePointsSelector::LoopPoints; }
     std::function<void (bool)> onRegionSelected;
+    std::function<juce::PopupMenu (int marker)> createBoundaryAdjustmentMenu;
     bool canStartSampleIntoLoop ();
     void startSampleIntoLoop ();
     std::function<void ()> onSimulationAvailabilityChanged;
@@ -36,6 +37,7 @@ public:
     std::function<void (bool continueSlice)> copyToNext;
 
 private:
+    void lookAndFeelChanged () override { sampleNameSelectLabel.setOutline (Theme::border); repaint (); }
     friend struct ZoneEditorTestAccess;
     friend struct AudioAuditTestAccess;
     friend struct CvAuditionTestAccess;
@@ -134,7 +136,7 @@ private:
     juce::String formatLoopLength (double loopLength);
     enum class SampleMarker { sampleStart, sampleEnd, loopStart, loopEnd };
     juce::PopupMenu getSampleAdjustMenu (SampleMarker marker);
-    bool nudgeSampleMarker (SampleMarker marker, bool right);
+    juce::PopupMenu getLoopPointsMenu (bool start);
     bool handleSamplesInternal (int zoneIndex, juce::StringArray files);
     void setActiveSamplePoints (AudioPlayerProperties::SamplePointsSelector samplePointsSelector, bool forceSetup, bool publishToPlayer = true);
     void setupZoneComponents ();

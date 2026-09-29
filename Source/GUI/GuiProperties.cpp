@@ -14,10 +14,13 @@ void GuiProperties::initValueTree ()
     setSize (defaultWidth, defaultHeight, false);
     setPaneSizes (defaultSplitter1Offset, defaultSplitter2Offset, defaultSplitter3Offset, false);
     setUiScale (1.25);
+    setLightAppearance (false);
 }
 
 void GuiProperties::processValueTree ()
 {
+    if (! data.hasProperty (LightAppearancePropertyId))
+        setLightAppearance (false);
     if (! data.hasProperty (UiScalePropertyId))
         setUiScale (1.25);
     if (! data.hasProperty (PositionPropertyId))

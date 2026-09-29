@@ -36,7 +36,7 @@ private:
         const auto fraction { desired / magnitude };
         const auto step { (fraction <= 1.0 ? 1.0 : fraction <= 2.0 ? 2.0 : fraction <= 5.0 ? 5.0 : 10.0) * magnitude * divisor };
         const auto left { std::floor (first / step) * step };
-        g.setFont (juce::FontOptions (11.0f));
+        g.setFont (Theme::numericFont (11.0f));
         for (auto i { 0 }; i < getWidth () / 10 + 3; ++i)
         {
             const auto frame { left + i * step };

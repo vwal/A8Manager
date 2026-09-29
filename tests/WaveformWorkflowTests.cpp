@@ -286,6 +286,41 @@ struct WaveformTestAccess
         check (view.zoneProperties.getValueTree ().isEquivalentTo (before) && ! view.beginRegionMove (point (500)), "Disabled stereo-right editing remains guarded");
         view.setEnabled (true);
 
+        // Stereo-right is navigable, not a disabled component. All routes that
+        // could edit a marker or the audition source remain read-only.
+        view.setLoopSelected (false);
+        selectedLoop = false;
+        view.setReadOnly (true);
+        check (view.isEnabled () && view.isReadOnly () && view.expandButton.isEnabled () && view.menuButton.isEnabled ()
+               && ! view.auditionRateSlider.isEnabled () && ! view.preservePitchButton.isEnabled () && ! view.simulationButton.isEnabled (),
+               "Read-only waveform keeps navigation controls live while disabling audition changes");
+        checkMenu (false, false);
+        checkMenu (true, false);
+        const auto readOnlyZone { view.zoneProperties.getValueTree ().createCopy () };
+        const auto readOnlyAudition { audition.getValueTree ().createCopy () };
+        for (auto action { 20 }; action < 48; ++action) view.applyMenuAction (action, 1.0);
+        view.applyMenuAction (50, {});
+        view.selectRegion (true);
+        view.focusZone ();
+        const auto spanBeforeZoom { view.waveform.getSamplesPerPixel () };
+        view.zoomIn.onClick ();
+        check (view.waveform.getSamplesPerPixel () < spanBeforeZoom, "Read-only waveform zoom buttons remain operational");
+        view.keyPressed (juce::KeyPress ('3'));
+        check (std::abs (view.waveform.xToSample (view.waveform.getWidth () * 0.5f) - view.markerPosition (2)) < 0.01,
+               "Read-only waveform jump shortcuts centre the requested boundary");
+        view.resetZoom ();
+        for (const auto flags : { static_cast<int> (left), alt })
+        {
+            const juce::Point<float> handle { view.waveform.sampleToX (view.markerPosition (2)) + 3.0f, view.waveform.getHeight () - 2.0f };
+            view.markerOverlay.mouseDown (mouse (view.markerOverlay, handle, handle, flags));
+            view.markerOverlay.mouseDrag (mouse (view.markerOverlay, handle.translated (25, 0), handle, flags));
+            view.markerOverlay.mouseUp (mouse (view.markerOverlay, handle.translated (25, 0), handle, flags));
+        }
+        check (! view.beginRegionMove (point (500)) && ! selectedLoop && ! view.loopSelected
+               && view.zoneProperties.getValueTree ().isEquivalentTo (readOnlyZone) && audition.getValueTree ().isEquivalentTo (readOnlyAudition),
+               "Read-only handle drags, modifier moves, menu edits and simulation cannot change markers or SAMPLE/LOOP routing");
+        view.setReadOnly (false);
+
         // A nonzero join like the reported case, through the actual menu actions.
         for (auto side { 0 }; side < 2; ++side)
             for (auto i { 0 }; i < audio.getNumSamples (); ++i) audio.setSample (side, i, 0.6f);
@@ -628,6 +663,7 @@ struct WaveformTestAccess
         checkStaleNudge ([&] { view.zoneProperties.setLoopLength (290, true); });
         checkStaleNudge ([&] { view.zoneProperties.setSide (0, true); view.zoneProperties.setSide (1, true); });
         checkStaleNudge ([&] { view.setEnabled (false); view.setEnabled (true); });
+        checkStaleNudge ([&] { view.setReadOnly (true); view.setReadOnly (false); });
         checkStaleNudge ([&] { channel.setLoopLengthIsEnd (true, true); channel.setLoopLengthIsEnd (false, true); });
         checkStaleNudge ([&] { view.sampleProperties.setSampleRate (2000, true); view.sampleProperties.setSampleRate (1000, true); });
         checkStaleNudge ([&] { view.sampleProperties.setStatus (SampleStatus::doesNotExist, true); view.sampleProperties.setStatus (SampleStatus::exists, true); });

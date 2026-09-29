@@ -10,6 +10,17 @@ void AudioPlayerProperties::initValueTree ()
     setSimulationPhase (SimulationPhase::inactive, false);
     setAuditionRate (1.0, false);
     setPreservePitch (true, false);
+    setOutputDeviceName ({}, false);
+}
+
+void AudioPlayerProperties::setOutputDeviceName (const juce::String& name, bool includeSelfCallback)
+{
+    setValue (name, OutputDeviceNamePropertyId, includeSelfCallback);
+}
+
+juce::String AudioPlayerProperties::getOutputDeviceName ()
+{
+    return getValue<juce::String> (OutputDeviceNamePropertyId);
 }
 
 void AudioPlayerProperties::setPreservePitch (bool preserve, bool includeSelfCallback)
@@ -96,7 +107,12 @@ void AudioPlayerProperties::valueTreePropertyChanged (juce::ValueTree& treeWhose
 {
     if (treeWhosePropertyHasChanged == data)
     {
-        if (property == PreservePitchPropertyId)
+        if (property == OutputDeviceNamePropertyId)
+        {
+            if (onOutputDeviceNameChange != nullptr)
+                onOutputDeviceNameChange (getOutputDeviceName ());
+        }
+        else if (property == PreservePitchPropertyId)
         {
             if (onPreservePitchChange != nullptr)
                 onPreservePitchChange (getPreservePitch ());
