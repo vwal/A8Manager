@@ -33,7 +33,8 @@ public:
     static juce::Result preparePayload (const WaveformDesign::Settings& settings,
                                        const WaveformDesign::Render& rendered, PayloadPtr& payload);
     // Non-audio thread only. nullptr invalidates readiness and ramps playback
-    // down; publishing a new valid payload never starts a stopped monitor.
+    // down; publishing a new valid payload never starts a stopped or range-
+    // paused monitor. Only a subsequent valid transpose change can resume it.
     void setPayload (PayloadPtr payload);
     void prepareToPlay (double deviceSampleRate);
     juce::Result start ();
@@ -42,6 +43,7 @@ public:
     void setMonitorGain (double gain); // linear 0..1; default -18 dB
     juce::Result setTransposeSemitones (double semitones); // monitor-only, -48..48
     bool isActive () const noexcept; // includes the stop ramp
+    bool isPausedForRange () const noexcept; // retains intent, even after ramp ends
     bool isReady () const;
 
     // Audio callback: true means the monitor owns the active output region,

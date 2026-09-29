@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -30,6 +31,7 @@ struct WaveformAudition::State
 {
     juce::CriticalSection lock;
     std::atomic<bool> active { false };
+    std::atomic<bool> pausedForRange { false };
     // The callback only swaps these owners. Displaced buffers stay in pending
     // until the next non-audio-thread publication retires them outside the lock.
     PayloadPtr current, outgoing, pending;
@@ -43,21 +45,87 @@ struct WaveformAudition::State
 
     const Payload* candidate () const noexcept { return available ? (pendingReady ? pending.get () : current.get ()) : nullptr; }
 
-    bool audible (const Payload* payload, double ratio) const noexcept
+    bool transposeRange (const Payload* payload, double& lower, double& upper) const noexcept
     {
         if (! prepared || payload == nullptr || payload->frames <= 0 || payload->voices.empty ()) return false;
+        lower = -std::numeric_limits<double>::infinity ();
+        upper = std::numeric_limits<double>::infinity ();
         const auto ceiling { std::min (20000.0, rate * 0.5) };
         for (const auto& voice : payload->voices)
         {
-            const auto frequency { payload->settings.sampleRate * voice.detune * ratio / payload->frames };
-            if (! std::isfinite (frequency) || frequency < minimumFrequency || frequency >= ceiling) return false;
+            const auto frequency { payload->settings.sampleRate * voice.detune / payload->frames };
+            if (! std::isfinite (frequency) || frequency <= 0.0) return false;
+            lower = std::max (lower, 12.0 * std::log2 (minimumFrequency / frequency));
+            upper = std::min (upper, 12.0 * std::log2 (ceiling / frequency));
         }
         return true;
+    }
+
+    bool audible (const Payload* payload, double semitones) const noexcept
+    {
+        double lower {}, upper {};
+        // Compare in semitones so a caller using the exact computed boundary
+        // gets an inclusive 20 Hz floor and an exclusive upper limit, without
+        // exp2/log2 roundoff accidentally admitting Nyquist.
+        return std::isfinite (semitones) && transposeRange (payload, lower, upper) && semitones >= lower && semitones < upper;
+    }
+
+    juce::String rangeError () const
+    {
+        juce::String message { pausedForRange.load () ? "Audition paused: " : "Audition unavailable: " };
+        message << "every voice must be at least 20 Hz and below " << juce::String (std::min (20000.0, rate * 0.5), 0)
+                << " Hz (the lower of 20 kHz and device Nyquist).";
+        double lower {}, upper {};
+        if (transposeRange (candidate (), lower, upper))
+        {
+            // Round inward to give genuinely permitted 0.01-st settings.
+            const auto minimum { std::max (-48.0, std::ceil (lower * 100.0) / 100.0) };
+            const auto maximum { std::min (48.0, (std::ceil (upper * 100.0) - 1.0) / 100.0) };
+            if (minimum <= maximum)
+                message << " At 0.01 st steps, use " << juce::String (minimum, 2) << " to " << juce::String (maximum, 2) << " st for this design.";
+            else message << " No transpose within -48..48 st puts every voice in range; adjust cycle length or bank detuning.";
+        }
+        if (pausedForRange.load ()) message << " Moving transpose back into range resumes audition; Stop cancels this.";
+        return message;
+    }
+
+    void stopWithRamp () noexcept
+    {
+        playing = false;
+        pausedForRange.store (false, std::memory_order_release);
+        active.store (gate > 0.0, std::memory_order_release);
+    }
+
+    void pauseForRange () noexcept
+    {
+        // A failed start/idle edit never arms automatic resumption. Stop-ramp
+        // ownership alone is not evidence of an active audition request.
+        pausedForRange.store (playing || pausedForRange.load (), std::memory_order_release);
+        playing = false;
+        active.store (gate > 0.0, std::memory_order_release);
+    }
+
+    void beginPlayback () noexcept
+    {
+        if (gate == 0.0)
+        {
+            fadeRemaining = 0;
+            phase.fill (0.0);
+            outgoingPhase.fill (0.0);
+            lastInput.fill (0.0);
+            lastOutput.fill (0.0);
+            pitchRatio = targetPitchRatio;
+            gain = targetGain;
+        }
+        pausedForRange.store (false, std::memory_order_release);
+        playing = true;
+        active.store (true, std::memory_order_release);
     }
 
     void resetPlayback () noexcept
     {
         playing = false;
+        pausedForRange.store (false, std::memory_order_release);
         gate = 0.0;
         fadeRemaining = 0;
         gain = targetGain;
@@ -202,8 +270,10 @@ void WaveformAudition::setPayload (PayloadPtr payload)
         state->pending.swap (payload);
         state->pendingReady = state->pending != nullptr;
         state->available = state->pendingReady;
-        if (! state->audible (state->candidate (), state->targetPitchRatio)) state->playing = false;
-        state->active.store (state->playing || state->gate > 0.0, std::memory_order_release);
+        if (! state->prepared || state->candidate () == nullptr) state->stopWithRamp ();
+        else if (! state->audible (state->candidate (), state->transpose)) state->pauseForRange ();
+        // A valid new render can update a playing monitor, but never consumes
+        // range-pause intent: resumption requires an actual transpose change.
     }
     // The old pending/retired source is released here, never in process().
 }
@@ -224,22 +294,19 @@ void WaveformAudition::prepareToPlay (double deviceSampleRate)
 juce::Result WaveformAudition::start ()
 {
     const juce::ScopedLock guard (state->lock);
-    if (! state->prepared) return juce::Result::fail ("No valid audio output rate is available for waveform audition.");
-    if (state->candidate () == nullptr) return juce::Result::fail ("Wait for a valid audio waveform preview before starting audition. CV designs cannot be auditioned.");
-    if (! state->audible (state->candidate (), state->targetPitchRatio))
-        return juce::Result::fail ("Every voice must have a fundamental from 20 Hz to below 20 kHz/device Nyquist. Adjust monitor transpose or the cycle length.");
-    if (state->gate == 0.0)
+    if (! state->prepared || state->candidate () == nullptr)
     {
-        state->fadeRemaining = 0;
-        state->phase.fill (0.0);
-        state->outgoingPhase.fill (0.0);
-        state->lastInput.fill (0.0);
-        state->lastOutput.fill (0.0);
-        state->pitchRatio = state->targetPitchRatio;
-        state->gain = state->targetGain;
+        state->stopWithRamp ();
+        return juce::Result::fail (! state->prepared ? "No valid audio output rate is available for waveform audition."
+                                                    : "Wait for a valid audio waveform preview before starting audition. CV designs cannot be auditioned.");
     }
-    state->playing = true;
-    state->active.store (true, std::memory_order_release);
+    if (! state->audible (state->candidate (), state->transpose))
+    {
+        state->stopWithRamp ();
+        return juce::Result::fail (state->rangeError ());
+    }
+    state->targetPitchRatio = std::exp2 (state->transpose / 12.0);
+    state->beginPlayback ();
     return juce::Result::ok ();
 }
 
@@ -247,8 +314,7 @@ void WaveformAudition::setPlaying (bool playing)
 {
     if (playing) { juce::ignoreUnused (start ()); return; }
     const juce::ScopedLock guard (state->lock);
-    state->playing = false;
-    state->active.store (state->gate > 0.0, std::memory_order_release);
+    state->stopWithRamp ();
 }
 
 void WaveformAudition::stopImmediately ()
@@ -260,7 +326,12 @@ void WaveformAudition::stopImmediately ()
 void WaveformAudition::setMonitorGain (double gain)
 {
     const juce::ScopedLock guard (state->lock);
-    state->targetGain = std::isfinite (gain) ? std::clamp (gain, 0.0, 1.0) : 0.0;
+    if (! std::isfinite (gain) || gain < 0.0 || gain > 1.0)
+    {
+        state->targetGain = 0.0;
+        state->stopWithRamp ();
+    }
+    else state->targetGain = gain;
 }
 
 juce::Result WaveformAudition::setTransposeSemitones (double semitones)
@@ -268,27 +339,37 @@ juce::Result WaveformAudition::setTransposeSemitones (double semitones)
     const juce::ScopedLock guard (state->lock);
     if (! std::isfinite (semitones) || semitones < -48.0 || semitones > 48.0)
     {
-        state->playing = false;
-        state->active.store (state->gate > 0.0, std::memory_order_release);
+        state->stopWithRamp ();
         return juce::Result::fail ("Monitor transpose must be finite and within -48..48 semitones.");
     }
+    const auto changed { state->transpose != semitones };
     state->transpose = semitones;
-    state->targetPitchRatio = std::exp2 (semitones / 12.0);
-    if (state->candidate () != nullptr && ! state->audible (state->candidate (), state->targetPitchRatio))
+    if (! state->prepared || state->candidate () == nullptr)
     {
-        state->playing = false;
-        state->active.store (state->gate > 0.0, std::memory_order_release);
-        return juce::Result::fail ("This monitor transpose puts a voice outside the audible/device frequency range; audition was stopped.");
+        state->stopWithRamp ();
+        // Remember a valid idle control value, but never arm resume intent.
+        state->targetPitchRatio = std::exp2 (semitones / 12.0);
+        return juce::Result::ok ();
     }
+    if (! state->audible (state->candidate (), state->transpose))
+    {
+        state->pauseForRange ();
+        return juce::Result::fail (state->rangeError ());
+    }
+    // Keep the previous safe ratio during an out-of-range fade. Its return
+    // glides when still fading, or starts a fresh ramp when already silent.
+    state->targetPitchRatio = std::exp2 (semitones / 12.0);
+    if (changed && state->pausedForRange.load ()) state->beginPlayback ();
     return juce::Result::ok ();
 }
 
 bool WaveformAudition::isActive () const noexcept { return state->active.load (std::memory_order_acquire); }
+bool WaveformAudition::isPausedForRange () const noexcept { return state->pausedForRange.load (std::memory_order_acquire); }
 
 bool WaveformAudition::isReady () const
 {
     const juce::ScopedLock guard (state->lock);
-    return state->audible (state->candidate (), state->targetPitchRatio);
+    return state->audible (state->candidate (), state->transpose);
 }
 
 bool WaveformAudition::process (const juce::AudioSourceChannelInfo& output) noexcept

@@ -391,6 +391,131 @@ struct WaveformWorkspaceTestAccess
         }
     }
 
+    static void rangePauseWorkflow ()
+    {
+        // Exercise the actual transport together with the actual workspace:
+        // range pause is engine state, not a UI flag that can restart audio
+        // after a device change or another player's takeover.
+        WaveformAudition engine;
+        engine.prepareToPlay (48000.0);
+        int starts { 0 };
+        WaveformWorkspace workspace;
+        workspace.setSize (975, 732);
+        workspace.onAuditionPayload = [&] (auto payload) { engine.setPayload (std::move (payload)); };
+        workspace.onStartAudition = [&] { ++starts; return engine.start (); };
+        workspace.onStopAudition = [&] { engine.setPlaying (false); };
+        workspace.onAuditionMonitorChange = [&] (double db, double semitones)
+        {
+            engine.setMonitorGain (juce::Decibels::decibelsToGain (db));
+            return engine.setTransposeSemitones (semitones);
+        };
+        workspace.isAuditionActive = [&] { return engine.isActive (); };
+        workspace.isAuditionPausedForRange = [&] { return engine.isPausedForRange (); };
+        auto& transpose { control<juce::Slider> (workspace, "design-monitor-transpose-value") };
+        auto& level { control<juce::Slider> (workspace, "design-monitor-level-value") };
+        auto& frames { control<juce::ComboBox> (workspace, "design-frames") };
+        auto& audition { control<juce::Button> (workspace, "design-audition") };
+        auto& hint { control<juce::Label> (workspace, "design-audition-hint") };
+        auto render = [&]
+        {
+            juce::AudioBuffer<float> output (2, 4096);
+            output.clear ();
+            engine.process ({ &output, 0, output.getNumSamples () });
+            workspace.timerCallback ();
+        };
+        auto pause = [&]
+        {
+            transpose.setValue (-48, juce::sendNotificationSync);
+            render ();
+            check (engine.isPausedForRange () && ! engine.isActive () && audition.isEnabled ()
+                   && audition.getButtonText () == "Stop audition" && hint.getText ().contains ("paused"),
+                   "Inaudible transpose pauses real playback but keeps Stop available after the fade");
+        };
+        settle (workspace);
+        check (transpose.getMinimum () == -48 && transpose.getMaximum () == 48,
+               "Monitor retains its full transpose range instead of clamping design-dependent limits");
+        click (workspace, "Start audition");
+        control<juce::ComboBox> (workspace, "design-shape").setSelectedId (3, juce::sendNotificationSync);
+        settle (workspace);
+        check (engine.isActive () && starts == 1, "In-range shape changes preserve existing live audition behavior");
+        render ();
+        pause ();
+        snapshot (workspace, "waveform-workspace-range-paused");
+        check (hint.getTooltip ().contains ("20"), "Range explanation includes the engine's frequency limits");
+        level.setValue (-25, juce::sendNotificationSync);
+        check (engine.isPausedForRange (), "Level adjustment does not cancel or resume a range pause");
+        transpose.setValue (0, juce::sendNotificationSync);
+        check (engine.isActive () && ! engine.isPausedForRange () && starts == 1,
+               "Returning to range resumes without a new UI Start request");
+        render ();
+
+        pause ();
+        frames.setSelectedId (8192, juce::sendNotificationSync);
+        settle (workspace);
+        check (! hint.getTooltip ().contains ("At 0.01 st steps"), "Replacing a paused render discards the previous design's cached transpose limits");
+        transpose.setValue (24, juce::sendNotificationSync);
+        check (engine.isActive (), "Transpose resumes the replacement long cycle in its own valid range");
+        frames.setSelectedId (512, juce::sendNotificationSync);
+        settle (workspace);
+        transpose.setValue (0, juce::sendNotificationSync);
+        frames.setSelectedId (8192, juce::sendNotificationSync);
+        settle (workspace);
+        render ();
+        check (engine.isPausedForRange () && hint.getText ().contains ("paused"),
+               "A live cycle-length edit can pause audition and explains why");
+        frames.setSelectedId (512, juce::sendNotificationSync);
+        settle (workspace);
+        check (engine.isPausedForRange () && ! engine.isActive (), "A new valid render alone does not resume paused audition");
+        level.setValue (-26, juce::sendNotificationSync);
+        check (engine.isPausedForRange () && ! engine.isActive (), "Level-only adjustment cannot resume a newly valid render");
+        transpose.setValue (1, juce::sendNotificationSync);
+        check (engine.isActive () && ! engine.isPausedForRange (), "A deliberate valid transpose gesture resumes the latest render");
+
+        pause ();
+        control<juce::Slider> (workspace, "design-phase-value").setValue (120, juce::sendNotificationSync);
+        std::this_thread::sleep_for (std::chrono::milliseconds (160));
+        workspace.timerCallback (); // Stop while a newer paused render is queued/in flight.
+        click (workspace, "Stop audition");
+        settle (workspace);
+        transpose.setValue (0, juce::sendNotificationSync);
+        check (! engine.isActive () && ! engine.isPausedForRange () && audition.getButtonText () == "Start audition",
+               "Stop cancels range-resume intent even after the monitor is fully silent");
+        transpose.setValue (-48, juce::sendNotificationSync);
+        click (workspace, "Start audition");
+        transpose.setValue (0, juce::sendNotificationSync);
+        check (! engine.isActive () && ! engine.isPausedForRange (), "Failed out-of-range Start never arms a delayed automatic start");
+
+        auto cancelWith = [&] (auto action)
+        {
+            click (workspace, "Start audition");
+            render ();
+            pause ();
+            action ();
+            settle (workspace);
+            transpose.setValue (0, juce::sendNotificationSync);
+            check (! engine.isPausedForRange () && ! engine.isActive () && ! hint.getText ().contains ("Audition paused"),
+                   "Source, navigation and device stop actions cancel pause intent and clear the paused notice");
+        };
+        cancelWith ([&] { control<juce::ComboBox> (workspace, "design-shape").setSelectedId (2, juce::sendNotificationSync); });
+        cancelWith ([&] { control<juce::ComboBox> (workspace, "design-preset").setSelectedId (3, juce::sendNotificationSync); });
+        cancelWith ([&] { engine.prepareToPlay (44100.0); });
+        cancelWith ([&] { click (workspace, "Back to preset"); });
+        cancelWith ([&]
+        {
+            workspace.updateAuditionVisibility (false);
+            workspace.updateAuditionVisibility (true);
+        });
+        cancelWith ([&]
+        {
+            control<juce::ComboBox> (workspace, "design-mode").setSelectedId (2, juce::sendNotificationSync);
+            control<juce::ComboBox> (workspace, "design-mode").setSelectedId (1, juce::sendNotificationSync);
+        });
+        control<juce::ComboBox> (workspace, "design-mode").setSelectedId (3, juce::sendNotificationSync);
+        settle (workspace);
+        cancelWith ([&] { click (workspace, "Supersaw (7 voices)"); });
+        std::cout << "PASS: real waveform transpose range pause/resume, live cycle changes, retained Stop and lifecycle cancellation\n";
+    }
+
     static void auditionAndExpandedPreview ()
     {
         using namespace WaveformDesign;
@@ -745,6 +870,7 @@ void testWaveformWorkspace ()
     WaveformWorkspaceTestAccess::testOutputEntry ();
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
+    WaveformWorkspaceTestAccess::rangePauseWorkflow ();
     WaveformWorkspaceTestAccess::assignmentWorkflow ();
     WaveformWorkspaceTestAccess::recallWorkflow ();
 }

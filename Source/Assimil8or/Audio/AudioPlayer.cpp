@@ -459,7 +459,10 @@ juce::Result AudioPlayer::startWaveformAudition ()
     {
         juce::ScopedLock sl (dataCS);
         if (! audioDeviceReady)
+        {
+            waveformAudition.stopImmediately ();
             return juce::Result::fail ("No audio output is available. Choose an output in Audio settings, then press Audition again.");
+        }
         if (const auto result { waveformAudition.start () }; result.failed ())
             return result;
         waveformSelected = true;
@@ -487,14 +490,27 @@ juce::Result AudioPlayer::setWaveformMonitor (double decibels, double semitones)
 {
     juce::ScopedLock sl (dataCS);
     if (! audioDeviceReady)
+    {
+        waveformAudition.stopImmediately ();
         return juce::Result::fail ("No audio output is available. Choose an output in Audio settings, then press Audition again.");
-    waveformAudition.setMonitorGain (juce::Decibels::decibelsToGain (std::isfinite (decibels) ? juce::jlimit (-60.0, 0.0, decibels) : -60.0));
+    }
+    if (! std::isfinite (decibels) || decibels < -60.0 || decibels > 0.0)
+    {
+        waveformAudition.setPlaying (false);
+        return juce::Result::fail ("Monitor level must be finite and within -60..0 dB.");
+    }
+    waveformAudition.setMonitorGain (juce::Decibels::decibelsToGain (decibels));
     return waveformAudition.setTransposeSemitones (semitones);
 }
 
 bool AudioPlayer::isWaveformAuditionActive () const
 {
     return waveformAudition.isActive ();
+}
+
+bool AudioPlayer::isWaveformAuditionPausedForRange () const
+{
+    return waveformAudition.isPausedForRange ();
 }
 
 void AudioPlayer::configureAudioDevice (juce::String config)

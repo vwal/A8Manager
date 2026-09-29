@@ -747,6 +747,20 @@ Use **Start audition** to hear an Audio Cycle or the complete Layer Bank while
 shaping it. Bank audition includes each voice's detune, phase, pan and level.
 Monitor level and transpose affect listening only, not exported WAVs or presets;
 the monitor repeats continuously regardless of the export playback mode.
+Transpose keeps its full −48 to +48 semitone range. During playback, moving it
+outside the monitor's frequency limits **pauses** the whole bank; returning it
+into range resumes automatically. **Stop audition** cancels that pending resume.
+Changing mode/shape or starting point, recalling a design,
+leaving the designer, changing audio device or starting Samples playback also
+cancels it. Adjusting Transpose while already stopped never starts sound.
+
+The allowed nominal frequency for every voice is 20 Hz or above, and strictly
+below the lower of 20 kHz and half the output device's sample rate. These are
+software limits, not measured speaker response. Frequency is calculated from
+source sample rate, cycle length, voice detune and Transpose; changing shape
+alone does not change this range check. See the [designer guide](WAVEFORM-DESIGNER.md#visual-preview-and-live-audition)
+for the formula and examples.
+
 CV/Modulation is deliberately excluded from speaker audition. New CV WAVs also
 carry a purpose tag that blocks their playback in **Samples**, with disabled
 ONCE/LOOP buttons and a **CV sample / Speaker audition disabled** notice. Either

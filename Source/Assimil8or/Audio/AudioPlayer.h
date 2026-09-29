@@ -28,6 +28,7 @@ public:
     void stopWaveformAudition ();
     juce::Result setWaveformMonitor (double decibels, double semitones);
     bool isWaveformAuditionActive () const;
+    bool isWaveformAuditionPausedForRange () const;
     void showAudioSettings () { showConfigDialog (); }
 
 private:

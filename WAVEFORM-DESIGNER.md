@@ -197,11 +197,12 @@ spread rather than just an untransposed individual WAV.
   design's amplitude and per-voice gain controls to change exported file levels.
   It starts at -18 dB and ranges from -60 to 0 dB.
 - **Transpose** in the LIVE AUDITION area changes computer-listening pitch in
-  semitones. At zero, a voice's frequency is
-  `sample rate / cycle frames * 2^(detune cents / 1200)`.
+  semitones. Each voice's nominal frequency is
+  `source sample rate / cycle frames * 2^(detune cents / 1200 + transpose / 12)`.
   Transposing by +12 doubles all monitored frequencies. It does not change the
   cycle size, WAV sample rate or exported preset PITCH. Its range is -48 to
-  +48 semitones; it starts at zero.
+  +48 semitones; it starts at zero. The slider keeps this full range rather than
+  being restricted separately for each waveform or audio device.
 - The audition continuously repeats the designed cycles even when the exported
   playback choice is **One shot** or **Gated loop**. It is a sound-design monitor,
   not a simulation of external triggers/gates or the complete hardware envelope.
@@ -217,11 +218,32 @@ separate audio-settings button in the designer. Returning to Samples stops
 designer audition and hides its expanded preview. Returning to the designer does
 not start sound automatically.
 
-Every voice's monitored fundamental must be at least 20 Hz and strictly below
-20 kHz or the audio device's Nyquist limit, whichever is lower. Invalid settings
-are refused, or stop an active audition. For example, a large 8,192-frame cycle
-at 48 kHz has a base frequency of only about 5.86 Hz; raise Monitor transpose
-to hear it as audio without changing the exported cycle.
+Every voice's nominal frequency must be **at least 20 Hz** and **strictly below
+the lower of 20 kHz and half the output device's sample rate** (its Nyquist
+limit). For a 32 kHz output device the upper limit is therefore below 16 kHz.
+The 20 Hz floor is a fixed software guard, not a measurement of your speakers,
+headphones, hearing or audio interface's analog frequency response. The app can
+calculate the source/transpose/device-rate limits exactly; it cannot predict
+how loudly or accurately your connected hardware reproduces them. Changing
+shape alone changes tone and harmonics, not this nominal cycle frequency;
+cycle length, source rate, voice detune and Transpose determine the range check.
+
+While audition is running, moving **Transpose** outside this range pauses the
+whole bank, including when just one voice crosses a limit. The pause is shown
+in the audition area. Move Transpose back into range to resume automatically;
+**Stop audition** cancels the pending resume. Merely setting an invalid value
+while stopped never arms playback, and an out-of-range Start request does not
+start later by itself.
+
+The pending resume is also canceled by changing mode/shape or starting point,
+recalling a design, leaving the designer, changing audio device or starting
+Samples playback. Start audition explicitly afterward.
+Changing cycle length or detune can also put an active monitor out of range;
+making a new render valid again does not resume it by itself. Make a deliberate
+in-range Transpose adjustment, or Stop and then Start, when ready to listen.
+For example, an 8,192-frame cycle at 48 kHz has a base rate of about 5.86 Hz;
+raise Transpose to +24 semitones, then Start, without changing the
+exported cycle. These limits apply to computer monitoring, not the exported WAV.
 
 The monitor uses band-limited, interpolated cycle playback, stereo panning,
 summed-voice headroom and short fades/crossfades to make edits easier to hear. It also removes

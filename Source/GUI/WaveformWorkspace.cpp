@@ -461,7 +461,7 @@ struct WaveformWorkspace::Impl
     Control monitorLevel { "Monitor level", "design-monitor-level", -60, 0, 0.1, " dB" };
     Control monitorTranspose { "Transpose", "design-monitor-transpose", -48, 48, 0.01, " st" };
     WaveformAudition::PayloadPtr auditionPayload;
-    juce::String auditionError;
+    juce::String auditionError, rangePauseReason;
     bool auditionSuspended { false };
     juce::Viewport viewport;
     juce::Component content;
@@ -509,12 +509,13 @@ struct WaveformWorkspace::Impl
         styleLabel (auditionTitle, "LIVE AUDITION", 14.0f, true);
         Theme::bindColour (auditionTitle, juce::Label::textColourId, [] { return Theme::accent; });
         styleLabel (auditionHint, "Monitor only: loops continuously. Level and transpose do not affect export.", 12.0f);
+        auditionHint.setMinimumHorizontalScale (1.0f);
         auditionHint.setName ("design-audition-hint");
         auditionHint.setJustificationType (juce::Justification::topLeft);
         monitorLevel.slider.setValue (-18, juce::dontSendNotification);
         monitorTranspose.slider.setValue (0, juce::dontSendNotification);
         monitorLevel.slider.setTooltip ("Speaker/headphone monitor gain only: -60 to 0 dB, initially -18 dB. Keep your hardware output level low until you have checked it. Does not affect export.");
-        monitorTranspose.slider.setTooltip ("Monitor-only transposition, -48 to +48 semitones. Listen at a useful note without changing the generated cycle, recipe, or exported preset.");
+        monitorTranspose.slider.setTooltip ("Monitor-only transposition, -48 to +48 semitones. Out-of-range playback pauses; move Transpose back into the monitor frequency range to resume, or press Stop audition to cancel. Does not change the generated cycle, recipe, or preset.");
         auditionButton.setName ("design-audition");
         auditionButton.setEnabled (false);
         styleLabel (status, "Audition starts only when requested. CV mode is always visual-only.", 12.0f);
@@ -716,10 +717,11 @@ struct WaveformWorkspace::Impl
         auditionButton.onClick = [this]
         {
             if (settings.mode == Mode::modulation || auditionSuspended) return;
-            if (owner.isAuditionActive && owner.isAuditionActive ())
+            if ((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
             {
                 if (owner.onStopAudition) owner.onStopAudition ();
                 auditionError.clear ();
+                rangePauseReason.clear ();
             }
             else if (auditionPayload && displayedGeneration == generation && owner.onStartAudition)
             {
@@ -746,8 +748,12 @@ struct WaveformWorkspace::Impl
             if (settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange)
             {
                 const auto result { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
-                auditionError = result.getErrorMessage ();
-                if (result.failed () && owner.onStopAudition) owner.onStopAudition ();
+                if (isRangePaused ()) rangePauseReason = result.getErrorMessage ();
+                else
+                {
+                    auditionError = result.getErrorMessage ();
+                    if (result.failed () && owner.onStopAudition) owner.onStopAudition ();
+                }
             }
             updateAuditionControls ();
         };
@@ -768,10 +774,11 @@ struct WaveformWorkspace::Impl
             }
             sync (); changed ();
         };
-        shape.box.onChange = [this] { if (! applying) { settings.shape = static_cast<Shape> (shape.box.getSelectedId () - 1); sync (); changed (); } };
+        shape.box.onChange = [this] { if (! applying) { if (isRangePaused ()) clearAudition (); settings.shape = static_cast<Shape> (shape.box.getSelectedId () - 1); sync (); changed (); } };
         preset.box.onChange = [this]
         {
             if (applying || preset.box.getSelectedId () == 0) return;
+            if (isRangePaused ()) clearAudition ();
             const auto selected { static_cast<Shape> (preset.box.getSelectedId () - 1) };
             settings = startingPoint (settings.mode, selected);
             if (settings.mode == Mode::layers) spreadVoices (settings, 7, 24, 300, 0.8);
@@ -805,7 +812,7 @@ struct WaveformWorkspace::Impl
         };
         flat.onClick = [fill] { fill (0); }; ramp.onClick = [fill] { fill (1); }; sine.onClick = [fill] { fill (2); };
         spreadButton.onClick = [this] { spreadVoices (settings, settings.voiceCount, detuneSpread, phaseSpread, panSpread); sync (); changed (); };
-        supersaw.onClick = [this] { settings = startingPoint (Mode::layers, Shape::saw); spreadVoices (settings, 7, 24, 300, 0.8); sync (); changed (); };
+        supersaw.onClick = [this] { if (isRangePaused ()) clearAudition (); settings = startingPoint (Mode::layers, Shape::saw); spreadVoices (settings, 7, 24, 300, 0.8); sync (); changed (); };
         load.onClick = [this] { loadRecipe (); };
         recall.onClick = [this] { recallAssigned (targetChannel.box.getSelectedId () - 1, targetZone.box.getSelectedId () - 1); };
         create.onClick = [this] { exportFiles (); };
@@ -1072,6 +1079,12 @@ struct WaveformWorkspace::Impl
             renderAt = juce::Time::getMillisecondCounterHiRes ();
         }
         auditionError.clear ();
+        rangePauseReason.clear ();
+    }
+
+    bool isRangePaused () const
+    {
+        return owner.isAuditionPausedForRange && owner.isAuditionPausedForRange ();
     }
 
     bool canUpdateLive () const
@@ -1084,17 +1097,20 @@ struct WaveformWorkspace::Impl
     {
         const bool cv { settings.mode == Mode::modulation };
         const bool active { ! cv && owner.isAuditionActive && owner.isAuditionActive () };
-        auditionButton.setButtonText (active ? "Stop audition" : "Start audition");
-        auditionButton.setEnabled (! cv && ! auditionSuspended && (active || (auditionPayload && displayedGeneration == generation && owner.onStartAudition)));
+        const bool paused { ! cv && isRangePaused () };
+        if (! paused) rangePauseReason.clear ();
+        auditionButton.setButtonText (active || paused ? "Stop audition" : "Start audition");
+        auditionButton.setEnabled (! cv && ! auditionSuspended && (active || paused || (auditionPayload && displayedGeneration == generation && owner.onStartAudition)));
         monitorLevel.setEnabled (! cv); monitorTranspose.setEnabled (! cv);
         auditionTitle.setText (cv ? "CV - VISUAL ONLY" : "LIVE AUDITION", juce::dontSendNotification);
-        const auto warn { cv || auditionError.isNotEmpty () };
+        const auto warn { cv || paused || auditionError.isNotEmpty () };
         Theme::bindColour (auditionHint, juce::Label::textColourId, [warn] { return warn ? Theme::warning : Theme::muted; });
         auditionHint.setText (cv ? "CV speaker audition is disabled. Check DC/slow CV with a suitable meter or scope, not speakers."
+                              : paused ? "Audition paused: Transpose is outside the monitor frequency range.\nMove it back into range to resume, or press Stop audition."
                               : auditionError.isNotEmpty () ? auditionError
                               : active ? "Monitor loops continuously; edits update live. Level and transpose do not affect export."
                               : "Start at low speaker/headphone volume. Monitor loops continuously; level/transpose do not affect export.", juce::dontSendNotification);
-        auditionHint.setTooltip (auditionHint.getText ());
+        auditionHint.setTooltip (auditionHint.getText () + (paused && rangePauseReason.isNotEmpty () ? "\n" + rangePauseReason : juce::String {}));
     }
 
     void tick ()
@@ -1150,6 +1166,7 @@ struct WaveformWorkspace::Impl
             preview.data = completed;
             auditionPayload = std::move (completedAudition);
             auditionError = preparedError;
+            rangePauseReason.clear (); // Cached limits belong to the previous render.
             if (! auditionSuspended && owner.onAuditionPayload)
             {
                 owner.onAuditionPayload (settings.mode == Mode::modulation ? WaveformAudition::PayloadPtr {} : auditionPayload);
@@ -1157,13 +1174,20 @@ struct WaveformWorkspace::Impl
                 // outside the audible range. Surface the host's explanation
                 // immediately, without starting anything or probing a device
                 // for an idle/visual-only workspace.
-                if (wasAuditioning && settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange)
+                // A paused render must not restart itself by reapplying the
+                // same monitor values. Only a subsequent transpose gesture
+                // may resume; explicit stop/device changes cancel that intent.
+                if (wasAuditioning && ! isRangePaused () && settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange)
                 {
                     const auto monitor { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
                     if (monitor.failed ())
                     {
-                        auditionError = monitor.getErrorMessage ();
-                        if (owner.onStopAudition) owner.onStopAudition ();
+                        if (isRangePaused ()) rangePauseReason = monitor.getErrorMessage ();
+                        else
+                        {
+                            auditionError = monitor.getErrorMessage ();
+                            if (owner.onStopAudition) owner.onStopAudition ();
+                        }
                     }
                 }
             }

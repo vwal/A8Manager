@@ -1,5 +1,6 @@
 #include "Assimil8or/Audio/AudioPlayer.h"
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 struct WaveformAuditionRoutingTestAccess
@@ -87,6 +88,15 @@ struct WaveformAuditionRoutingTestAccess
             }
         }
         check (positive && negative, "Shared device callback renders designer waveform, not stale DC sample");
+        check (player.setWaveformMonitor (-18.0, -48.0).failed () && player.isWaveformAuditionPausedForRange (),
+               "AudioPlayer exposes range-pause intent separately from output activity");
+        drain ();
+        check (! player.isWaveformAuditionActive () && player.isWaveformAuditionPausedForRange () && player.waveformSelected
+               && block.getMagnitude (0, 128) == 0.0f && player.playState == State::stop,
+               "A fully faded range pause keeps the designer route silent without leaking the old sample");
+        check (player.setWaveformMonitor (-18.0, 0.0).wasOk () && player.isWaveformAuditionActive () && ! player.isWaveformAuditionPausedForRange (),
+               "An in-range transpose return resumes through the shared output without a new Start request");
+        drain ();
         player.handlePlayState (State::stop); // e.g. old sample invalidated by a scan/cache notification.
         check (player.isWaveformAuditionActive () && player.waveformSelected, "Unrelated sample-stop callbacks cannot interrupt designer route");
         player.stopWaveformAudition ();
@@ -95,8 +105,13 @@ struct WaveformAuditionRoutingTestAccess
                "Designer stop fades to silence and never resumes the old sample");
 
         check (player.startWaveformAudition ().wasOk (), "Designer explicitly restarts after stop");
+        drain ();
+        check (player.setWaveformMonitor (-18.0, -48.0).failed () && player.isWaveformAuditionPausedForRange (), "Sample takeover starts from an armed range pause");
         player.audioPlayerProperties.setPlayState (State::loop, true);
-        check (! player.isWaveformAuditionActive () && ! player.waveformSelected, "Sample Play immediately relinquishes designer ownership");
+        check (! player.isWaveformAuditionActive () && ! player.isWaveformAuditionPausedForRange () && ! player.waveformSelected,
+               "Sample Play immediately cancels range-resume intent and relinquishes designer ownership");
+        check (player.setWaveformMonitor (-18.0, 0.0).wasOk () && ! player.isWaveformAuditionActive (),
+               "Later valid transpose cannot resurrect designer playback over a selected sample");
         drain ();
         check (block.getMagnitude (0, 0, 128) > 0.1f, "Sample playback resumes only after its explicit Play request");
         player.setWaveformAuditionPayload (payloadFor (8192));
@@ -107,20 +122,37 @@ struct WaveformAuditionRoutingTestAccess
         check (player.audioPlayerProperties.getAuditionRate () == 1.5 && ! player.audioPlayerProperties.getPreservePitch ()
                && player.audioPlayerProperties.getSampleSource () == sourceBefore && player.presetProperties.getValueTree ().isEquivalentTo (presetBefore),
                "Designer monitoring never changes sample audition preferences, assignments or preset values");
+        drain ();
+        check (player.setWaveformMonitor (-9.0, -48.0).failed () && player.isWaveformAuditionPausedForRange (), "Null-payload cancellation starts from range pause");
         player.setWaveformAuditionPayload (nullptr);
         drain ();
-        check (! player.isWaveformAuditionActive () && block.getMagnitude (0, 128) < 1.0e-8f && player.startWaveformAudition ().failed (),
+        check (! player.isWaveformAuditionActive () && ! player.isWaveformAuditionPausedForRange () && block.getMagnitude (0, 128) < 1.0e-8f && player.startWaveformAudition ().failed (),
                "CV/invalid-source clearing stops the designer and blocks stale payload restart");
         player.setWaveformAuditionPayload (payload);
+        check (player.setWaveformMonitor (-18.0, 0.0).wasOk () && ! player.isWaveformAuditionActive (), "New valid payload and transpose remain idle after null invalidation");
         check (player.startWaveformAudition ().wasOk (), "A new valid payload is restartable");
+        drain ();
+        check (player.setWaveformMonitor (-18.0, -48.0).failed () && player.isWaveformAuditionPausedForRange (), "Device removal cancellation starts from range pause");
         player.releaseResources ();
-        check (! player.isWaveformAuditionActive () && player.startWaveformAudition ().failed (), "Device removal stops audio and refuses restart");
+        check (! player.isWaveformAuditionActive () && ! player.isWaveformAuditionPausedForRange () && player.startWaveformAudition ().failed (), "Device removal clears range intent, stops audio and refuses restart");
         player.prepareToPlay (128, 44100.0);
+        player.setWaveformMonitor (-18.0, 0.0);
         check (! player.isWaveformAuditionActive () && player.startWaveformAudition ().wasOk (), "Device-rate change requires explicit restart with retained design");
+        drain ();
+        player.setWaveformMonitor (-18.0, -48.0);
+        check (player.isWaveformAuditionPausedForRange (), "Invalid monitor-level fixture pauses");
+        check (player.setWaveformMonitor (std::numeric_limits<double>::quiet_NaN (), 0.0).failed () && ! player.isWaveformAuditionPausedForRange (),
+               "Nonfinite monitor level is a hard cancellation, not a resumable range event");
+        check (player.setWaveformMonitor (-18.0, 0.0).wasOk (), "Normal controls remain usable after invalid level cancellation");
+        drain ();
+        check (! player.isWaveformAuditionActive (), "Correcting invalid monitor controls does not silently restart audio");
+        check (player.startWaveformAudition ().wasOk (), "Explicit restart before shutdown test");
+        drain ();
+        player.setWaveformMonitor (-18.0, -48.0);
         player.shutdownAudio ();
         check (observer.getOutputDeviceName ().isEmpty (), "Shutdown publishes no active output");
         process ();
-        check (! player.isWaveformAuditionActive () && player.startWaveformAudition ().failed () && block.getMagnitude (0, 128) < 1.0e-8f,
+        check (! player.isWaveformAuditionActive () && ! player.isWaveformAuditionPausedForRange () && player.startWaveformAudition ().failed () && block.getMagnitude (0, 128) < 1.0e-8f,
                "Shutdown leaves shared output silent and unavailable");
         std::cout << "PASS: actual AudioPlayer designer/sample arbitration, stale completion isolation, monitor independence, invalidation and device shutdown/restart\n";
     }

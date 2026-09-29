@@ -63,10 +63,164 @@ namespace
             for (int frame { 0 }; frame < audio.getNumSamples (); ++frame)
                 check (std::isfinite (audio.getSample (channel, frame)) && std::abs (audio.getSample (channel, frame)) <= 0.980001f, "Audition output is finite and safety-bounded");
     }
+
+    void testRangePause ()
+    {
+        auto settings { startingPoint (Mode::oscillator, Shape::sine) };
+        const auto clean { payloadFor (settings) };
+        WaveformAudition player;
+        player.prepareToPlay (48000.0);
+        player.setPayload (clean);
+        const auto lower { 12.0 * std::log2 (20.0 / 93.75) };
+        const auto below { std::nextafter (lower, -std::numeric_limits<double>::infinity ()) };
+        check (player.setTransposeSemitones (below).failed () && ! player.isPausedForRange (), "An idle out-of-range edit cannot arm automatic resumption");
+        check (player.start ().failed () && ! player.isPausedForRange (), "A failed start cannot arm automatic resumption");
+        check (player.setTransposeSemitones (lower).wasOk () && player.isReady () && ! player.isActive (), "The exact 20 Hz floor is inclusive without auto-starting idle audio");
+        check (player.start ().wasOk (), "An explicit start works at the exact lower boundary");
+        collect (player, 4096);
+        auto status { player.setTransposeSemitones (below) };
+        check (status.failed () && player.isPausedForRange () && status.getErrorMessage ().contains ("20 Hz")
+               && status.getErrorMessage ().contains ("st steps"), "Crossing the lower boundary pauses active audio with actionable range guidance");
+        const auto paused { collect (player, 2048) };
+        check (! player.isActive () && player.isPausedForRange () && paused.getMagnitude (1024, 1024) == 0.0f,
+               "Range pause ramps fully to silence while preserving independent resume intent");
+        check (player.setTransposeSemitones (-48.0).failed () && player.setTransposeSemitones (-48.0).failed () && player.isPausedForRange (),
+               "Repeated out-of-range edits retain intent without repeatedly starting sound");
+        check (player.setTransposeSemitones (lower).wasOk () && ! player.isPausedForRange () && player.isActive (),
+               "Returning exactly to 20 Hz resumes an already-started audition automatically");
+        collect (player, 12000);
+        const auto boundaryAudio { collect (player, 48000) };
+        check (std::abs (frequency (boundaryAudio, 0, 48000.0) - 20.0) < 0.01, "Resumed lower-boundary playback runs at its intended frequency");
+
+        player.setTransposeSemitones (0.0);
+        collect (player, 12000);
+        auto before { collect (player, 1) };
+        check (player.setTransposeSemitones (-48.0).failed (), "Quick-return fixture enters range pause");
+        const auto fade { collect (player, 32) };
+        check (player.setTransposeSemitones (0.0).wasOk () && ! player.isPausedForRange () && player.isActive (),
+               "Returning before the fade finishes reverses it without waiting for silence");
+        const auto resumed { collect (player, 1024) };
+        double largest { std::abs (fade.getSample (0, 0) - before.getSample (0, 0)) };
+        for (int frame { 1 }; frame < fade.getNumSamples (); ++frame)
+            largest = std::max (largest, std::abs (static_cast<double> (fade.getSample (0, frame)) - fade.getSample (0, frame - 1)));
+        largest = std::max (largest, std::abs (static_cast<double> (resumed.getSample (0, 0)) - fade.getSample (0, fade.getNumSamples () - 1)));
+        for (int frame { 1 }; frame < resumed.getNumSamples (); ++frame)
+            largest = std::max (largest, std::abs (static_cast<double> (resumed.getSample (0, frame)) - resumed.getSample (0, frame - 1)));
+        check (largest < 0.005, "Fast out-and-back transpose changes remain smoothly ramped");
+        player.setPlaying (false);
+        check (player.setTransposeSemitones (-48.0).failed () && ! player.isPausedForRange (),
+               "A pending explicit-stop ramp is not mistaken for active playback intent");
+        check (player.setTransposeSemitones (0.0).wasOk (), "Return after explicit stop is a valid control edit");
+        collect (player, 2048);
+        check (! player.isActive () && ! player.isPausedForRange (), "An explicit stop wins over rapid range changes");
+
+        for (const auto rate : { 8000.0, 48000.0 })
+        {
+            settings.cycleFrames = 64;
+            settings.sampleRate = 96000.0;
+            player.prepareToPlay (rate);
+            player.setPayload (payloadFor (settings));
+            player.setTransposeSemitones (0.0);
+            check (player.start ().wasOk (), "Upper-boundary fixture starts");
+            collect (player, 2048);
+            const auto upper { 12.0 * std::log2 (std::min (20000.0, rate * 0.5) / 1500.0) };
+            status = player.setTransposeSemitones (upper);
+            check (status.failed () && player.isPausedForRange () && ! player.isReady (),
+                   "The exact device-Nyquist/20 kHz ceiling is exclusive");
+            collect (player, 2048);
+            check (player.setTransposeSemitones (std::nextafter (upper, -std::numeric_limits<double>::infinity ())).wasOk ()
+                   && player.isReady () && player.isActive () && ! player.isPausedForRange (),
+                   "A transpose immediately below the exclusive ceiling resumes safely");
+            checkBounded (collect (player, 2048));
+        }
+
+        auto bank { startingPoint (Mode::layers, Shape::sine) };
+        bank.cycleFrames = 128;
+        bank.voiceCount = 2;
+        bank.voices[0].detuneCents = -1200.0;
+        bank.voices[1].detuneCents = 1200.0;
+        player.prepareToPlay (8000.0);
+        player.setPayload (payloadFor (bank));
+        player.setTransposeSemitones (0.0);
+        check (player.start ().wasOk (), "Bank range fixture starts with both detuned voices in range");
+        collect (player, 1024);
+        const auto bankUpper { 12.0 * std::log2 (4000.0 / 750.0) };
+        check (player.setTransposeSemitones (bankUpper).failed () && player.isPausedForRange (), "The highest detuned bank voice determines the upper guard");
+        collect (player, 1024);
+        check (player.setTransposeSemitones (0.0).wasOk () && player.isActive (), "The entire bank resumes together when every voice is in range");
+        const auto bankLower { 12.0 * std::log2 (20.0 / 187.5) };
+        check (player.setTransposeSemitones (std::nextafter (bankLower, -std::numeric_limits<double>::infinity ())).failed () && player.isPausedForRange (),
+               "The lowest detuned bank voice determines the lower guard");
+        check (player.setTransposeSemitones (bankLower).wasOk () && player.isActive (), "The bank's exact inclusive lower boundary is accepted");
+
+        player.prepareToPlay (48000.0);
+        player.setPayload (clean);
+        player.setTransposeSemitones (0.0);
+        check (player.start ().wasOk (), "Live-render range fixture starts");
+        collect (player, 1024);
+        auto subAudio { startingPoint (Mode::oscillator, Shape::sine) };
+        subAudio.cycleFrames = 8192;
+        const auto low { payloadFor (subAudio) };
+        player.setPayload (low);
+        check (player.isPausedForRange (), "An active render update moving frequency out of range pauses with intent");
+        collect (player, 2048);
+        player.setPayload (low);
+        player.setPayload (clean);
+        check (player.isPausedForRange () && player.isReady () && ! player.isActive (), "Later valid render publication alone never resumes a paused monitor");
+        player.setMonitorGain (0.1);
+        check (player.setTransposeSemitones (0.0).wasOk () && player.isPausedForRange () && ! player.isActive (),
+               "A monitor-level update with unchanged transpose cannot consume range-resume intent");
+        check (player.setTransposeSemitones (1.0).wasOk () && player.isActive () && ! player.isPausedForRange (),
+               "An actual valid transpose adjustment resumes the newly published design");
+
+        auto pause = [&] ()
+        {
+            player.setPayload (clean);
+            player.setTransposeSemitones (0.0);
+            check (player.start ().wasOk (), "Cancellation fixture starts explicitly");
+            collect (player, 1024);
+            check (player.setTransposeSemitones (-48.0).failed () && player.isPausedForRange (), "Cancellation fixture is range-paused");
+        };
+        auto remainsStopped = [&] ()
+        {
+            check (! player.isPausedForRange (), "Explicit cancellation removes pending resume intent immediately");
+            player.setPayload (clean);
+            player.setTransposeSemitones (0.0);
+            collect (player, 2048);
+            check (! player.isActive () && ! player.isPausedForRange (), "Valid later controls or payloads cannot resurrect canceled audition");
+        };
+        pause (); player.setPlaying (false); remainsStopped ();
+        pause (); player.stopImmediately (); remainsStopped ();
+        pause (); player.setPayload (nullptr); remainsStopped ();
+        pause (); check (player.start ().failed (), "An explicit out-of-range start fails"); remainsStopped ();
+        pause (); player.prepareToPlay (44100.0); remainsStopped ();
+        pause (); player.prepareToPlay (std::numeric_limits<double>::quiet_NaN ());
+        check (! player.isPausedForRange () && ! player.isReady (), "Invalid/unprepared device state clears range-resume intent");
+        player.prepareToPlay (48000.0); remainsStopped ();
+        for (const auto invalid : { std::numeric_limits<double>::quiet_NaN (), std::numeric_limits<double>::infinity (), 49.0, -49.0 })
+        {
+            pause (); check (player.setTransposeSemitones (invalid).failed (), "Invalid controls are rejected, not treated as an audible-range pause"); remainsStopped ();
+        }
+        for (const auto invalid : { std::numeric_limits<double>::quiet_NaN (), -0.1, 1.1 })
+        { pause (); player.setMonitorGain (invalid); remainsStopped (); }
+
+        auto silent { startingPoint (Mode::oscillator, Shape::sine) };
+        silent.amplitude = 0.0;
+        player.setPayload (payloadFor (silent));
+        player.setTransposeSemitones (0.0);
+        player.setMonitorGain (0.5);
+        check (player.start ().wasOk (), "Silent waveform still has an explicit audition lifecycle");
+        collect (player, 1024);
+        check (player.setTransposeSemitones (-48.0).failed () && player.isPausedForRange (), "Silent PCM does not defeat fundamental-frequency guards");
+        collect (player, 2048);
+        check (player.setTransposeSemitones (0.0).wasOk () && player.isActive (), "Silent waveforms preserve the same pause/resume semantics");
+        check (collect (player, 2048).getMagnitude (0, 2048) == 0.0f, "Resuming an all-zero source remains silent");
+    }
 }
 
 void testWaveformAudition ()
 {
+    testRangePause ();
     using namespace WaveformDesign;
     auto sine { startingPoint (Mode::oscillator, Shape::sine) };
     WaveformAudition player;

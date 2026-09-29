@@ -318,15 +318,32 @@ audio devices or hardware are used.
   background preview, including CV matching, curve editing and layer settings.
   A fake audio host checks explicit start/stop, monitor-only controls, live
   updates during continuous dragging, bank payloads, CV exclusion and workspace
-  lifecycle. Compact and expanded previews are rendered without native windows;
+  lifecycle. A second path connects the real monitor engine to the workspace:
+  the full ±48-semitone slider remains available, out-of-range playback pauses,
+  Stop remains accessible after the fade, and an intentional valid Transpose
+  change resumes. Gain-only edits and newly valid renders cannot restart it;
+  failed Start never arms it. Shape/starting-point, mode, navigation and device
+  changes cancel the pending resume. Compact and expanded previews are rendered
+  without native windows;
   optional offscreen screenshots use `A8MANAGER_TEST_ARTIFACTS`.
 - **WaveformAuditionRegression** checks the production monitor's generated audio
   blocks, including tuning, layered voice mixing, rate conversion, DC removal,
-  fades, live updates, bounded output and invalid/CV rejection. No device opens.
+  fades, live updates, bounded output and invalid/CV rejection. Range-pause tests
+  check the inclusive 20 Hz floor, exclusive 20 kHz/device-Nyquist ceiling,
+  both detuned-bank extremes, full silence after the fade, smooth quick returns
+  and resumption at the intended pitch. Idle edits, failed starts, explicit
+  stops, missing payloads, invalid controls and device resets cannot leave a
+  latent restart; new renders or gain-only changes cannot resume a paused
+  monitor. These are exact software frequency/lifecycle checks, not measurements
+  of speaker response. No device opens.
 - **WaveformAuditionRoutingRegression** exercises the real AudioPlayer callback
   with in-memory sources: exclusive sample/designer routing, cleared stale
   completion state, explicit restart after device changes, stopped-source
-  silence, and unchanged sample audition settings.
+  silence, and unchanged sample audition settings. A fully faded range pause
+  cannot leak an old sample; valid Transpose resumes the existing designer route.
+  Sample takeover, CV/missing-payload clearing, device removal and invalid
+  monitor levels cancel resume intent so later control edits cannot reclaim
+  the output unexpectedly.
 - **WaveformDurationRegression** checks source/sample/loop duration matching,
   zone pitch, fractional loop ends and invalid/unloaded data. The existing
   StereoChannelUiRegression also checks the real selected-editor binding,

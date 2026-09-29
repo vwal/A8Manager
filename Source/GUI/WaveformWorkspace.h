@@ -30,6 +30,7 @@ public:
     std::function<void ()> onStopAudition;
     std::function<juce::Result (double monitorDb, double transposeSemitones)> onAuditionMonitorChange;
     std::function<bool ()> isAuditionActive;
+    std::function<bool ()> isAuditionPausedForRange;
 
 private:
     friend struct WaveformWorkspaceTestAccess;
