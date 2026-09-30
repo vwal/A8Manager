@@ -11,11 +11,28 @@
 #include "../../../Assimil8or/Preset/PresetHelpers.h"
 #include "../../../Assimil8or/Preset/StereoChannelTools.h"
 #include "../../../Assimil8or/Audio/WaveformDesignRecall.h"
+#include "../../../Assimil8or/Audio/AudioPlayer.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Debug/DumpStack.h"
 #include "oolib/GUI/ErrorHelpers.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include <algorithm>
+#include <atomic>
+
+struct Assimil8orEditorComponent::StereoCollapseJob
+{
+    PresetEditSession::Snapshot source;
+    StereoCollapse::Result prepared;
+    juce::Result outcome { juce::Result::fail ("Stereo conversion did not finish.") };
+    int selectedZone { 0 };
+    bool committed { false };
+    std::atomic<bool> deliveryFailed { false };
+
+    ~StereoCollapseJob ()
+    {
+        if (! committed) StereoCollapse::cleanup (prepared);
+    }
+};
 
 std::optional<double> Assimil8orEditorComponent::getSelectedDuration (int region)
 {
@@ -45,6 +62,21 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
         juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, title, message, "Purge", "Cancel", nullptr,
             juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
     };
+    confirmStereoCollapse = [] (const juce::String& title, const juce::String& message, std::function<void (bool)> callback)
+    {
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, title, message, "Create mono", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
+    };
+    notifyStereoCollapse = [] (bool error, const juce::String& title, const juce::String& message)
+    {
+        juce::AlertWindow::showMessageBoxAsync (error ? juce::AlertWindow::WarningIcon : juce::AlertWindow::InfoIcon, title, message);
+    };
+    dispatchStereoCollapse = [] (std::function<void ()> completion) { return juce::MessageManager::callAsync (std::move (completion)); };
+    prepareStereoCollapse = [] (const juce::File& folder, const juce::ValueTree& preset, int channel,
+                                 StereoCollapse::Mode mode, StereoCollapse::Result& result)
+    {
+        return StereoCollapse::prepare (folder, preset, channel, mode, result);
+    };
 
     auto setupButton = [this] (juce::TextButton& button, juce::String text, std::function<void ()> buttonFunction)
     {
@@ -59,6 +91,17 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
     setupButton (saveButton, "SAVE", [this] () { savePreset ();  });
     saveButton.setTooltip ("Save the current Preset");
     saveButton.setEnabled (false);
+    savePendingLabel.setName ("preset-save-pending");
+    savePendingLabel.setText ("SAVE IS PENDING", juce::dontSendNotification);
+    savePendingLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    savePendingLabel.setBorderSize ({ 0, 8, 0, 8 });
+    savePendingLabel.setMinimumHorizontalScale (1.0f);
+    savePendingLabel.setJustificationType (juce::Justification::centred);
+    savePendingLabel.setTooltip ("This preset has changes that have not been saved. Click SAVE to preserve them. Changing channels does not save the preset.");
+    Theme::bindColour (savePendingLabel, juce::Label::textColourId, [] { return Theme::isLight () ? juce::Colours::white : Theme::field; });
+    Theme::bindColour (savePendingLabel, juce::Label::backgroundColourId, [] { return Theme::warning; });
+    Theme::bindColour (savePendingLabel, juce::Label::outlineColourId, [] { return Theme::warning; });
+    addChildComponent (savePendingLabel);
 
     for (auto curChannelIndex { 0 }; curChannelIndex < 8; ++curChannelIndex)
         channelTabs.addTab ("CH " + juce::String::charToString ('1' + curChannelIndex), Theme::panel, &channelEditors [curChannelIndex], false);
@@ -86,6 +129,17 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
     //addChildComponent (midiConfigWindow);
 
     startTimer (250);
+}
+
+Assimil8orEditorComponent::~Assimil8orEditorComponent ()
+{
+    stopTimer ();
+    ++stereoCollapseConfirmation;
+    if (stereoCollapseThread.joinable ()) stereoCollapseThread.join ();
+    // A queued completion may outlive this editor. Remove only still-owned,
+    // unapplied outputs now; its shared job also cleans up if delivery is lost.
+    if (stereoCollapseJob && ! stereoCollapseJob->committed)
+        StereoCollapse::cleanup (stereoCollapseJob->prepared);
 }
 
 void Assimil8orEditorComponent::setupPresetComponents ()
@@ -555,6 +609,164 @@ void Assimil8orEditorComponent::addChannelPurgeMenuItem (juce::PopupMenu& menu, 
     });
 }
 
+void Assimil8orEditorComponent::addStereoCollapseMenu (juce::PopupMenu& menu, int channelIndex)
+{
+    const auto source { channelActionSession.snapshot () };
+    const auto enabled { source && ! stereoCollapseConfirming && ! stereoCollapseJob
+        && StereoCollapse::pairLeftIndex (source->preset, channelIndex) >= 0 };
+    auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+    juce::PopupMenu choices;
+    const std::array<std::pair<const char*, StereoCollapse::Mode>, 3> modes {{
+        { "Merge L/R...", StereoCollapse::Mode::merge },
+        { "Keep left...", StereoCollapse::Mode::keepLeft },
+        { "Keep right...", StereoCollapse::Mode::keepRight } }};
+    for (const auto& [label, mode] : modes)
+        choices.addItem (label, enabled, false, [safe, source, channelIndex, mode]
+        {
+            if (safe != nullptr && source) safe->requestStereoCollapse (*source, channelIndex, mode);
+        });
+    menu.addSubMenu ("Collapse stereo to mono", choices, enabled);
+}
+
+void Assimil8orEditorComponent::requestStereoCollapse (const PresetEditSession::Snapshot& source, int channelIndex, StereoCollapse::Mode mode)
+{
+    if (stereoCollapseConfirming || stereoCollapseJob || ! channelActionSession.matches (source)) return;
+    const auto left { StereoCollapse::pairLeftIndex (source.preset, channelIndex) };
+    if (left < 0) return;
+    auto zones { 0 };
+    for (const auto& zone : source.preset.getChild (left))
+        if (zone.getProperty (ZoneProperties::SamplePropertyId).toString ().isNotEmpty ()) ++zones;
+    const auto channels { "CH " + juce::String (left + 1) + "-L and CH " + juce::String (left + 2) + "-R" };
+    const auto action { mode == StereoCollapse::Mode::merge ? "Merge the left and right audio as (L + R) / 2. Opposite-phase material can cancel."
+        : mode == StereoCollapse::Mode::keepLeft ? "Keep only the left audio; the right audio is not included in the new mono files."
+                                               : "Keep only the right audio; the left audio is not included in the new mono files." };
+    juce::String groupWarning;
+    if (left + 2 < kNumChannels)
+    {
+        const auto followingMode { static_cast<int> (source.preset.getChild (left + 2).getProperty (ChannelProperties::ChannelModePropertyId)) };
+        if (followingMode == ChannelProperties::link || followingMode == ChannelProperties::cycle)
+            groupWarning = "\n\nThe following channel uses " + juce::String (followingMode == ChannelProperties::link ? "Link" : "Cycle")
+                + " mode. Freeing CH " + juce::String (left + 2) + " may change its group relationship; review linked/cycled channels afterward.";
+    }
+    stereoCollapseConfirming = true;
+    const auto request { ++stereoCollapseConfirmation };
+    auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+    confirmStereoCollapse ("Collapse " + channels + " to mono?",
+        juce::String (action) + "\n\nThis applies to all " + juce::String (zones) + " populated zones of this pair, not just the selected zone. "
+        "New mono WAVs will be created in the current folder. Original WAVs are never overwritten or deleted.\n\n"
+        "CH " + juce::String (left + 1) + " keeps the left/master channel settings and zone markers. CH " + juce::String (left + 2)
+        + " is cleared and becomes an independent channel. Other channel settings are unchanged. Click SAVE afterward to write the preset." + groupWarning,
+        [safe, source, channelIndex, mode, request] (bool accepted)
+        {
+            if (safe == nullptr || safe->stereoCollapseConfirmation != request) return;
+            ++safe->stereoCollapseConfirmation;
+            safe->stereoCollapseConfirming = false;
+            if (! accepted) return;
+            if (! safe->channelActionSession.matches (source))
+            {
+                safe->notifyStereoCollapse (true, "Stereo conversion cancelled", "The preset or folder changed while confirming. Nothing was changed; reopen Channel tools and try again.");
+                return;
+            }
+            safe->startStereoCollapse (source, channelIndex, mode);
+        });
+}
+
+void Assimil8orEditorComponent::stopStereoCollapseAudition ()
+{
+    audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+    SystemServices services (runtimeRootProperties.getValueTree (), SystemServices::WrapperType::client, SystemServices::EnableCallbacks::no);
+    if (auto* player { services.getAudioPlayer () }) player->stopWaveformAudition ();
+}
+
+void Assimil8orEditorComponent::startStereoCollapse (const PresetEditSession::Snapshot& source, int channelIndex, StereoCollapse::Mode mode)
+{
+    if (stereoCollapseJob || ! channelActionSession.matches (source)) return;
+    const auto left { StereoCollapse::pairLeftIndex (source.preset, channelIndex) };
+    if (left < 0) return;
+    if (stereoCollapseThread.joinable ()) stereoCollapseThread.join ();
+    stopStereoCollapseAudition ();
+    auto job { std::make_shared<StereoCollapseJob> () };
+    job->source = source;
+    job->selectedZone = channelEditors[left].getSelectedZoneIndex ();
+    stereoCollapseJob = job;
+    auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+    try
+    {
+        stereoCollapseThread = std::thread ([safe, job, channelIndex, mode, prepare = prepareStereoCollapse, dispatch = dispatchStereoCollapse]
+        {
+            try { job->outcome = prepare (job->source.folder, job->source.preset, channelIndex, mode, job->prepared); }
+            catch (...) { job->outcome = juce::Result::fail ("Unexpected failure while preparing the mono files."); }
+            bool delivered { false };
+            try
+            {
+                delivered = dispatch ([safe, job]
+                {
+                    if (safe != nullptr) safe->finishStereoCollapse (job);
+                });
+            }
+            catch (...) {}
+            if (! delivered)
+            {
+                const auto removed { StereoCollapse::cleanup (job->prepared) };
+                job->outcome = juce::Result::fail ("Could not deliver the stereo conversion result; the preset was not changed. " + removed.getErrorMessage ());
+                // The message-thread timer can report a rejected delivery; if
+                // shutdown has begun, the owned job/destructor still cleans up.
+                job->deliveryFailed.store (true);
+            }
+        });
+    }
+    catch (...)
+    {
+        job->outcome = juce::Result::fail ("Could not start the mono conversion. Please try again.");
+        finishStereoCollapse (job);
+    }
+}
+
+void Assimil8orEditorComponent::finishStereoCollapse (std::shared_ptr<StereoCollapseJob> job)
+{
+    if (stereoCollapseJob != job) return;
+    auto result { job->outcome };
+    if (result.wasOk () && ! channelActionSession.matches (job->source))
+        result = juce::Result::fail ("The preset or folder changed while creating the mono files. Your current edits were not replaced; reopen Channel tools and try again.");
+    const auto left { job->prepared.leftChannel };
+    if (result.wasOk () && (left < 0 || left >= 7 || StereoCollapse::pairLeftIndex (job->source.preset, left) != left
+        || ! job->prepared.editedPreset.hasType (PresetProperties::PresetTypeId) || job->prepared.editedPreset.getNumChildren () != 8
+        || job->prepared.editedPreset.getProperty (PresetProperties::IdPropertyId) != job->source.preset.getProperty (PresetProperties::IdPropertyId)))
+        result = juce::Result::fail ("The prepared mono preset did not match the requested stereo pair. Nothing was changed.");
+    if (result.failed ())
+    {
+        const auto removed { StereoCollapse::cleanup (job->prepared) };
+        auto message { result.getErrorMessage () };
+        if (removed.failed ()) message += "\n\n" + removed.getErrorMessage ();
+        stereoCollapseJob.reset ();
+        notifyStereoCollapse (true, "Cannot collapse stereo to mono", message);
+        return;
+    }
+
+    stopStereoCollapseAudition ();
+    // The guard above is the last stale check. Unpair R first, then copy the
+    // prepared snapshot without replacing any live ValueTree identities. Calling
+    // session.apply after unpairing would correctly reject our own first edit.
+    channelProperties[left + 1].setChannelMode (ChannelProperties::ChannelMode::master, false);
+    // Remove the old right-side CV references before resetting its settings;
+    // otherwise CV safety callbacks would force the newly empty channel muted.
+    for (int zone { 0 }; zone < kNumZones; ++zone)
+        ZoneProperties (channelProperties[left + 1].getZoneVT (zone), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no)
+            .copyFrom (job->prepared.editedPreset.getChild (left + 1).getChild (zone), false);
+    PresetProperties::copyTreeProperties (job->prepared.editedPreset, presetProperties.getValueTree ());
+    job->committed = true;
+    channelTabs.setCurrentTabIndex (left);
+    channelEditors[left].setSelectedZoneFromPartner (juce::jlimit (0, 7, job->selectedZone));
+    channelEditors[left + 1].setSelectedZoneFromPartner (0);
+    updateAllChannelTabNames ();
+    updateSaveIndicator ();
+    stereoCollapseJob.reset ();
+    notifyStereoCollapse (false, "Stereo pair converted to mono",
+        "CH " + juce::String (left + 1) + " now uses mono WAVs; CH " + juce::String (left + 2) + " is free.\n\nCreated "
+        + juce::String (job->prepared.createdFiles.size ()) + " mono file(s) in:\n" + job->source.folder.getFullPathName ()
+        + "\n\nOriginal WAVs are unchanged. SAVE IS PENDING: click SAVE to write these preset changes.");
+}
+
 juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIndex)
 {
     juce::PopupMenu toolsMenu;
@@ -565,6 +777,7 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIn
     {
         // Opening Tools on R must not expose independent zone/clone operations.
         addChannelDefaultMenuItem (toolsMenu, channelIndex);
+        addStereoCollapseMenu (toolsMenu, channelIndex);
         addChannelPurgeMenuItem (toolsMenu, channelIndex);
         return toolsMenu;
     }
@@ -635,6 +848,7 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIn
         channelProperties[channelIndex].copyFrom (unEditedPresetProperties.getChannelVT (channelIndex));
     });
     toolsMenu.addSeparator ();
+    addStereoCollapseMenu (toolsMenu, channelIndex);
     addChannelPurgeMenuItem (toolsMenu, channelIndex);
     return toolsMenu;
 }
@@ -688,13 +902,15 @@ void Assimil8orEditorComponent::overwritePresetOrCancel (std::function<void ()> 
         }, std::move (overwriteFunction), std::move (cancelFunction));
 }
 
-void Assimil8orEditorComponent::savePreset ()
+juce::Result Assimil8orEditorComponent::savePreset ()
 {
-    if (appProperties.getMRUList ().isEmpty ()) return;
+    if (appProperties.getMRUList ().isEmpty ()) return juce::Result::fail ("Select a preset folder before saving.");
     const auto presetFile { juce::File (appProperties.getMRUList () [0]) };
     const auto result { PresetFileOperations::save (presetFile, presetProperties.getValueTree (), unEditedPresetProperties.getValueTree ()) };
+    updateSaveIndicator ();
     if (result.failed ())
         juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Preset save failed", result.getErrorMessage () + " Your edits remain unsaved; you can retry or export them.");
+    return result;
 }
 
 void Assimil8orEditorComponent::paint ([[maybe_unused]] juce::Graphics& g)
@@ -1012,13 +1228,15 @@ void Assimil8orEditorComponent::resized ()
     midiSetupLabel.setBounds (topRow.removeFromLeft (75));
     topRow.removeFromLeft (3);
     midiSetupComboBox.setBounds (topRow.removeFromLeft (50));
+    // Preset tools belongs with the preset controls, not the save-status group.
+    topRow.removeFromLeft (8);
+    toolsButton.setBounds (topRow.removeFromLeft (100));
 
     topRow.removeFromRight (3);
     // Save Button
     saveButton.setBounds (topRow.removeFromRight (75));
-    // Tools Button
     topRow.removeFromRight (6);
-    toolsButton.setBounds (topRow.removeFromRight (100));
+    savePendingLabel.setBounds (topRow.removeFromRight (176));
 
     // Channel Tabs
     const auto channelSectionY { titleLabel.getBottom () + 3 };
@@ -1120,5 +1338,15 @@ void Assimil8orEditorComponent::xfadeWidthUiChanged (int group, double width)
 
 void Assimil8orEditorComponent::timerCallback ()
 {
-    saveButton.setEnabled (! PresetHelpers::areEntirePresetsEqual (unEditedPresetProperties.getValueTree (), presetProperties.getValueTree ()));
+    if (stereoCollapseJob && stereoCollapseJob->deliveryFailed.load ())
+        finishStereoCollapse (stereoCollapseJob);
+    updateSaveIndicator ();
+}
+
+void Assimil8orEditorComponent::updateSaveIndicator ()
+{
+    const auto dirty { presetProperties.isValid () && unEditedPresetProperties.isValid ()
+        && ! PresetHelpers::areEntirePresetsEqual (unEditedPresetProperties.getValueTree (), presetProperties.getValueTree ()) };
+    saveButton.setEnabled (dirty);
+    savePendingLabel.setVisible (dirty);
 }

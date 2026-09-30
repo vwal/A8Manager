@@ -13,6 +13,7 @@
 #include "ModernTheme.h"
 #include "WaveformWorkspace.h"
 #include "PresetEditSession.h"
+#include <thread>
 
 class WorkspaceSplitter : public SplitWindowComponent
 {
@@ -31,7 +32,7 @@ class MainComponent : public juce::Component, private juce::Timer
 {
 public:
     MainComponent (juce::ValueTree rootPropertiesVT);
-    ~MainComponent () = default;
+    ~MainComponent () override;
 
     void showWaveformWorkspace (bool show);
     std::function<void (bool)> onWorkspaceChanged;
@@ -55,6 +56,8 @@ private:
     juce::TextEditor designerPresetName;
     juce::TextButton designerSave { "SAVE" }, designerFolder { "Root folder..." };
     bool showingDesigner { false };
+    bool designerSaveBusy { false };
+    std::thread designerSaveThread;
     uint64_t displayedRevision { 0 };
 
     juce::TooltipWindow tooltipWindow;
@@ -62,6 +65,8 @@ private:
     void restoreLayout ();
     void saveLayoutChanges ();
     void updateSharedPresetHeader ();
+    void saveDesignerPreset ();
+    void completeDesignerPresetSave (const PresetEditSession::Snapshot& source, const juce::Result& result, juce::File savedFolder);
     void timerCallback () override;
 
     void resized () override;

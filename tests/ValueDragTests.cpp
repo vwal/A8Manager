@@ -18,11 +18,14 @@ void testWaveformWorkflow ();
 void testAudioAudit ();
 void testAudioFileSafety ();
 void testStereoAssignment ();
+void testStereoCollapse ();
+void testStereoCollapseUi ();
 void testStereoChannelUi ();
 void testPairedZoneEdits ();
 void testWaveformDesign ();
 void testWaveformDesignExport ();
 void testWaveformDesignAssignment ();
+void testPresetFolderCopy ();
 void testSharedPresetSession ();
 void testChannelCvSafety ();
 void testGeneratedSidecarValidator ();
@@ -147,10 +150,13 @@ int main (int argc, char* argv[])
         if (argc == 2 && juce::String (argv[1]) == "--sample-loop-simulation") { testSampleLoopSimulation (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--simulation-ui") { testSimulationUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--channel-purge-ui") { testChannelPurgeUi (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--stereo-collapse") { testStereoCollapse (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--stereo-collapse-ui") { testStereoCollapseUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--generated-sidecar-validator") { testGeneratedSidecarValidator (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--waveform-design-recall") { testWaveformDesignRecall (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--shared-preset-session") { testSharedPresetSession (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--waveform-design-assignment") { testWaveformDesignAssignment (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--preset-folder-copy") { testPresetFolderCopy (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--channel-cv-safety") { testChannelCvSafety (); return 0; }
         if (argc == 2 && juce::String (argv [1]) == "--stereo-channel-ui")
         {

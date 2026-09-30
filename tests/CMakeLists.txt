@@ -54,6 +54,8 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     WaveformDesignTests.cpp
     WaveformDesignExportTests.cpp
     WaveformDesignAssignmentTests.cpp
+    PresetFolderCopyTests.cpp
+    ../Source/Assimil8or/PresetFolderCopy.cpp
     SharedPresetSessionTests.cpp
     ChannelCvSafetyTests.cpp
     GeneratedSidecarValidatorTests.cpp
@@ -74,6 +76,9 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     AudioAuditTests.cpp
     AudioFileSafetyTests.cpp
     StereoAssignmentTests.cpp
+    StereoCollapseTests.cpp
+    StereoCollapseUiTests.cpp
+    ../Source/Assimil8or/Audio/StereoCollapse.cpp
     StereoChannelUiTests.cpp
     ChannelPurgeUiTests.cpp
     SimulationUiTests.cpp
@@ -134,7 +139,7 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
 target_include_directories(A8ManagerInteractionTests PRIVATE ../Source ${OOLIB_INCLUDE_DIR})
 target_compile_features(A8ManagerInteractionTests PRIVATE cxx_std_20)
 target_compile_definitions(A8ManagerInteractionTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_MP3AUDIOFORMAT=0 DONT_SET_USING_JUCE_NAMESPACE=1)
-target_link_libraries(A8ManagerInteractionTests PRIVATE A8ManagerBinaryData signalsmith-stretch juce::juce_audio_utils juce::juce_data_structures juce::juce_dsp juce::juce_recommended_config_flags)
+target_link_libraries(A8ManagerInteractionTests PRIVATE A8ManagerBinaryData signalsmith-stretch juce::juce_audio_utils juce::juce_data_structures juce::juce_dsp juce::juce_cryptography juce::juce_recommended_config_flags)
 set_source_files_properties(../Source/Assimil8or/Audio/AuditionStretch.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O2>")
 add_test(NAME ValueDragRegression COMMAND A8ManagerInteractionTests)
@@ -148,6 +153,8 @@ set_tests_properties(AppearanceRegression PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXP
 add_test(NAME WaveformDesignRegression COMMAND A8ManagerInteractionTests --waveform-design)
 add_test(NAME WaveformDesignExportRegression COMMAND A8ManagerInteractionTests --waveform-design-export)
 add_test(NAME WaveformDesignAssignmentRegression COMMAND A8ManagerInteractionTests --waveform-design-assignment)
+add_test(NAME PresetFolderCopyRegression COMMAND A8ManagerInteractionTests --preset-folder-copy)
+set_tests_properties(PresetFolderCopyRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME SharedPresetSessionRegression COMMAND A8ManagerInteractionTests --shared-preset-session)
 add_test(NAME ChannelCvSafetyRegression COMMAND A8ManagerInteractionTests --channel-cv-safety)
 add_test(NAME GeneratedSidecarValidatorRegression COMMAND A8ManagerInteractionTests --generated-sidecar-validator)
@@ -180,6 +187,9 @@ add_test(NAME StereoPreviewRegression COMMAND A8ManagerInteractionTests --stereo
 add_test(NAME AudioAuditRegression COMMAND A8ManagerInteractionTests --audio-audit)
 add_test(NAME AudioFileSafetyRegression COMMAND A8ManagerInteractionTests --audio-file-safety)
 add_test(NAME StereoAssignmentRegression COMMAND A8ManagerInteractionTests --stereo-assignment)
+add_test(NAME StereoCollapseRegression COMMAND A8ManagerInteractionTests --stereo-collapse)
+add_test(NAME StereoCollapseUiRegression COMMAND A8ManagerInteractionTests --stereo-collapse-ui)
+set_tests_properties(StereoCollapseRegression StereoCollapseUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME StereoChannelUiRegression COMMAND A8ManagerInteractionTests --stereo-channel-ui)
 add_test(NAME ChannelPurgeUiRegression COMMAND A8ManagerInteractionTests --channel-purge-ui)
 set_tests_properties(ChannelPurgeUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")

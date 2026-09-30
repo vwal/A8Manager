@@ -42,6 +42,8 @@ namespace
 
     void checkMonitorLayout (juce::Component& workspace)
     {
+        check (button (workspace, "Back to preset") == nullptr,
+               "Designer navigation uses the shared Samples tab without a duplicate Back action");
         check (find (workspace, "design-audio-settings") == nullptr && button (workspace, "Audio settings...") == nullptr,
                "Designer uses the shared top-right Audio Settings instead of a duplicate local action");
         auto& transpose { control<juce::Component> (workspace, "design-monitor-transpose") };
@@ -57,6 +59,50 @@ namespace
                "Monitor level sits below the audition button");
         check (auditionBounds.getRight () == levelBounds.getRight (),
                "Audition remains right-aligned over Monitor level after removing the duplicate settings action");
+    }
+
+    void checkFooterLayout (juce::Component& workspace)
+    {
+        const auto boundsFor = [&] (const char* name)
+        {
+            auto* component { &control<juce::Component> (workspace, name) };
+            // Include each field's caption, not only the named combobox.
+            if (dynamic_cast<juce::ComboBox*> (component) != nullptr) component = component->getParentComponent ();
+            return workspace.getLocalArea (component, component->getLocalBounds ());
+        };
+        std::vector<juce::Rectangle<int>> controls;
+        for (const auto* name : { "design-assignment-heading", "design-package-heading", "design-target-channel", "design-target-zone",
+                                  "design-export-slot", "design-assign", "design-recall", "design-export", "design-open-export", "design-test-output" })
+        {
+            const auto bounds { boundsFor (name) };
+            check (workspace.getLocalBounds ().contains (bounds) && bounds.getWidth () >= 80 && bounds.getHeight () >= 20,
+                   "Footer controls and complete field captions remain within the workspace at every supported test width");
+            for (const auto& previous : controls)
+                check (! bounds.intersects (previous), "Footer headings, fields and actions never overlap");
+            controls.push_back (bounds);
+        }
+        const auto assignment { boundsFor ("design-assignment-heading") }, package { boundsFor ("design-package-heading") };
+        check (assignment.getY () == package.getY () && assignment.getRight () <= package.getX (),
+               "Current preset heading occupies the left group and separate package heading occupies the right group");
+        for (const auto* name : { "design-target-channel", "design-target-zone", "design-assign", "design-recall" })
+        {
+            const auto bounds { boundsFor (name) };
+            check (bounds.getX () >= assignment.getX () && bounds.getRight () <= assignment.getRight () && bounds.getY () >= assignment.getBottom (),
+                   "Assignment targets, Generate and Recall stay beneath the current-preset heading");
+        }
+        for (const auto* name : { "design-export-slot", "design-export" })
+        {
+            const auto bounds { boundsFor (name) };
+            check (bounds.getX () >= package.getX () && bounds.getRight () <= package.getRight () && bounds.getY () >= package.getBottom (),
+                   "Package preset and Export remain together beneath the separate-package heading");
+        }
+        const auto assign { boundsFor ("design-assign") }, recall { boundsFor ("design-recall") };
+        const auto open { boundsFor ("design-open-export") }, test { boundsFor ("design-test-output") };
+        check (boundsFor ("design-target-channel").getBottom () <= assign.getY () && boundsFor ("design-export").getBottom () <= test.getY (),
+               "Target fields and package export occupy the row above Generate, Recall, Open and Test output");
+        check (assign.getY () == recall.getY () && assign.getY () == open.getY () && assign.getY () == test.getY ()
+               && assign.getRight () <= recall.getX () && recall.getRight () <= open.getX () && open.getRight () <= test.getX (),
+               "Lower actions run left-to-right as Generate, Recall, Open in Sample workspace and Test output");
     }
 
     void snapshot (juce::Component& workspace, const juce::String& name)
@@ -98,18 +144,38 @@ struct WaveformWorkspaceTestAccess
         click (workspace, "Test output...");
         check (opened == 1 && applied == 0 && juce::JSON::toString (toJson (workspace.getSettings ())) == before,
                "Entering hardware tests neither assigns a preset nor edits the design");
-        auto& test { control<juce::Button> (workspace, "design-test-output") };
-        auto& create { control<juce::Button> (workspace, "design-export") };
         auto& open { control<juce::Button> (workspace, "design-open-export") };
         open.setVisible (true);
         for (const auto width : { 975, 1117, 1400 })
         {
             workspace.setSize (width, 732);
             workspace.resized ();
-            check (workspace.getLocalBounds ().contains (test.getBounds ()) && ! test.getBounds ().intersects (create.getBounds ())
-                   && ! test.getBounds ().intersects (open.getBounds ()), "Hardware test action fits the compact export row without overlapping other actions");
+            checkFooterLayout (workspace);
+            if (width == 975) snapshot (workspace, "waveform-workspace-footer-compact");
+            if (width == 1400) snapshot (workspace, "waveform-workspace-footer-large");
         }
         snapshot (workspace, "waveform-workspace-test-output-entry");
+    }
+
+    static void presetSaveStatus ()
+    {
+        WaveformWorkspace workspace;
+        workspace.setSize (975, 732);
+        settle (workspace);
+        const auto before { juce::JSON::toString (WaveformDesign::toJson (workspace.getSettings ())) };
+        auto& status { control<juce::Label> (workspace, "design-status") };
+        const juce::String success { "A8 folder copy created: /test/card/koe-01. Working folder unchanged." };
+        workspace.showPresetSaveStatus (success, false);
+        check (status.getText () == success && status.getTooltip () == success
+               && status.findColour (juce::Label::textColourId) == Theme::muted,
+               "Successful preset copy reports the complete destination in visible status and its tooltip");
+        const juce::String warning { "A8 folder copy created, but the selected preset changed. Its newer edits remain unsaved." };
+        workspace.showPresetSaveStatus (warning, true);
+        check (status.getText () == warning && status.getTooltip () == warning
+               && status.findColour (juce::Label::textColourId) == Theme::warning,
+               "A stale or failed original save is visibly distinguished from successful save completion");
+        check (juce::JSON::toString (WaveformDesign::toJson (workspace.getSettings ())) == before,
+               "Preset copy/save status never changes the waveform recipe");
     }
 
     static void recallWorkflow ()
@@ -368,8 +434,10 @@ struct WaveformWorkspaceTestAccess
         check (! target.getText ().contains ("empty") && control<juce::Label> (workspace, "design-status").getText ().contains ("preset 7, CH 3, zone 1"),
                "Successful assignment visibly identifies its destination and no longer lists CH 3 as empty");
         check (control<juce::Label> (workspace, "design-assignment-heading").getText ().contains ("CURRENT PRESET") &&
-               control<juce::Label> (workspace, "design-package-heading").getText ().contains ("current preset unchanged") &&
-               control<juce::Button> (workspace, "design-export").getTooltip ().contains ("CH 1"),
+               control<juce::Label> (workspace, "design-package-heading").getText ().contains ("SEPARATE PACKAGE") &&
+               control<juce::Label> (workspace, "design-package-heading").getText ().contains ("new folder") &&
+               control<juce::Button> (workspace, "design-export").getTooltip ().contains ("CH 1") &&
+               control<juce::Button> (workspace, "design-export").getTooltip ().contains ("Target channel/zone fields are NOT used"),
                "Persistent headings and package tooltip distinguish assignment from separate export");
         workspace.setSize (975, 732); // Actual minimum space beside the shared preset sidebar/header.
         settle (workspace);
@@ -504,7 +572,6 @@ struct WaveformWorkspaceTestAccess
         cancelWith ([&] { control<juce::ComboBox> (workspace, "design-shape").setSelectedId (2, juce::sendNotificationSync); });
         cancelWith ([&] { control<juce::ComboBox> (workspace, "design-preset").setSelectedId (3, juce::sendNotificationSync); });
         cancelWith ([&] { engine.prepareToPlay (44100.0); });
-        cancelWith ([&] { click (workspace, "Back to preset"); });
         cancelWith ([&]
         {
             workspace.updateAuditionVisibility (false);
@@ -908,7 +975,6 @@ struct WaveformWorkspaceTestAccess
             int starts { 0 }, stops { 0 }, publications { 0 };
             double monitorDb { 999 }, transpose { 999 };
         } host;
-        int closes { 0 };
         {
             WaveformWorkspace workspace;
             workspace.setSize (1160, 800);
@@ -933,7 +999,6 @@ struct WaveformWorkspaceTestAccess
                 host.monitorDb = db; host.transpose = semitones;
                 return host.failMonitor ? juce::Result::fail ("Monitor frequency is outside the audible range; adjust Transpose.") : juce::Result::ok ();
             };
-            workspace.onClose = [&] { ++closes; };
             settle (workspace);
             auto& compact { *find (workspace, "design-compact-preview") };
             auto& audition { control<juce::Button> (workspace, "design-audition") };
@@ -1107,19 +1172,23 @@ struct WaveformWorkspaceTestAccess
             click (workspace, "Start audition");
             control<juce::Slider> (workspace, "design-phase-value").setValue (223, juce::sendNotificationSync);
             std::this_thread::sleep_for (std::chrono::milliseconds (100));
-            workspace.timerCallback (); // Back interrupts a submitted, newer edit.
-            click (workspace, "Back to preset");
-            check (closes == 1 && ! host.active && ! host.payload && ! popup->isVisible (),
-                   "Leaving via Back stops/clears the host and closes the visual popup");
+            workspace.timerCallback (); // Samples navigation interrupts a submitted, newer edit.
+            workspace.updateAuditionVisibility (false);
+            check (! host.active && ! host.payload && ! popup->isVisible (),
+                   "Leaving the designer stops/clears the host and closes the visual popup");
             settle (workspace);
+            workspace.updateAuditionVisibility (true);
+            check (! host.active && host.payload, "Returning after an in-flight edit prepares audition without automatically starting it");
             click (workspace, "Start audition");
             check (host.active && host.payload && host.payload->getSettings ().phaseDegrees == 223,
-                   "Back during an in-flight edit requeues the current design and restores readiness without another edit");
-            click (workspace, "Back to preset");
+                   "Returning after an in-flight edit restores the current design and explicit Start readiness without another edit");
+            workspace.updateAuditionVisibility (false);
             workspace.timerCallback ();
+            workspace.updateAuditionVisibility (true);
+            check (! host.active && host.payload, "Returning to a cached design still requires an explicit audition start");
             click (workspace, "Start audition");
-            check (closes == 2 && host.active && host.payload->getSettings ().phaseDegrees == 223,
-                   "Back with an up-to-date cache retains immediate explicit Start readiness");
+            check (host.active && host.payload->getSettings ().phaseDegrees == 223,
+                   "Leaving and returning with an up-to-date cache retains immediate explicit Start readiness");
             click (workspace, "Expand waveform...");
             control<juce::Slider> (workspace, "design-phase-value").setValue (245, juce::sendNotificationSync);
             std::this_thread::sleep_for (std::chrono::milliseconds (100));
@@ -1145,8 +1214,7 @@ struct WaveformWorkspaceTestAccess
         WaveformWorkspace workspace;
         workspace.setSize (1117, 720);
         checkMonitorLayout (workspace);
-        int closeCount { 0 }, matchCalls { 0 };
-        workspace.onClose = [&] { ++closeCount; };
+        int matchCalls { 0 };
         workspace.onMatchDuration = [&] (int selection) -> std::optional<double>
         {
             ++matchCalls;
@@ -1289,8 +1357,10 @@ struct WaveformWorkspaceTestAccess
         click (workspace, "Export new package...");
         check (control<juce::Label> (workspace, "design-status").getText ().contains ("usable design name"), "Invalid export name is rejected before opening a chooser or writing files");
         check (! find (workspace, "design-open-export")->isVisible (), "Open exported folder stays hidden until a successful explicit export");
-        click (workspace, "Back to preset");
-        check (closeCount == 1, "Back button delegates navigation without changing a preset");
+        workspace.updateAuditionVisibility (false);
+        workspace.updateAuditionVisibility (true);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == retainedLayers,
+               "Leaving and returning through shared navigation does not change the design");
         std::cout << "PASS: actual waveform workspace controls, background visual preview, modes, duration matching, envelope/steps/drawing, layers, calibration and safe export entry\n";
     }
 };
@@ -1298,6 +1368,7 @@ struct WaveformWorkspaceTestAccess
 void testWaveformWorkspace ()
 {
     WaveformWorkspaceTestAccess::testOutputEntry ();
+    WaveformWorkspaceTestAccess::presetSaveStatus ();
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
     WaveformWorkspaceTestAccess::rangePauseWorkflow ();

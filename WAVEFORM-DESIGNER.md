@@ -24,15 +24,77 @@ folder without stepping through intermediate locations.
    generated pitch, pan, envelope, play/loop and mix settings apply to the whole
    channel, including its other zones. Appending a zone divides the former last
    zone's CV-selection range. Other sample content remains unchanged.
-5. Click **SAVE** to write the selected `prstNNN.yml`. Assignment itself does not
-   save the preset or discard your previous unsaved edits.
+5. Click the designer's **SAVE**. It creates or refreshes a self-contained
+   `PRNN - <preset name>` folder, then saves the working `prstNNN.yml`.
+   Assignment itself does not save the preset or discard your previous unsaved
+   edits. Wait for the save result before ejecting the card or copying the folder.
+
+**SAVE IS PENDING** appears beside Save whenever the current preset differs
+from its last saved state, in both Samples and the designer. A failed save leaves
+the reminder on. Changing a waveform design alone does not change the preset:
+use **Generate & Assign...** to apply it, then **SAVE**.
 
 Generated mono 24-bit WAVs and a uniquely named `.design.json` recipe are placed
-directly in the current folder. Existing WAVs are never overwritten, including
+directly in the current folder. Their names start with your design name, without
+an added `A8-` prefix; unique suffixes and voice numbers prevent collisions.
+Existing WAVs are never overwritten, including
 when regenerating a design. If the preset/folder changes during generation,
 assignment is canceled and its unused generated files are cleaned up. Successful
 assignment keeps its files even if you later discard the preset edits; those
 files may be useful independently and are not automatically deleted.
+
+### Getting a shared preset onto Assimil8or
+
+The app's **Root folder** is your working folder, not necessarily the SD card's
+root directory. On Assimil8or, all preset and sample files must be together in
+a **named folder directly under the SD-card root**, with no further nesting
+(Rossum manual, chapter 6, page 13).
+
+The designer's **SAVE** assembles this folder automatically, using the preset
+number and the name entered in the shared preset header, not the waveform's
+Design name. For preset 1 named `koe-01`, it creates:
+
+```text
+SD card/
+└── PR01 - koe-01/
+    ├── prst001.yml
+    ├── audiowave-01-...-01.wav
+    ├── audiowave-02-...-01.wav
+    ├── audiowave-03-...-01.wav
+    ├── cv-wave-04-...-01.wav
+    └── matching .design.json recipes
+```
+
+The shortened WAV names above are illustrative: the copies keep their actual
+filenames, matching the preset's `Sample` references. All referenced samples are
+included, including ordinary samples and stereo files already in the preset,
+plus available generated recipes and the selected MIDI setup file when present.
+Recipes allow later designer editing; A8 does not need them for playback.
+
+The slot uses at least two digits (`01`–`99`, then `100`–`199`). Folder names are
+sanitized and capped at 31 characters for hardware compatibility; long names
+are shortened only in the folder name, not in the preset itself. The resulting
+folder path is shown after saving. Existing unrelated folders or externally
+modified copies are not silently overwritten. Changing the preset name can
+create a differently named copy; previous copies are retained, not deleted.
+
+Your working folder and its shared files stay in place, and the preset list
+does not switch folders. Repeated saves refresh the generated copy. If you
+open a named `PRNN - ...` folder for that same slot, Save works in place
+instead of wrapping it in another nested folder. Saving a different slot from
+there creates a sibling preset folder, not a nested one. Ordinary **Samples** saves
+remain in-place saves; use the designer's **SAVE** to refresh the hardware copy.
+
+Older `A8 Preset NN - ...` folders remain recognized for in-place saving; existing
+folders and files are not renamed automatically.
+
+If you work on your computer, copy the complete generated `PRNN - ...`
+folder directly onto the SD-card root. If it was created elsewhere on the card,
+copy it to the root before using it on A8: the app cannot assume every working
+directory is a card root. Do not copy loose files or put another folder around
+the complete package. **SAVE after the final assignment**, safely eject the
+card, then load that folder and preset on A8. There is no need to export each
+channel as a separate package: that creates independent presets instead.
 
 **CV and audio must use separate channels**, though they may coexist on different
 channels of one preset. This includes every zone, not just the selected zone.
@@ -51,6 +113,12 @@ reliably recognized: the monitoring precautions below still apply.
 
 ## Standalone package export
 
+The lower-left **Generate & Assign** and **Recall assigned** controls work with
+the current preset's target channel/zone. **Package preset** and **Export new
+package** are grouped on the right and create a separate preset folder instead.
+Use the top-level **Samples** button to return to the sample editor; **Open in
+Sample workspace** instead opens the last exported package folder.
+
 1. Choose a mode and a starting shape. Adjust the controls while watching the
    preview. A new preview appears after the background render finishes.
    For Audio Cycle or Layer Bank, turn down your speakers/headphones and use
@@ -61,7 +129,7 @@ reliably recognized: the monitoring precautions below still apply.
    Target channel/zone fields or modify your selected preset; voices in the new
    package start at CH 1. Use **Generate & Assign...**, then **SAVE**, to fill
    the selected channel/zone in the current preset instead.
-   A8Manager creates a new, uniquely named `A8-...` folder inside it.
+   A8Manager creates a new, uniquely named folder based on your design name inside it.
 4. **Open in Sample workspace** opens the generated folder for inspection.
    Existing unsaved preset edits still require confirmation before changing roots.
    For hardware use, copy the whole generated folder to the root of your SD card,

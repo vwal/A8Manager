@@ -76,6 +76,73 @@ struct ChannelPurgeUiTestAccess
         editor->setLookAndFeel (&look);
         editor->init (root);
         editor->setSize (1140, 720);
+        auto* pending { &editor->savePendingLabel };
+        check (pending->getName () == "preset-save-pending" && pending->getText () == "SAVE IS PENDING",
+               "Samples exposes an explicit save-pending notice next to Save");
+        auto checkPending = [&] (bool expected)
+        {
+            editor->timerCallback ();
+            check (pending->isVisible () == expected && editor->saveButton.isEnabled () == expected,
+                   "Save-pending visibility and Save availability follow the actual preset dirty state");
+        };
+        checkPending (false);
+        preset.setName ("Pending", false);
+        checkPending (true);
+        check (pending->getFont ().isBold () && pending->getFont ().getHeight () >= 14.0f,
+               "Pending changes use a conspicuous bold label rather than only a subtle Save-button state");
+        for (const int width : { 810, 1140 })
+        {
+            editor->setSize (width, 720);
+            check (editor->toolsButton.getX () == editor->midiSetupComboBox.getRight () + 8
+                   && editor->toolsButton.getY () == editor->midiSetupComboBox.getY (),
+                   "Preset tools stays immediately beside MIDI setup at compact and wide editor sizes");
+            const auto bounds { pending->getBounds () };
+            check (bounds.getWidth () >= 170 && editor->getLocalBounds ().contains (bounds)
+                   && bounds.getRight () <= editor->saveButton.getX () && editor->saveButton.getX () - bounds.getRight () <= 12
+                   && editor->toolsButton.getRight () <= bounds.getX (),
+                   "The pending notice remains beside Save and separate from Preset tools at minimum and normal editor widths");
+            for (const auto* component : std::initializer_list<const juce::Component*> {
+                     &editor->titleLabel, &editor->nameEditor, &editor->midiSetupLabel, &editor->midiSetupComboBox, &editor->channelTabs })
+                check (! bounds.intersects (component->getBounds ()), "The pending-save notice never covers another header control or the channel tabs");
+            const auto artifacts { juce::SystemStats::getEnvironmentVariable ("A8MANAGER_TEST_ARTIFACTS", {}) };
+            if (artifacts.isNotEmpty ())
+            {
+                const juce::File directory { artifacts };
+                check (directory.createDirectory ().wasOk (), "Create pending-save screenshot directory");
+                auto stream { directory.getChildFile ("samples-save-pending-" + juce::String (width) + ".png").createOutputStream () };
+                check (stream != nullptr && stream->setPosition (0)
+                       && juce::PNGImageFormat ().writeImageToStream (editor->createComponentSnapshot (editor->getLocalBounds ()), *stream)
+                       && stream->truncate ().wasOk (), "Render actual pending-save indicator at compact and normal widths");
+            }
+        }
+        editor->revertPreset ();
+        checkPending (false);
+        check (tree.isEquivalentTo (original), "Reverting clears the notice only after restoring the saved preset");
+
+        preset.setName ("Save test", false);
+        checkPending (true);
+        check (editor->savePreset ().wasOk () && ! pending->isVisible () && ! editor->saveButton.isEnabled (),
+               "A successful real editor Save immediately clears the pending notice and disables Save");
+        const auto beforeFailedSave { baseline.createCopy () };
+        preset.setName ("Still dirty", false);
+        checkPending (true);
+        auto mruList { preferences.getValueTree ().getChildWithName (AppProperties::FileTypeId).getChildWithName (AppProperties::MRUListTypeId) };
+        check (mruList.isValid () && ! preferences.getMRUList ().isEmpty (), "The missing-destination fixture starts from the real bound MRU list");
+        mruList.removeAllChildren (nullptr);
+        check (preferences.getMRUList ().isEmpty () && editor->appProperties.getMRUList ().isEmpty (),
+               "Removing the real Files/MRUList entries leaves both app-property wrappers without a Save destination");
+        check (editor->savePreset ().failed () && pending->isVisible () && baseline.isEquivalentTo (beforeFailedSave),
+               "An editor Save without a destination fails without clearing pending edits or their saved baseline");
+        preferences.addRecentlyUsedFile (presetFile.getFullPathName ());
+        const auto blockedSave { folder.getChildFile ("blocked-save.yml") };
+        check (blockedSave.createDirectory ().wasOk () && PresetFileOperations::save (blockedSave, tree, baseline).failed (),
+               "A real write failure is reported by the editor's preset-save backend");
+        checkPending (true);
+        check (baseline.isEquivalentTo (beforeFailedSave), "A failed write retains the dirty baseline and pending-save indication");
+        PresetProperties::copyTreeProperties (original, tree);
+        check (editor->savePreset ().wasOk () && ! pending->isVisible () && presetFile.loadFileAsString () == savedBytes
+               && baseline.isEquivalentTo (clean), "Restore the original saved fixture and clear the notice before channel-purge tests");
+        editor->setSize (1140, 720);
         std::function<void (bool)> answer;
         juce::String title, message;
         int prompts { 0 };
@@ -136,6 +203,7 @@ struct ChannelPurgeUiTestAccess
             answer (true);
             check (audition.getPlayState () == AudioPlayerProperties::PlayState::stop && editor->channelActionSession.isDirty (),
                    "Confirmed purge stops audition and leaves the edited preset unsaved");
+            checkPending (true);
             check (tree.getChild (origin) == channelIdentity && channelIdentity.getChild (7) == zoneIdentity,
                    "Purge retains existing channel and zone identities for editors and sample observers");
             for (int c { 0 }; c < 8; ++c)
@@ -173,7 +241,7 @@ struct ChannelPurgeUiTestAccess
         editor.reset ();
         answer (true); disposedAction ();
         check (tree.isEquivalentTo (original), "Late popup and confirmation callbacks cannot purge a destroyed editor's document");
-        std::cout << "PASS: confirmed channel purge, stereo pairing, sample-cache unload, file preservation and stale/lifetime safety\n";
+        std::cout << "PASS: save-pending indication/layout/revert/success/failure, confirmed channel purge, stereo pairing, sample-cache unload, file preservation and stale/lifetime safety\n";
     }
 };
 

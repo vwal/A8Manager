@@ -54,8 +54,27 @@ namespace WaveformDesign
         {
             auto stem { name.retainCharacters ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-").trim ().replaceCharacter (' ', '-') };
             if (stem.isEmpty ()) stem = "waveform";
-            // The prefix also avoids hidden names and Windows device names.
-            return ("A8-" + stem).substring (0, 31);
+            stem = stem.substring (0, 31);
+            // Keep the user's name first. A suffix, not a product prefix,
+            // protects reserved Windows device names on every export platform.
+            const auto upper { stem.toUpperCase () };
+            if (upper == "CON" || upper == "PRN" || upper == "AUX" || upper == "NUL"
+                || (upper.length () == 4 && (upper.startsWith ("COM") || upper.startsWith ("LPT"))
+                    && upper[3] >= '1' && upper[3] <= '9'))
+                stem += "_";
+            return stem;
+        }
+
+        juce::var namedRecipe (const Settings& settings, const juce::String& name)
+        {
+            auto recipe { toJson (settings) };
+            auto displayName { name.trim ().replaceCharacters ("\r\n\t", "   ").substring (0, 256) };
+            if (displayName.isEmpty ()) displayName = "waveform";
+            // Optional desktop metadata leaves the version-1 settings schema
+            // unchanged and distinguishes a real user-entered A8- name from
+            // the automatic prefix used by older exports.
+            recipe.getDynamicObject ()->setProperty ("displayName", displayName);
+            return recipe;
         }
 
         double mixHeadroomDb (int count)
@@ -273,7 +292,7 @@ namespace WaveformDesign
         parser.parse (lines);
         if (lines.isEmpty () || parser.getParseErrorsVT ().getNumChildren () != 0)
             return fail ("The generated preset did not pass read-back validation.");
-        if (const auto written { writeText (stage.getChildFile ("design.json"), juce::JSON::toString (toJson (settings)) + "\n") }; written.failed ())
+        if (const auto written { writeText (stage.getChildFile ("design.json"), juce::JSON::toString (namedRecipe (settings, name)) + "\n") }; written.failed ())
             return fail (written.getErrorMessage ());
         if (const auto written { writeText (stage.getChildFile ("README.txt"), instructions (settings, rendered, waves, presetNumber)) }; written.failed ())
             return fail (written.getErrorMessage ());

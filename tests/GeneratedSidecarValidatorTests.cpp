@@ -4,6 +4,8 @@
 #include "Assimil8or/Audio/WaveformDesignSidecars.h"
 #include "Assimil8or/Audio/HardwareTestOutput.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
+#include "Assimil8or/Preset/PresetProperties.h"
+#include "Assimil8or/PresetFolderCopy.h"
 #include "Assimil8or/Validator/ValidatorResultProperties.h"
 #include <iostream>
 #include <stdexcept>
@@ -64,6 +66,35 @@ struct GeneratedSidecarValidatorTestAccess
         check (prepareAssignment (settings, folder, "Assigned waveform", defaults.createCopy (), 0, 0, assigned).wasOk (), "Create a real uniquely named assigned design recipe");
         check (assigned.recipe.getFileName ().endsWith (".design.json"), "Assignment fixture uses the shared-preset recipe naming format");
         validateSidecar (assigned.recipe, true);
+
+        auto copiedPreset { assigned.editedPreset.createCopy () };
+        copiedPreset.setProperty (PresetProperties::IdPropertyId, 47, nullptr);
+        copiedPreset.setProperty (PresetProperties::NamePropertyId, "Copy fixture", nullptr);
+        juce::File copiedFolder;
+        const auto copied { PresetFolderCopy::createOrUpdate (folder, copiedPreset, copiedFolder) };
+        const auto copyMessage { "Create actual preset-copy inventory fixture: " + copied.getErrorMessage () };
+        check (copied.wasOk (), copyMessage.toRawUTF8 ());
+        const auto copyManifest { copiedFolder.getChildFile (".a8-preset-copy.json") };
+        validateSidecar (copyManifest, true);
+        const auto genuineManifest { copyManifest.loadFileAsString () };
+        auto validateMalformedManifest = [&] (const juce::String& contents)
+        {
+            check (copyManifest.replaceWithText (contents), "Write malformed manifest in the owned preset-copy fixture");
+            ValidatorResultProperties result;
+            result.update (ValidatorResultProperties::ResultTypeInfo, "File: " + copyManifest.getFileName (), false);
+            const auto [ram, preset] { validator.validateFile (copyManifest, result.getValueTree ()) };
+            check (ram == 0 && ! preset && result.getNumFixerEntries () == 0,
+                   "Malformed hidden copy manifests consume no sample RAM and never acquire a conversion fix");
+            check (result.getType () == ValidatorResultProperties::ResultTypeWarning && result.getText ().contains ("(ignored)")
+                   && ! result.getText ().contains ("desktop-only"),
+                   "An invalid copy inventory retains the generic hidden-file warning instead of being trusted as generated metadata");
+        };
+        validateMalformedManifest ("{invalid JSON");
+        auto futureManifest { juce::JSON::parse (genuineManifest) };
+        futureManifest.getDynamicObject ()->setProperty ("version", 999);
+        validateMalformedManifest (juce::JSON::toString (futureManifest));
+        check (copyManifest.replaceWithText (genuineManifest), "Restore the genuine owned preset-copy manifest");
+        validateSidecar (copyManifest, true);
 
         auto write = [&] (const juce::String& name, const juce::String& contents)
         {
@@ -153,7 +184,7 @@ struct GeneratedSidecarValidatorTestAccess
         check (WaveformDesignSidecars::identify (folder.getChildFile ("missing.design.json")) == WaveformDesignSidecars::Kind::unknown,
                "Missing candidate sidecars are not recognized");
 
-        std::cout << "PASS: generated recipe/readme/test-manifest validation, real package and assignment outputs, preserved unknown warnings and bounded schema checks\n";
+        std::cout << "PASS: generated recipe/readme/test-manifest/preset-copy inventory validation, real package and assignment outputs, preserved unknown warnings and bounded schema checks\n";
     }
 };
 

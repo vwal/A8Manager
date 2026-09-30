@@ -21,8 +21,11 @@ namespace WaveformDesignRecall
     {
         inline bool hasAssignmentToken (const juce::String& stem)
         {
-            // Assignment exporter: A8-<name>-<first 12 UUID hex characters>.
-            return stem.startsWith ("A8-") && stem.length () > 16 && stem[stem.length () - 13] == '-'
+            // Current: <name>-<first 12 UUID hex characters>. Legacy A8- names
+            // remain valid too. This is only filename recognition: recall also
+            // verifies the adjacent recipe, WAV dimensions and purpose tags.
+            return stem.length () >= 14 && stem[stem.length () - 13] == '-'
+                && stem.dropLastCharacters (13).containsOnly ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
                 && stem.getLastCharacters (12).containsOnly ("0123456789abcdefABCDEF");
         }
 
@@ -125,13 +128,22 @@ namespace WaveformDesignRecall
             || ! CvSampleSafety::detail::boundedJsonObject (static_cast<const char*> (contents.getData ()), bytes))
             return juce::Result::fail ("The waveform recipe is not a complete, bounded UTF-8 JSON object.");
         RecalledDesign recalled;
-        if (const auto parsed { WaveformDesign::fromJson (juce::JSON::parse (juce::String::fromUTF8 (static_cast<const char*> (contents.getData ()), bytes)), recalled.settings) }; parsed.failed ())
+        const auto json { juce::JSON::parse (juce::String::fromUTF8 (static_cast<const char*> (contents.getData ()), bytes)) };
+        if (const auto parsed { WaveformDesign::fromJson (json, recalled.settings) }; parsed.failed ())
             return parsed;
         recalled.recipe = file;
         auto name { file.getFileNameWithoutExtension () };
         if (file.getFileName ().equalsIgnoreCase ("design.json")) name = file.getParentDirectory ().getFileName ();
         else if (name.endsWithIgnoreCase (".design")) name = name.dropLastCharacters (7);
         recalled.displayName = detail::cleanName (name);
+        if (const auto* object { json.getDynamicObject () }; object->hasProperty ("displayName"))
+        {
+            const auto original { object->getProperty ("displayName") };
+            if (! original.isString () || original.toString ().trim ().isEmpty () || original.toString ().length () > 256
+                || original.toString ().containsAnyOf ("\r\n"))
+                return juce::Result::fail ("The saved waveform display name is invalid.");
+            recalled.displayName = original.toString ();
+        }
         result = std::move (recalled);
         return juce::Result::ok ();
     }

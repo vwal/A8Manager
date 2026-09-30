@@ -56,6 +56,8 @@ set(SOURCE_FILES
     Source/SystemServices.h)
 
 set(ASSIMIL8OR_FILES
+    Source/Assimil8or/PresetFolderCopy.cpp
+    Source/Assimil8or/PresetFolderCopy.h
     Source/Assimil8or/Assimil8orPreset.cpp
     Source/Assimil8or/Assimil8orPreset.h
     Source/Assimil8or/Assimil8orValidator.cpp
@@ -67,6 +69,8 @@ set(ASSIMIL8OR_FILES
     Source/Assimil8or/PresetManagerProperties.h)
 
 set(ASSIMIL8OR_AUDIO_FILES
+    Source/Assimil8or/Audio/StereoCollapse.cpp
+    Source/Assimil8or/Audio/StereoCollapse.h
     Source/Assimil8or/Audio/HardwareTestOutput.cpp
     Source/Assimil8or/Audio/HardwareTestOutput.h
     Source/Assimil8or/Audio/WaveformAudition.cpp
@@ -312,6 +316,7 @@ target_link_libraries(A8Manager
         juce::juce_audio_processors_headless
         juce::juce_audio_utils
         juce::juce_dsp
+        juce::juce_cryptography
         juce::juce_gui_extra
     PUBLIC
         juce::juce_recommended_config_flags

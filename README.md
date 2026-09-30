@@ -7,7 +7,10 @@ controls, direct value dragging, waveform controls, and sequential zone editing.
 It also includes a **Waveform designer** for single-cycle audio,
 CV/modulation and linked layer banks such as supersaws. Both workspaces share
 the preset slots and unsaved edits. Generate & Assign writes unique 24-bit WAVs
-and a recipe into the current folder; Save writes the selected preset. Standalone
+and a recipe into the current folder; the designer's Save writes the selected
+preset and creates a self-contained `PRNN - <name>` copy for the SD card.
+Original/shared samples remain in place; place the complete named copy directly
+under the card root, not its loose contents. Standalone
 package export remains available with a selectable preset number.
 The designer's **Test output...** action exports a separate hardware-validation
 package: the current design or audio/CV test signals, a low-level timing reference

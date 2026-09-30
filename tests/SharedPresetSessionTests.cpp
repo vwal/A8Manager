@@ -132,11 +132,27 @@ void testSharedPresetSession ()
     app.setMostRecentFolder (folder.getFullPathName ());
     app.addRecentlyUsedFile (folder.getChildFile ("prst047.yml").getFullPathName ());
     PresetEditSession session;
+    check (! session.matches ({}), "Uninitialized session cannot approve a background-copy completion");
     session.init (root);
     auto source { session.snapshot () };
     check (source && ! session.isDirty () && source->preset != edit, "Snapshot is detached and binds the shared selected slot");
+    const auto originalRevision { session.getRevision () };
+    check (session.matches (*source) && session.getRevision () == originalRevision && ! session.isDirty (),
+           "An unchanged snapshot approves completion without editing the preset, baseline or revision");
+    auto wrongRevision { *source };
+    ++wrongRevision.revision;
+    check (! session.matches (wrongRevision), "Copy completion requires the captured document revision");
+    auto wrongFolder { *source };
+    wrongFolder.folder = folder.getChildFile ("different-destination");
+    check (! session.matches (wrongFolder), "Copy completion cannot save an equivalent preset in another working folder");
+    auto wrongContent { *source };
+    wrongContent.preset = source->preset.createCopy ();
+    wrongContent.preset.setProperty (PresetProperties::NamePropertyId, "Different", nullptr);
+    check (! session.matches (wrongContent) && session.matches (*source),
+           "Copy completion checks captured contents as well as revision without mutating the original snapshot");
     current.setName ("Edited", false);
     check (session.isDirty () && source->preset.getProperty (PresetProperties::NamePropertyId) != "Edited", "Unsaved edits and snapshots stay separate");
+    check (! session.matches (*source), "Edits made while copying cannot be saved by the stale completion");
     check (session.apply (*source, source->preset).failed (), "Reject stale generation after name edit");
     source = session.snapshot ();
     const auto editedChannel { current.getChannelVT (0) };
@@ -150,14 +166,19 @@ void testSharedPresetSession ()
     check (current.getChannelVT (0) == editedChannel && editedChannel.getChild (0) == editedZone, "Applying retains editor/listener tree identities");
     check (current.getName () == "Edited" && current.getId () == 47, "Assignment keeps current name and slot");
     check (session.apply (*source, generated).failed (), "Assignment callback is single-use");
+    source = session.snapshot ();
+    check (session.matches (*source) && session.isDirty (), "A dirty but unchanged document remains eligible for copy-then-save completion");
     check (PresetFileOperations::save (folder.getChildFile ("prst047.yml"), edit, baseline).wasOk (), "Shared Save writes selected slot");
     check (! session.isDirty () && ! folder.getChildFile ("prst001.yml").exists (), "Save never falls back to preset001");
+    check (! session.matches (*source) && session.matches (*session.snapshot ()),
+           "A completed Save changes the baseline revision so an earlier copy cannot save again");
     juce::ValueTree readBack;
     check (PresetFileOperations::read (folder.getChildFile ("prst047.yml"), readBack).wasOk (), "Read back shared saved preset");
     check (readBack.getProperty (PresetProperties::IdPropertyId) == juce::var (47), "Saved preset header uses chosen number");
 
     source = session.snapshot ();
     current.setName ("Temporary", false); current.setName ("Edited", false);
+    check (! session.matches (*source), "Changing and reverting during a background copy still rejects its pending save");
     check (session.apply (*source, source->preset).failed (), "Changed-and-reverted document still invalidates generation");
     source = session.snapshot ();
     auto wrongSlot { source->preset.createCopy () };
@@ -167,15 +188,20 @@ void testSharedPresetSession ()
     check (other.createDirectory ().wasOk (), "Create second preset folder");
     app.setMostRecentFolder (other.getFullPathName ());
     check (! session.snapshot (), "Folder change with old MRU binding cannot assign");
+    check (! session.matches (*source), "Unbound folder navigation also rejects a pending copy-save completion");
     app.addRecentlyUsedFile (other.getChildFile ("prst047.yml").getFullPathName ());
+    check (! session.matches (*source), "The same preset number in a new working folder cannot receive the previous copy's save");
     check (session.apply (*source, source->preset).failed (), "Same preset number in new folder cannot receive old generation");
     app.setMostRecentFolder (folder.getFullPathName ());
     app.addRecentlyUsedFile (folder.getChildFile ("prst047.yml").getFullPathName ());
+    check (! session.matches (*source), "Navigating away and back does not revive a copy's stale original-save approval");
     check (session.apply (*source, source->preset).failed (), "Navigating away and back still invalidates pending generation");
     current.setId (48, false);
     check (! session.snapshot (), "A slot ID alone does not change the Save destination");
+    check (! session.matches (*source), "An incompletely rebound preset slot cannot be saved by a background completion");
     app.addRecentlyUsedFile (folder.getChildFile ("prst048.yml").getFullPathName ());
     check (session.snapshot ()->preset.getProperty (PresetProperties::IdPropertyId) == juce::var (48), "Slot selection follows shared MRU binding");
+    check (! session.matches (*source) && session.matches (*session.snapshot ()), "Only the newly selected slot's snapshot may approve its save");
     checkStereoNeighbourAssignment (folder.getChildFile ("stereo-session"), defaults);
     std::cout << "PASS: shared preset state, numbered save, unsaved changes, identity-preserving assignment and stale-generation protection\n";
 }

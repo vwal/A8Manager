@@ -175,7 +175,7 @@ namespace WaveformDesign
             ExportSupport::configureZone (channel.getChild (zone), filename, rendered.frames);
         }
         const auto recipeName { stem + ".design.json" };
-        if (const auto written { ExportSupport::writeText (stage.getChildFile (recipeName), juce::JSON::toString (toJson (settings)) + "\n") }; written.failed ())
+        if (const auto written { ExportSupport::writeText (stage.getChildFile (recipeName), juce::JSON::toString (ExportSupport::namedRecipe (settings, name)) + "\n") }; written.failed ())
             return fail (written.getErrorMessage ());
         names.add (recipeName);
         // All verified content exists privately before publishing any flat file.

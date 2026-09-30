@@ -78,6 +78,9 @@ void testWaveformDesignAssignment ()
     AssignmentResult assigned;
     require (prepareAssignment (cv, folder, "My CV", source, 3, 0, assigned).wasOk (), "Assign CV into an empty independent channel");
     verifyFiles (assigned, folder, true, 1);
+    require (assigned.waves[0].getFileName ().startsWith ("My-CV-") && assigned.waves[0].getFileName ().endsWith ("-01.wav")
+             && assigned.recipe.getFileName ().startsWith ("My-CV-"), "Assigned WAV and recipe names start with the supplied name, retaining unique token and voice number");
+    require (juce::JSON::parse (assigned.recipe)["displayName"].toString () == "My CV", "Assignment recipe retains the original readable design name");
     PresetProperties edited (assigned.editedPreset, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
     require (source.isEquivalentTo (untouched) && edited.getId () == 91 && edited.getName () == "Shared session", "Assignment never mutates its input or resets preset identity/name");
     require (channel (assigned.editedPreset, 3).getMixLevel () == -90.0 && std::get<0> (channel (assigned.editedPreset, 3).getMixMod ()) == "Off" &&

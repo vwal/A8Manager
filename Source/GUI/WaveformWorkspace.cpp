@@ -443,7 +443,7 @@ struct WaveformWorkspace::Impl
     std::array<std::optional<Settings>, 3> modeDesigns;
     ModernLookAndFeel look;
     juce::Label title, subtitle, summary, status, nameLabel, renderStats, auditionTitle, auditionHint, assignmentHeading, packageHeading;
-    juce::TextButton close { "Back to preset" }, load { "Load recipe / WAV..." }, create { "Export new package..." }, openExport { "Open in Sample workspace" }, assign { "Generate & Assign..." }, recall { "Recall assigned..." };
+    juce::TextButton load { "Load recipe / WAV..." }, create { "Export new package..." }, openExport { "Open in Sample workspace" }, assign { "Generate & Assign..." }, recall { "Recall assigned..." };
     juce::TextButton testOutput { "Test output..." };
     juce::TextEditor fileName;
     Field mode { "Workspace", "design-mode" }, shape { "Shape", "design-shape" }, preset { "Starting point", "design-preset" };
@@ -523,10 +523,10 @@ struct WaveformWorkspace::Impl
         status.setName ("design-status");
         Theme::bindColour (status, juce::Label::textColourId, [] { return Theme::muted; });
         styleLabel (nameLabel, "Design name", 12.0f);
-        styleLabel (assignmentHeading, "CURRENT PRESET - assign to the channel / zone below, then Save", 12.0f, true);
+        styleLabel (assignmentHeading, "CURRENT PRESET - assign, then Save", 12.0f, true);
         assignmentHeading.setName ("design-assignment-heading");
         Theme::bindColour (assignmentHeading, juce::Label::textColourId, [] { return Theme::accent; });
-        styleLabel (packageHeading, "SEPARATE PACKAGE - new folder, voices start at CH 1; current preset unchanged", 12.0f, true);
+        styleLabel (packageHeading, "SEPARATE PACKAGE - new folder, voices start at CH 1", 12.0f, true);
         packageHeading.setName ("design-package-heading");
         fileName.setName ("design-name");
         fileName.setText ("New Waveform", false);
@@ -555,7 +555,7 @@ struct WaveformWorkspace::Impl
         preview.setName ("design-compact-preview");
         expand.setName ("design-expand-preview");
         expand.setTooltip ("Open a larger, resizable source-waveform view. It follows design edits and mode changes. Escape or X closes only the view, not audition.");
-        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &assignmentHeading, &packageHeading, &close, &load, &create, &assign, &recall, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &monitorLevel, &monitorTranspose, &viewport })
+        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &assignmentHeading, &packageHeading, &load, &create, &assign, &recall, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &monitorLevel, &monitorTranspose, &viewport })
             owner.addAndMakeVisible (component);
         viewport.setViewedComponent (&content, false);
         viewport.setName ("design-controls");
@@ -566,12 +566,12 @@ struct WaveformWorkspace::Impl
         testOutput.setName ("design-test-output");
         testOutput.setTooltip ("Advanced hardware verification: export audio/CV test signals and a separate timing-reference channel. No computer playback; the current preset stays unchanged.");
         owner.addAndMakeVisible (testOutput);
-        create.setTooltip ("Create a separate folder and preset with voices starting at CH 1. Target channel/zone above are NOT used. To fill them in the current preset, use Generate & Assign, then Save.");
+        create.setTooltip ("Create a separate folder and preset with voices starting at CH 1. Target channel/zone fields are NOT used. To fill them in the current preset, use Generate & Assign, then Save.");
         assign.setName ("design-assign");
         Theme::bindColour (assign, juce::TextButton::buttonColourId, [] { return Theme::accent.darker (0.6f); });
         assign.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
         assign.setEnabled (false);
-        assign.setTooltip ("Create WAVs and a recipe in the current folder, then update the selected preset in memory. Click Save in the shared preset header to save it.");
+        assign.setTooltip ("Create WAVs and a recipe in the current folder, then update the selected preset in memory. Designer Save writes the preset and creates or refreshes its self-contained PRnn - name folder, preserving the originals. Copy that folder directly under the SD-card root. An already-open named preset folder is saved in place.");
         recall.setName ("design-recall");
         recall.setTooltip ("Reopen the saved design behind the WAV in Target channel / Target zone. A bank restores all its voices. Requires the original recipe beside the WAV; does not change the preset.");
         load.setTooltip ("Open a saved JSON recipe, or a generated WAV with its recipe still beside it. Ordinary audio cannot be reverse-engineered into design controls.");
@@ -761,17 +761,6 @@ struct WaveformWorkspace::Impl
 
     void connect ()
     {
-        close.onClick = [this]
-        {
-            if (! exportBusy && ! assignmentBusy && ! assignmentConfirming)
-            {
-                // Navigation stops the host but keeps this already-prepared
-                // design ready for an explicit Start when the view reopens.
-                clearAudition (false);
-                if (expandedPreview) expandedPreview->setVisible (false);
-                if (owner.onClose) owner.onClose ();
-            }
-        };
         expand.onClick = [this]
         {
             if (! expandedPreview)
@@ -1041,7 +1030,7 @@ struct WaveformWorkspace::Impl
         exportSlot.setEnabled (! busy);
         create.setEnabled (! busy && validate (settings).wasOk ());
         testOutput.setEnabled (! busy); // Built-in test signals remain available even if this design is invalid.
-        close.setEnabled (! busy); load.setEnabled (! busy); openExport.setEnabled (! busy);
+        load.setEnabled (! busy); openExport.setEnabled (! busy);
     }
 
     void refreshTargets (bool suggest)
@@ -1343,7 +1332,7 @@ struct WaveformWorkspace::Impl
         }
         if (exportFinished)
         {
-            exportBusy = false; close.setEnabled (true); load.setEnabled (true); openExport.setEnabled (true);
+            exportBusy = false; load.setEnabled (true); openExport.setEnabled (true);
             updateAssignmentControls ();
             if (! exportFailed)
             {
@@ -1528,8 +1517,6 @@ struct WaveformWorkspace::Impl
         if (owner.getWidth () <= 0 || owner.getHeight () <= 0) return;
         auto bounds { owner.getLocalBounds ().reduced (18, 12) };
         auto heading { bounds.removeFromTop (54) };
-        close.setBounds (heading.removeFromRight (126).withHeight (32));
-        heading.removeFromRight (10);
         load.setBounds (heading.removeFromRight (160).withHeight (32));
         title.setBounds (heading.removeFromTop (28)); subtitle.setBounds (heading);
         auto toolbar { bounds.removeFromTop (40) };
@@ -1558,21 +1545,26 @@ struct WaveformWorkspace::Impl
         nameLabel.setBounds (nameRow.removeFromLeft (90));
         fileName.setBounds (nameRow.withWidth (juce::jmin (440, nameRow.getWidth ())));
         footer.removeFromTop (5);
-        assignmentHeading.setBounds (footer.removeFromTop (20));
-        auto assignmentRow { footer.removeFromTop (38) };
-        assign.setBounds (assignmentRow.removeFromRight (180).reduced (0, 3));
-        assignmentRow.removeFromRight (12);
-        recall.setBounds (assignmentRow.removeFromRight (155).reduced (0, 3));
-        assignmentRow.removeFromRight (12);
-        targetChannel.setBounds (assignmentRow.removeFromLeft (juce::jmin (340, assignmentRow.getWidth () - 180)).withTrimmedRight (12));
-        targetZone.setBounds (assignmentRow.removeFromLeft (200));
-        packageHeading.setBounds (footer.removeFromTop (20));
-        auto exportRow { footer.removeFromTop (38) };
-        testOutput.setBounds (exportRow.removeFromRight (142).reduced (0, 3));
-        exportRow.removeFromRight (12);
-        exportSlot.setBounds (exportRow.removeFromLeft (240).withTrimmedRight (12));
-        create.setBounds (exportRow.removeFromLeft (180).reduced (0, 3)); exportRow.removeFromLeft (12);
-        if (openExport.isVisible ()) openExport.setBounds (exportRow.removeFromLeft (190).reduced (0, 3));
+        constexpr int packageWidth { 430 }, columnGap { 12 };
+        auto footerHeadings { footer.removeFromTop (20) };
+        packageHeading.setBounds (footerHeadings.removeFromRight (packageWidth));
+        assignmentHeading.setBounds (footerHeadings.withTrimmedRight (columnGap));
+        auto targetRow { footer.removeFromTop (38) };
+        auto packageRow { targetRow.removeFromRight (packageWidth) };
+        targetRow.removeFromRight (columnGap);
+        targetChannel.setBounds (targetRow.removeFromLeft (juce::jmin (340, targetRow.getWidth () - 200)).withTrimmedRight (columnGap));
+        targetZone.setBounds (targetRow.removeFromLeft (200));
+        create.setBounds (packageRow.removeFromRight (180).reduced (0, 3));
+        exportSlot.setBounds (packageRow.withTrimmedRight (columnGap));
+        footer.removeFromTop (20);
+        auto actions { footer.removeFromTop (38) };
+        auto assignmentActions { actions };
+        assign.setBounds (assignmentActions.removeFromLeft (180).reduced (0, 3));
+        assignmentActions.removeFromLeft (12);
+        recall.setBounds (assignmentActions.removeFromLeft (155).reduced (0, 3));
+        testOutput.setBounds (actions.removeFromRight (142).reduced (0, 3));
+        if (openExport.isVisible ())
+            openExport.setBounds (actions.withTrimmedLeft (432).withWidth (190).reduced (0, 3));
         viewport.setBounds (bounds.withTrimmedBottom (8));
         const int contentWidth { juce::jmax (800, viewport.getWidth () - viewport.getScrollBarThickness ()) };
         const int gap { 12 }, column { (contentWidth - gap * 2) / 3 };
@@ -1627,6 +1619,7 @@ WaveformWorkspace::WaveformWorkspace () : impl (std::make_unique<Impl> (*this))
 WaveformWorkspace::~WaveformWorkspace () { stopTimer (); impl.reset (); }
 void WaveformWorkspace::setInitialFolder (juce::File folder) { impl->initialFolder = std::move (folder); }
 void WaveformWorkspace::refreshAssignmentContext () { impl->refreshContext (); }
+void WaveformWorkspace::showPresetSaveStatus (const juce::String& message, bool error) { impl->notice (message, error); }
 void WaveformWorkspace::recallAssigned (int channel, int zone) { impl->recallAssigned (channel, zone); }
 WaveformDesign::Settings WaveformWorkspace::getSettings () const { return impl->settings; }
 void WaveformWorkspace::timerCallback () { impl->tick (); }

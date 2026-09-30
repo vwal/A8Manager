@@ -58,11 +58,16 @@ public:
         return Snapshot { folder, edit.createCopy (), revision };
     }
 
-    juce::Result apply (const Snapshot& source, juce::ValueTree generated)
+    bool matches (const Snapshot& source)
     {
         const auto current { snapshot () };
-        if (! current || current->revision != source.revision || current->folder != source.folder
-            || ! current->preset.isEquivalentTo (source.preset))
+        return current && current->revision == source.revision && current->folder == source.folder
+            && current->preset.isEquivalentTo (source.preset);
+    }
+
+    juce::Result apply (const Snapshot& source, juce::ValueTree generated)
+    {
+        if (! matches (source))
             return juce::Result::fail ("The preset or folder changed while generating. Nothing was assigned; select the destination and try again.");
         if (! generated.hasType (PresetProperties::PresetTypeId)
             || generated.getProperty (PresetProperties::IdPropertyId) != source.preset.getProperty (PresetProperties::IdPropertyId))

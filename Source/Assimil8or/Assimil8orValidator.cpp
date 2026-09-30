@@ -2,6 +2,7 @@
 #include "Assimil8orPreset.h"
 #include "FileTypeHelpers.h"
 #include "Audio/WaveformDesignSidecars.h"
+#include "PresetFolderCopy.h"
 #include "Validator/ValidatorResultProperties.h"
 #include "../SystemServices.h"
 #include "oolib/Debug/DebugLog.h"
@@ -340,6 +341,12 @@ std::tuple<uint64_t, std::optional<std::map<juce::String, uint64_t>>> Assimil8or
     LogValidation ("File: " + file.getFileName ());
     if (file.getFileName ().startsWithChar ('.'))
     {
+        if (PresetFolderCopy::isManifest (file))
+        {
+            validatorResultProperties.update (ValidatorResultProperties::ResultTypeInfo,
+                                               "A8Manager preset-copy inventory (desktop-only)", false);
+            return {};
+        }
         // ignore file
         LogValidation ("  File (ignored)");
         validatorResultProperties.update (ValidatorResultProperties::ResultTypeWarning, "(ignored)", false);

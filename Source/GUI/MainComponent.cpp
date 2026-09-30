@@ -2,6 +2,7 @@
 #include "ModernTheme.h"
 #include "../SystemServices.h"
 #include "../Assimil8or/Audio/AudioPlayer.h"
+#include "../Assimil8or/PresetFolderCopy.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 
@@ -81,6 +82,11 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
         addChildComponent (component);
     designerPresetLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
     Theme::bindColour (designerPresetLabel, juce::Label::textColourId, [] { return Theme::accent; });
+    designerSaveState.setName ("designer-preset-save-pending");
+    designerSaveState.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    designerSaveState.setBorderSize ({ 0, 8, 0, 8 });
+    designerSaveState.setMinimumHorizontalScale (1.0f);
+    designerSaveState.setJustificationType (juce::Justification::centred);
     designerPresetName.setFont (juce::FontOptions (16.0f));
     designerPresetName.setInputRestrictions (12, " !\"#$%^&'()#+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~");
     designerPresetName.setSelectAllWhenFocused (true);
@@ -91,11 +97,7 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
         PresetProperties preset (presetSession.getEdit (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
         preset.setName (designerPresetName.getText (), false);
     };
-    designerSave.onClick = [this] ()
-    {
-        if (presetSession.snapshot ()) assimil8orEditorComponent.savePreset ();
-        updateSharedPresetHeader ();
-    };
+    designerSave.onClick = [this] () { saveDesignerPreset (); };
     designerFolder.onClick = [this] () { currentFolderComponent.selectRootFolder (); };
     waveformWorkspace.onGetAssignmentContext = [this] () { return presetSession.snapshot (); };
     waveformWorkspace.onApplyAssignment = [this] (const WaveformWorkspace::AssignmentContext& context, const WaveformDesign::AssignmentResult& generated)
@@ -104,7 +106,6 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
         updateSharedPresetHeader ();
         return result;
     };
-    waveformWorkspace.onClose = [this] () { showWaveformWorkspace (false); };
     assimil8orEditorComponent.onRecallWaveform = [this] (int channel, int zone)
     {
         showWaveformWorkspace (true);
@@ -131,6 +132,83 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
 
     fileViewComponent.onAudioFileSelected = [this] (juce::File audioFile) { assimil8orEditorComponent.receiveSampleLoadRequest (audioFile); };
     startTimerHz (5);
+}
+
+MainComponent::~MainComponent ()
+{
+    stopTimer ();
+    // Let an in-flight copy finish before member teardown. The worker only owns
+    // a detached snapshot; its posted completion uses a Component::SafePointer.
+    if (designerSaveThread.joinable ()) designerSaveThread.join ();
+}
+
+void MainComponent::saveDesignerPreset ()
+{
+    if (designerSaveBusy) return;
+    const auto source { presetSession.snapshot () };
+    if (! source) return;
+    if (PresetFolderCopy::isNamedPresetFolder (source->folder, source->preset))
+    {
+        const auto result { assimil8orEditorComponent.savePreset () };
+        waveformWorkspace.showPresetSaveStatus (result.wasOk () ? "Saved preset in " + source->folder.getFullPathName ()
+            : result.getErrorMessage (), result.failed ());
+        updateSharedPresetHeader ();
+        return;
+    }
+
+    if (designerSaveThread.joinable ()) designerSaveThread.join ();
+    designerSaveBusy = true;
+    updateSharedPresetHeader ();
+    waveformWorkspace.showPresetSaveStatus ("Saving a self-contained A8 preset folder... Original files stay in place.");
+    auto safe = juce::Component::SafePointer<MainComponent> (this);
+    try
+    {
+        // Large sample copies must not block interaction or audio. Never pass a
+        // live ValueTree or read UI/session state from this worker.
+        designerSaveThread = std::thread ([safe, capturedSource = *source]
+        {
+            juce::File folder;
+            auto result { juce::Result::fail ("The preset folder could not be created.") };
+            try { result = PresetFolderCopy::createOrUpdate (capturedSource.folder, capturedSource.preset, folder); }
+            catch (...) { result = juce::Result::fail ("Unexpected failure while creating the preset folder."); }
+            juce::MessageManager::callAsync ([safe, capturedSource, result, folder]
+            {
+                if (safe != nullptr) safe->completeDesignerPresetSave (capturedSource, result, folder);
+            });
+        });
+    }
+    catch (...)
+    {
+        completeDesignerPresetSave (*source, juce::Result::fail ("Could not start the preset folder copy. Please try Save again."), {});
+    }
+}
+
+void MainComponent::completeDesignerPresetSave (const PresetEditSession::Snapshot& source, const juce::Result& result, juce::File savedFolder)
+{
+    designerSaveBusy = false;
+    if (result.failed ())
+    {
+        const auto message { result.getErrorMessage () + " The current preset has not been saved by this operation; your edits and original files remain in place." };
+        waveformWorkspace.showPresetSaveStatus (message, true);
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Preset folder save failed", message);
+    }
+    else if (! presetSession.matches (source))
+    {
+        const auto message { "Saved the captured preset in " + savedFolder.getFullPathName ()
+            + ". The preset or folder changed during the copy, so your current edits were not saved or replaced. Original files remain in place." };
+        waveformWorkspace.showPresetSaveStatus (message, true);
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Preset copy saved; current edits unchanged", message);
+    }
+    else
+    {
+        // Only a successful copy of the still-current snapshot may mark the
+        // source document saved. A failed original save keeps its dirty baseline.
+        const auto sourceResult { assimil8orEditorComponent.savePreset () };
+        waveformWorkspace.showPresetSaveStatus (sourceResult.wasOk ()
+            ? "Saved A8 preset folder: " + savedFolder.getFullPathName () + ". Original samples and working folder preserved."
+            : "Created " + savedFolder.getFullPathName () + ", but saving the original preset failed: " + sourceResult.getErrorMessage (), sourceResult.failed ());
+    }
+    updateSharedPresetHeader ();
 }
 
 void MainComponent::showWaveformWorkspace (bool show)
@@ -169,14 +247,31 @@ void MainComponent::updateSharedPresetHeader ()
 {
     PresetProperties preset (presetSession.getEdit (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
     if (! preset.isValid ()) return;
-    const auto bound { presetSession.snapshot ().has_value () };
+    const auto source { presetSession.snapshot () };
+    const auto bound { source.has_value () };
+    const auto needsPortableCopy { source && ! PresetFolderCopy::isNamedPresetFolder (source->folder, source->preset) };
+    const auto dirty { presetSession.isDirty () };
     designerPresetLabel.setText ("Preset " + juce::String (preset.getId ()), juce::dontSendNotification);
     if (designerPresetName.getText () != preset.getName ()) designerPresetName.setText (preset.getName (), false);
     designerPresetName.setEnabled (bound);
-    designerSave.setEnabled (bound && presetSession.isDirty ());
-    designerSaveState.setText (! bound ? "Select a preset slot" : presetSession.isDirty () ? "Unsaved changes" : "Saved / unchanged", juce::dontSendNotification);
-    const auto dirty { presetSession.isDirty () };
-    Theme::bindColour (designerSaveState, juce::Label::textColourId, [dirty] { return dirty ? Theme::accent : Theme::muted; });
+    designerSave.setEnabled (bound && ! designerSaveBusy && (dirty || needsPortableCopy));
+    designerSave.setTooltip (needsPortableCopy
+        ? "Save the preset and create or refresh its self-contained PRnn - name folder for the SD card, even when there are no unsaved edits. Original samples and the working folder are preserved."
+        : "Save changes in this already-open named preset folder. No additional nested folder is created.");
+    designerSaveState.setText (designerSaveBusy ? (dirty ? "SAVE IS PENDING (saving...)" : "Saving A8 folder...")
+        : dirty ? "SAVE IS PENDING" : ! bound ? "Select a preset slot"
+        : needsPortableCopy ? "Saved / refresh copy" : "Saved / unchanged", juce::dontSendNotification);
+    designerSaveState.setTooltip (dirty
+        ? (designerSaveBusy ? "The A8 preset folder is being saved. Preset edits remain unsaved until the copy and original preset save both succeed."
+                           : "This preset has changes that have not been saved. Click SAVE to preserve them; generating or assigning a waveform alone does not save the preset.")
+        : (designerSaveBusy ? "Refreshing the self-contained A8 preset folder. The working preset has no unsaved changes."
+                           : "The working preset has no unsaved changes."));
+    Theme::bindColour (designerSaveState, juce::Label::textColourId, [dirty]
+        { return dirty ? (Theme::isLight () ? juce::Colours::white : Theme::field) : Theme::muted; });
+    Theme::bindColour (designerSaveState, juce::Label::backgroundColourId, [dirty]
+        { return dirty ? Theme::warning : juce::Colours::transparentBlack; });
+    Theme::bindColour (designerSaveState, juce::Label::outlineColourId, [dirty]
+        { return dirty ? Theme::warning : juce::Colours::transparentBlack; });
     if (displayedRevision != presetSession.getRevision ())
     {
         displayedRevision = presetSession.getRevision ();

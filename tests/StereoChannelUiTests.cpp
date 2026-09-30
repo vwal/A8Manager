@@ -321,14 +321,33 @@ struct StereoChannelUiTestAccess
 
         auto rightMenu { editor->createChannelToolsMenu (1) };
         juce::PopupMenu::MenuItemIterator menuItems (rightMenu);
-        int actionCount { 0 };
+        int actionCount { 0 }, pairSubmenuCount { 0 };
         while (menuItems.next ())
         {
             const auto& item { menuItems.getItem () };
-            check (item.subMenu == nullptr, "Right Tools must not expose independent clone/edit/explode operations");
-            if (item.action) ++actionCount;
+            if (item.subMenu != nullptr)
+            {
+                check (item.text == "Collapse stereo to mono", "Right Tools must not expose independent clone/edit/explode operations");
+                ++pairSubmenuCount;
+                juce::PopupMenu::MenuItemIterator collapseItems (*item.subMenu);
+                int collapseCount { 0 };
+                while (collapseItems.next ())
+                {
+                    const auto& collapse { collapseItems.getItem () };
+                    check (collapse.subMenu == nullptr && collapse.action != nullptr
+                           && (collapse.text == "Merge L/R..." || collapse.text == "Keep left..." || collapse.text == "Keep right..."),
+                           "Stereo-right collapse submenu contains only the three pair-aware conversion operations");
+                    ++collapseCount;
+                }
+                check (collapseCount == 3, "Stereo-right collapse offers exactly Merge, Keep left and Keep right");
+            }
+            if (item.action)
+            {
+                check (item.text == "Default (both channels)" || item.text == "Purge this channel...", "Direct stereo-right actions stay limited to pair-aware Default and Purge");
+                ++actionCount;
+            }
         }
-        check (actionCount == 2, "Right Tools exposes only pair-aware Default and Purge");
+        check (actionCount == 2 && pairSubmenuCount == 1, "Right Tools exposes pair-aware Default, Purge and the stereo-collapse submenu only");
         for (const int origin : { 1, 0 })
         {
             rightProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, true);

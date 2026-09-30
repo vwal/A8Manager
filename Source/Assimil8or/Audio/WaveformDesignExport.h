@@ -22,6 +22,7 @@ namespace WaveformDesign
     namespace ExportSupport
     {
         juce::String safeStem (const juce::String& name);
+        juce::var namedRecipe (const Settings& settings, const juce::String& name);
         juce::Result publishExclusive (const juce::File& source, const juce::File& destination);
         juce::Result writeText (const juce::File& file, const juce::String& text);
         juce::Result writeWave (const juce::File& file, const juce::AudioBuffer<float>& audio, double rate, bool cv);

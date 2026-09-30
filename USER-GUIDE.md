@@ -626,6 +626,40 @@ Pasting or assigning an unpaired mono source into an existing stereo pair puts
 that source on both sides; it does not silently keep the previous right sample.
 An independent, occupied next channel is never automatically made stereo-right.
 
+### Collapsing a stereo pair to mono
+
+Open **Channel tools** on either side of a stereo pair, or right-click its
+**CH tab**, then choose **Collapse stereo to mono**:
+
+- **Merge L/R...** averages the two sides: `(L + R) / 2`. This avoids doubling
+  the level; opposite-phase material can cancel, as with any mono downmix.
+- **Keep left...** uses only the left side.
+- **Keep right...** uses only the right side, but assigns the result to the
+  original left/master channel.
+
+Stereo pairing applies to the whole channel, so conversion covers every
+populated zone in the pair, not just the selected zone. Review the confirmation
+before proceeding. The left channel keeps its settings, sample/loop markers,
+and voltage boundaries; the right channel and all its zones are cleared and
+become available for another sound. The retained left channel is selected.
+If Link/Cycle channels follow the pair, review their grouping afterward: the
+freed right channel becomes an independent Master. The confirmation warns when
+the next channel uses Link or Cycle.
+
+Conversion creates new mono, 24-bit WAVs with the original sample rate and
+frame count, without resampling or normalization. Channel pan, level, pitch,
+and zone offsets are not baked into the WAV. Original source WAVs and recipes
+are never overwritten or deleted. Repeated zones using the same source pair
+share one converted file. Existing CV safety tagging and Mix Off protection
+remain in force. Converted WAVs are ordinary samples: the original designer
+recipe still belongs to the original WAV, not to the mono conversion.
+
+Both sides must use supported integer PCM WAVs and have corresponding populated
+zones, matching sample rates and matching frame counts. An incomplete or
+incompatible pair is rejected without changing the preset. Audition stops during
+conversion. Click **SAVE** afterward
+to retain the new assignments; **SAVE IS PENDING** remains visible until then.
+
 ### Purging a zone
 
 Right-click the numbered zone square and choose **Purge this zone…**, then
@@ -659,11 +693,13 @@ the old confirmation cannot clear the newly selected or changed preset.
 
 ## Saving and moving your work
 
-**SAVE** writes the current preset to its file in the working folder. It becomes
+In **Samples**, **SAVE** writes the current preset to its file in the working folder. It becomes
 available when the preset differs from its loaded/saved state. Switching presets
 or folders with unsaved edits can prompt you to discard them: **Continue (lose
 changes)** really discards the edits. Choose **Cancel**, then SAVE, to keep them.
-If saving fails, an error is shown and edits remain unsaved. MIDI setup likewise
+The **SAVE IS PENDING** reminder beside Save appears in both Samples and the
+designer while the preset differs from its last saved state. If saving fails,
+an error is shown and the reminder and unsaved edits remain. MIDI setup likewise
 stays open after a failed save. Preset **Move** goes to the adjacent numbered slot
 (also in a filtered list); if occupied, the two presets swap. The editor and Save
 target follow the moved preset. A failed move attempts to restore both originals;
@@ -735,7 +771,18 @@ shaping controls, an interactive curve editor and a visual preview.
 folder, then assigns them to your chosen channel/zone in the selected preset.
 Layer banks occupy consecutive channels. Review the confirmation: target zones
 are replaced and generated channel-wide settings affect their other zones too.
-Click **SAVE** to write that preset slot; assignment does not save automatically.
+The designer's **SAVE** also creates or refreshes a self-contained
+`PRNN - <preset name>` folder with all referenced WAVs and available
+recipes, then saves the working preset. Original/shared files stay in place;
+assignment itself does not save automatically. The folder name is limited to
+31 characters, without shortening the preset's actual name. Ordinary saves
+from **Samples** remain in place; return to the designer's **SAVE** to refresh
+its hardware copy. An already-open named folder for that slot is saved in place
+without creating nested copies; saving a different slot creates a sibling folder.
+For hardware, place the complete generated folder directly under the SD-card
+root. Loose files at the card root and nested preset folders are not the A8
+layout. You do not need a separate package for each assigned channel. See the
+[shared-preset transfer example](WAVEFORM-DESIGNER.md#getting-a-shared-preset-onto-assimil8or).
 CV and audio cannot share a channel. Known CV channels have Mix and Mix modulation
 locked **Off**, including when imported through Samples. Use separate channels
 for oscillator/audio and modulation content.

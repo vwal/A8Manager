@@ -238,6 +238,9 @@ void testWaveformDesignExport ()
     require (render (settings, rendered).wasOk (), "Render layered fixture");
     ExportResult exported;
     require (exportDesign (settings, root, "Layered test", exported).wasOk (), "Export layered design");
+    require (exported.folder.getFileName () == "Layered-test", "New package names begin with the supplied name, not an automatic product prefix");
+    require (readPreset (exported.preset).getProperty (PresetProperties::NamePropertyId).toString () == "Layered-test",
+             "Generated preset name uses the entered name without an automatic prefix");
     require (exported.waves.size () == 3 && exported.folder.getParentDirectory () == root && exported.preset.existsAsFile ()
              && exported.recipe.existsAsFile () && exported.folder.getChildFile ("README.txt").existsAsFile (), "Export contains complete self-contained bundle");
     for (int index { 0 }; index < exported.waves.size (); ++index)
@@ -265,12 +268,17 @@ void testWaveformDesignExport ()
     ExportResult again;
     require (exportDesign (settings, root, "Layered test", again).wasOk () && again.folder != exported.folder && exported.preset.existsAsFile (),
              "Repeated exports create new folders without replacing earlier designs");
-    const auto occupied { root.getChildFile ("A8-Collision") };
-    const auto occupiedFolder { root.getChildFile ("A8-Collision-2") };
+    const auto occupied { root.getChildFile ("Collision") };
+    const auto occupiedFolder { root.getChildFile ("Collision-2") };
     require (occupied.replaceWithText ("original file") && occupiedFolder.createDirectory ().wasOk (), "Create file and empty-folder collisions");
-    require (exportDesign (settings, root, "Collision", again).wasOk () && again.folder.getFileName () == "A8-Collision-3"
+    require (exportDesign (settings, root, "Collision", again).wasOk () && again.folder.getFileName () == "Collision-3"
              && occupied.loadFileAsString () == "original file" && occupiedFolder.isDirectory ()
              && occupiedFolder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0, "File and even empty-folder collisions are never overwritten");
+    for (const auto* reserved : { "CON", "prn", "Aux", "NUL", "COM1", "com9", "LPT1", "lpt9" })
+        require (ExportSupport::safeStem (reserved) == juce::String (reserved) + "_", "Reserved Windows device names get a suffix without a new prefix");
+    require (ExportSupport::safeStem ("COM10") == "COM10" && ExportSupport::safeStem ("A8-user-name") == "A8-user-name"
+             && ExportSupport::safeStem ("...") == "waveform", "Ordinary names and user-entered A8 names are retained while empty sanitization has a safe fallback");
+    require (exportDesign (settings, root, "CON", again).wasOk () && again.folder.getFileName () == "CON_", "Reserved names export portably without an automatic A8 prefix");
 
     auto cv { startingPoint (Mode::modulation, Shape::sine) };
     cv.amplitude = 0.0;

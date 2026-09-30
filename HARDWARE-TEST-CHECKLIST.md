@@ -15,6 +15,15 @@ assigned WAV's `.design.json`, when present), preset, WAVs and observations
 together. Advanced test-output packages also include `test-manifest.json` with
 their expected values and reference-marker positions.
 
+For A8, place that complete named folder **directly under the SD-card root**:
+`SD card/PR01 - koe-01/prst001.yml`, with its WAVs beside the preset. Do not copy loose
+preset/WAV files to the card root or nest a preset folder inside another folder.
+**Generate & Assign → designer SAVE** now creates/refreshes this self-contained
+named folder while preserving working files. Copy that generated folder, not
+its loose contents or a separate export per channel. Save again after the final
+assignment and wait for success. Ordinary Samples saves do not refresh a
+separate hardware copy.
+
 ## What needs which kind of test?
 
 | Property | Primary check | Hardware measurement needed? |

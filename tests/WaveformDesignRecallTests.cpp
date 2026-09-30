@@ -1,6 +1,7 @@
 #include "Assimil8or/Audio/WaveformDesignRecall.h"
 #include "Assimil8or/Audio/WaveformDesignAssignment.h"
 #include "Assimil8or/Audio/WaveformDesignExport.h"
+#include "Assimil8or/Audio/AudioManager.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include <iostream>
 #include <stdexcept>
@@ -78,7 +79,7 @@ void testWaveformDesignRecall ()
             requireRecall (recallWave (package.waves[index], recalled).wasOk (), "Recall any audio, CV or bank voice from an actual exported package");
             requireRecall (sameSettings (settings, recalled.settings) && recalled.recipe == package.recipe && recalled.voiceIndex == index,
                            "Recall returns the complete original recipe and exact selected bank voice index");
-            requireRecall (recalled.displayName == package.folder.getFileName ().substring (3), "Package recall uses its meaningful folder name without an extra A8 prefix");
+            requireRecall (recalled.displayName == "Recall-package", "Package recall restores the entered name even when collision suffixes change its folder name");
         }
         auto loaded { seedResult () };
         requireRecall (loadRecipe (package.recipe, loaded).wasOk () && sameSettings (settings, loaded.settings) && loaded.voiceIndex == 0,
@@ -93,8 +94,42 @@ void testWaveformDesignRecall ()
             requireRecall (recallWave (assignment.waves[index], recalled).wasOk (), "Recall any voice from a uniquely named assignment");
             requireRecall (sameSettings (settings, recalled.settings) && recalled.recipe == assignment.recipe && recalled.voiceIndex == index,
                            "Assigned bank followers resolve to their own shared recipe without losing voice controls");
-            requireRecall (recalled.displayName == "Assigned-waveform", "Assignment recall removes generated filename prefix, token and voice suffix");
+            requireRecall (recalled.displayName == "Assigned-waveform", "Unprefixed assignment recall restores the entered name without token or voice suffix");
         }
+    }
+
+    for (const auto mode : { Mode::oscillator, Mode::modulation })
+    {
+        auto legacySettings { startingPoint (mode, Shape::sine) };
+        legacySettings.cycleFrames = 64;
+        legacySettings.durationSeconds = 64.0 / 48000.0;
+        const auto legacyFolder { folder.getChildFile (mode == Mode::modulation ? "A8-Old-CV" : "A8-Old-audio") };
+        requireRecall (legacyFolder.createDirectory ().wasOk (), "Create legacy A8-prefixed recall fixture");
+        const auto legacyRecipe { legacyFolder.getChildFile ("A8-Legacy-0123456789ab.design.json") };
+        const auto legacyWave { legacyFolder.getChildFile ("A8-Legacy-0123456789ab-01.wav") };
+        requireRecall (legacyRecipe.replaceWithText (juce::JSON::toString (toJson (legacySettings))), "Create an old recipe without display-name metadata");
+        writeRecallWave (legacyWave, 64, 48000, 1, 24, mode == Mode::modulation ? CvSampleSafety::cvMarker : CvSampleSafety::audioMarker);
+        RecalledDesign legacy;
+        requireRecall (recallWave (legacyWave, legacy).wasOk () && legacy.displayName == "Legacy" && sameSettings (legacy.settings, legacySettings),
+                       "Legacy prefixed assignment files remain recallable with the original readable name");
+        AudioManager manager;
+        const auto reader { manager.getReaderFor (legacyWave) };
+        requireRecall (reader && CvSampleSafety::isCv (legacyWave, *reader) == (mode == Mode::modulation), "Legacy audio/CV safety provenance remains independent of the filename");
+        const auto unprefixed { legacyFolder.getChildFile ("Legacy-0123456789ab-01.wav") };
+        requireRecall (legacyWave.copyFileTo (unprefixed), "Create unprefixed generated filename without matching recipe");
+        RecalledDesign unknown;
+        requireRecall (recallWave (unprefixed, unknown).failed (), "An unprefixed token and genuine purpose tag alone cannot claim a different adjacent recipe");
+        requireRecall (legacyRecipe.copyFileTo (legacyFolder.getChildFile ("Legacy-0123456789ab.design.json")), "Copy matching recipe for unprefixed fixture");
+        requireRecall (recallWave (unprefixed, unknown).wasOk (), "Unprefixed generated filename recalls only with its matching complete recipe");
+
+        ExportResult enteredPrefix;
+        requireRecall (exportDesign (legacySettings, folder, "A8-My own name", enteredPrefix).wasOk (), "Export a user intentionally entering an A8-prefixed name");
+        requireRecall (recallWave (enteredPrefix.waves[0], unknown).wasOk () && unknown.displayName == "A8-My own name",
+                       "Optional recipe metadata distinguishes user-entered A8- text from the old automatic prefix");
+        AssignmentResult enteredAssignment;
+        requireRecall (prepareAssignment (legacySettings, folder, "A8-My own name", defaults.createCopy (), 0, 0, enteredAssignment).wasOk ()
+                       && recallWave (enteredAssignment.waves[0], unknown).wasOk () && unknown.displayName == "A8-My own name",
+                       "Assigned recipes preserve deliberate A8- text as well as spaces in the entered name");
     }
 
     auto settings { startingPoint (Mode::oscillator, Shape::sine) };

@@ -7,11 +7,13 @@
 #include "../../GuiControlProperties.h"
 #include "../../../AppProperties.h"
 #include "../../../Assimil8or/Audio/AudioPlayerProperties.h"
+#include "../../../Assimil8or/Audio/StereoCollapse.h"
 #include "../../../Assimil8or/Preset/PresetProperties.h"
 #include "../../DragValueEditor.h"
 #include "../../PresetEditSession.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
+#include <thread>
 
 class WindowDecorator : public juce::Component
 {
@@ -30,13 +32,13 @@ class Assimil8orEditorComponent : public juce::Component,
 {
 public:
     Assimil8orEditorComponent ();
-    ~Assimil8orEditorComponent () = default;
+    ~Assimil8orEditorComponent () override;
 
     void init (juce::ValueTree rootPropertiesVT);
     void receiveSampleLoadRequest (juce::File sampleFile);
     void overwritePresetOrCancel (std::function<void ()> overwriteFunction, std::function<void ()> cancelFunction);
     std::optional<double> getSelectedDuration (int region);
-    void savePreset ();
+    juce::Result savePreset ();
     void recallSelectedWaveform ();
     bool canRecallSelectedWaveform ();
     std::function<void (int channel, int zone)> onRecallWaveform;
@@ -44,6 +46,7 @@ public:
 private:
     friend struct StereoChannelUiTestAccess;
     friend struct ChannelPurgeUiTestAccess;
+    friend struct StereoCollapseUiTestAccess;
     RuntimeRootProperties runtimeRootProperties;
     AppProperties appProperties;
     AudioPlayerProperties audioPlayerProperties;
@@ -62,9 +65,18 @@ private:
     PresetEditSession channelActionSession;
     unsigned purgeConfirmation { 0 };
     std::function<void (const juce::String&, const juce::String&, std::function<void (bool)>)> confirmChannelPurge;
+    std::function<void (const juce::String&, const juce::String&, std::function<void (bool)>)> confirmStereoCollapse;
+    std::function<void (bool, const juce::String&, const juce::String&)> notifyStereoCollapse;
+    std::function<bool (std::function<void ()>)> dispatchStereoCollapse;
+    std::function<juce::Result (const juce::File&, const juce::ValueTree&, int, StereoCollapse::Mode, StereoCollapse::Result&)> prepareStereoCollapse;
+    struct StereoCollapseJob;
+    std::shared_ptr<StereoCollapseJob> stereoCollapseJob;
+    std::thread stereoCollapseThread;
+    unsigned stereoCollapseConfirmation { 0 };
+    bool stereoCollapseConfirming { false };
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    juce::Label titleLabel;
+    juce::Label titleLabel, savePendingLabel;
     juce::TextButton saveButton;
     juce::TextButton toolsButton;
 
@@ -105,6 +117,11 @@ private:
     juce::PopupMenu createChannelToolsMenu (int channelIndex);
     void addChannelDefaultMenuItem (juce::PopupMenu& menu, int channelIndex);
     void addChannelPurgeMenuItem (juce::PopupMenu& menu, int channelIndex);
+    void addStereoCollapseMenu (juce::PopupMenu& menu, int channelIndex);
+    void requestStereoCollapse (const PresetEditSession::Snapshot& source, int channelIndex, StereoCollapse::Mode mode);
+    void startStereoCollapse (const PresetEditSession::Snapshot& source, int channelIndex, StereoCollapse::Mode mode);
+    void finishStereoCollapse (std::shared_ptr<StereoCollapseJob> job);
+    void stopStereoCollapseAudition ();
     void synchronizeStereoZones (int sourceChannel, int zoneIndex);
     void synchronizeAllStereoZones ();
     void explodeChannel (int channelIndex, int explodeCount);
@@ -117,6 +134,7 @@ private:
     bool isChannelActive (int channelIndex);
     void revertPreset ();
     void setPresetToDefaults ();
+    void updateSaveIndicator ();
     void setupPresetComponents ();
     void setupPresetPropertiesCallbacks ();
     void updateAllChannelTabNames ();

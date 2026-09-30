@@ -18,13 +18,13 @@ public:
     void setInitialFolder (juce::File folder);
     using AssignmentContext = PresetEditSession::Snapshot;
     void refreshAssignmentContext ();
+    void showPresetSaveStatus (const juce::String& message, bool error = false);
     void recallAssigned (int channel, int zone); // Zero-based selected preset coordinates.
     WaveformDesign::Settings getSettings () const;
     std::function<std::optional<AssignmentContext> ()> onGetAssignmentContext;
     std::function<juce::Result (const AssignmentContext&, const WaveformDesign::AssignmentResult&)> onApplyAssignment;
     std::function<std::optional<double> (int)> onMatchDuration; // 0 file, 1 sample, 2 loop
     std::function<void (juce::File)> onOpenExportedFolder;
-    std::function<void ()> onClose;
     std::function<void (WaveformAudition::PayloadPtr)> onAuditionPayload;
     std::function<juce::Result ()> onStartAudition;
     std::function<void ()> onStopAudition;
