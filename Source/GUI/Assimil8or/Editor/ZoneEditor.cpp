@@ -344,21 +344,8 @@ void ZoneEditor::setupZoneComponents ()
     };
     sampleNameSelectLabel.onPopupMenuCallback = [this] ()
     {
-        if (zoneProperties.getSample ().isEmpty ())
-            return;
-        // for individual cloning: can clone to any zone that has a sample, or the next zone after the last zone that has a sample
-        // for all clone: just works
-        auto editMenu { createZoneEditMenu ({}, [this] (ZoneProperties& destZoneProperties, [[maybe_unused]] SampleProperties& destSampleProperties)
-                                            {
-                                                const auto destZoneIndex { destZoneProperties.getId () - 1 };
-                                                const auto fileName { juce::File (appProperties.getMostRecentFolder ()).getChildFile (zoneProperties.getSample ()).getFullPathName () };
-                                                handleSamplesInternal (destZoneIndex, { fileName });
-                                            },
-                                            nullptr /* reset is not possible for the sample file parameter, since zones have to have contiguous samples assigned, and resetting one in the middle would break that */,
-                                            [this] () { handleSamplesInternal (zoneIndex, { uneditedZoneProperties.getSample () }); },
-                                            [this] (ZoneProperties& destZoneProperties) { return destZoneProperties.getId () - 1 <= editManager->getNumUsedZones (parentChannelIndex); },
-                                            [] (ZoneProperties&) { return true; }) };
-        editMenu.showMenuAsync ({}, [this] (int) {});
+        auto editMenu { createSampleFileMenu () };
+        if (editMenu.getNumItems () != 0) editMenu.showMenuAsync ({}, [] (int) {});
     };
     setupLabel (sampleNameSelectLabel, "", 15.0, juce::Justification::centredLeft);
 
@@ -1107,6 +1094,23 @@ double ZoneEditor::snapLoopLength (double rawValue)
     {
         return static_cast<uint32_t> (rawValue);
     }
+}
+
+juce::PopupMenu ZoneEditor::createSampleFileMenu ()
+{
+    if (zoneProperties.getSample ().isEmpty ()) return {};
+    // The preset editor captures the destination snapshot while this menu is
+    // created, so a delayed popup action cannot rename a newly selected file.
+    auto menu { createSampleFileActions ? createSampleFileActions () : juce::PopupMenu {} };
+    if (isStereoRightChannelMode) return menu;
+    if (menu.getNumItems () != 0) menu.addSeparator ();
+    return createZoneEditMenu (std::move (menu), [this] (ZoneProperties& destination, SampleProperties&)
+        {
+            const auto file { juce::File (appProperties.getMostRecentFolder ()).getChildFile (zoneProperties.getSample ()) };
+            handleSamplesInternal (destination.getId () - 1, { file.getFullPathName () });
+        }, nullptr, [this] () { handleSamplesInternal (zoneIndex, { uneditedZoneProperties.getSample () }); },
+        [this] (ZoneProperties& destination) { return destination.getId () - 1 <= editManager->getNumUsedZones (parentChannelIndex); },
+        [] (ZoneProperties&) { return true; });
 }
 
 juce::PopupMenu ZoneEditor::createZoneEditMenu (juce::PopupMenu existingPopupMenu, std::function <void (ZoneProperties&, SampleProperties&)> setter, std::function <void ()> resetter, std::function <void ()> reverter,

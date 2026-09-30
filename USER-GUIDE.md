@@ -626,6 +626,33 @@ Pasting or assigning an unpaired mono source into an existing stereo pair puts
 that source on both sides; it does not silently keep the previous right sample.
 An independent, occupied next channel is never automatically made stereo-right.
 
+### Giving a sample a shorter filename
+
+Right-click the **FILE** filename in Samples and choose **Rename sample copy...**.
+Enter the new name; you can omit `.wav`. For generated assignments, the readable
+beginning is initially selected, leaving the unique identifier and voice number
+at the end. Typing replaces just that beginning; the rest remains editable if
+needed. Put the important words first: Assimil8or truncates long names on screen.
+The dialog counts the entire filename, including its suffix and extension,
+against the 47-character hardware limit.
+
+This creates a named copy in the current preset folder and updates **every zone
+in the current preset that uses the same file**, including both sides of a
+stereo pair. It preserves sample/loop markers, L/R selections, pitch and other
+settings. It does not overwrite, move or delete the old WAV, and does not change
+other saved presets that might use it. An existing destination name is refused,
+not overwritten. Changing the name only by letter case is also refused for SD
+card compatibility.
+
+For generated waveforms with a valid recipe, the copied file retains
+**Edit this waveform in designer** support through a matching recipe copy.
+Keep that `.design.json` file with the WAV. CV safety tagging is preserved;
+renaming CV does not make it available for speaker audition.
+
+Audition stops when you accept the operation. Click **SAVE** to keep the new
+assignments; until then, **SAVE IS PENDING** remains visible. Cancel leaves the
+preset and files unchanged.
+
 ### Collapsing a stereo pair to mono
 
 Open **Channel tools** on either side of a stereo pair, or right-click its
@@ -813,7 +840,7 @@ Keep the companion recipe: the WAV alone cannot restore the shaping controls.
 This **Preset tools** item is greyed out for ordinary samples, empty zones, missing
 files or an invalid/missing associated recipe. It is enabled only when the
 selected generated WAV and its saved recipe are recognized together. If you
-renamed the files or have an older untagged export, use **Load recipe / WAV...**
+renamed the files outside the app or have an older untagged export, use **Load recipe / WAV...**
 to select the JSON recipe explicitly instead.
 
 Use **Start audition** to hear an Audio Cycle or the complete Layer Bank while

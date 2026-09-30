@@ -69,6 +69,8 @@ set(ASSIMIL8OR_FILES
     Source/Assimil8or/PresetManagerProperties.h)
 
 set(ASSIMIL8OR_AUDIO_FILES
+    Source/Assimil8or/Audio/SampleRename.cpp
+    Source/Assimil8or/Audio/SampleRename.h
     Source/Assimil8or/Audio/StereoCollapse.cpp
     Source/Assimil8or/Audio/StereoCollapse.h
     Source/Assimil8or/Audio/HardwareTestOutput.cpp

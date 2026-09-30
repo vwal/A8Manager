@@ -269,15 +269,14 @@ namespace PresetFolderCopy
                 const auto file { source.getChildFile (filename) };
                 if (const auto added { add (file) }; added.failed ()) return added;
                 if (! audio.isAssimil8orSupportedAudioFile (file)) return juce::Result::fail ("The sample is unreadable or not an Assimil8or-compatible WAV: " + filename);
-                const auto stem { file.getFileNameWithoutExtension () };
-                if (stem.length () < 4 || stem[stem.length () - 3] != '-' || ! stem.getLastCharacters (2).containsOnly ("0123456789")) continue;
-                const auto family { stem.dropLastCharacters (3) };
-                if (family != "voice" && ! WaveformDesignRecall::detail::hasAssignmentToken (family)) continue;
-                const auto recipe { source.getChildFile (family == "voice" ? "design.json" : family + ".design.json") };
+                const auto recipe { WaveformDesignRecall::adjacentRecipe (file) };
+                if (recipe == juce::File ()) continue;
                 if (! exists (recipe)) continue;
                 if (const auto added { add (recipe) }; added.failed ()) return added;
                 WaveformDesignRecall::RecalledDesign recalled;
                 if (const auto loaded { WaveformDesignRecall::loadRecipe (recipe, recalled) }; loaded.failed ()) return loaded;
+                if (recipe == WaveformDesignRecall::copiedRecipe (file))
+                    if (const auto verified { WaveformDesignRecall::recallWave (file, recalled) }; verified.failed ()) return verified;
             }
         }
         const auto midi { static_cast<int> (tree.getProperty (PresetProperties::MidiSetpPropertyId)) };

@@ -218,10 +218,12 @@ public:
 
     // TODO - can we make this local, since we should be able to access the edits through the EditManager
     std::function<void (int channelIndex)> displayToolsMenu;
+    std::function<juce::PopupMenu (int channelIndex, int zoneIndex)> createSampleFileActions;
 
 private:
     friend struct StereoChannelUiTestAccess;
     friend struct SimulationUiTestAccess;
+    friend struct SampleRenameUiTestAccess;
     enum class VoltageBalanceType
     {
         distributeAcross5V,

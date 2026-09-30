@@ -76,6 +76,9 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     AudioAuditTests.cpp
     AudioFileSafetyTests.cpp
     StereoAssignmentTests.cpp
+    SampleRenameTests.cpp
+    SampleRenameUiTests.cpp
+    ../Source/Assimil8or/Audio/SampleRename.cpp
     StereoCollapseTests.cpp
     StereoCollapseUiTests.cpp
     ../Source/Assimil8or/Audio/StereoCollapse.cpp
@@ -188,6 +191,9 @@ add_test(NAME AudioAuditRegression COMMAND A8ManagerInteractionTests --audio-aud
 add_test(NAME AudioFileSafetyRegression COMMAND A8ManagerInteractionTests --audio-file-safety)
 add_test(NAME StereoAssignmentRegression COMMAND A8ManagerInteractionTests --stereo-assignment)
 add_test(NAME StereoCollapseRegression COMMAND A8ManagerInteractionTests --stereo-collapse)
+add_test(NAME SampleRenameRegression COMMAND A8ManagerInteractionTests --sample-rename)
+add_test(NAME SampleRenameUiRegression COMMAND A8ManagerInteractionTests --sample-rename-ui)
+set_tests_properties(SampleRenameRegression SampleRenameUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME StereoCollapseUiRegression COMMAND A8ManagerInteractionTests --stereo-collapse-ui)
 set_tests_properties(StereoCollapseRegression StereoCollapseUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME StereoChannelUiRegression COMMAND A8ManagerInteractionTests --stereo-channel-ui)

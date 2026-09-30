@@ -236,9 +236,12 @@ markers, pitch or other preset parameters. It does not alter WAV files or the
 preset. After editing, use **Generate & Assign...**, review the replacement
 confirmation, then **SAVE**. New WAVs are created; previous files are preserved.
 
-Keep the recipe beside the generated WAVs with their original filenames for
-automatic recall. If files were renamed, or an older WAV has no generator tag,
-load its recipe explicitly. A WAV alone cannot reconstruct the generator knobs
+Keep the recipe beside the generated WAVs for automatic recall. Samples' **FILE
+> Rename sample copy...** creates a short-named WAV with an associated recipe
+copy, preserving recall, including the complete settings for a layer bank.
+Keep the new `.design.json` beside that WAV. Renaming files outside the app does
+not update this association; load the recipe explicitly in that case, or when
+an older WAV has no generator tag. A WAV alone cannot reconstruct the generator knobs
 or bank settings; missing/unrecognized recipes are reported without replacing
 your current design. Assignment and export both save the recipe; unwritten
 design changes are held only for the current application session.

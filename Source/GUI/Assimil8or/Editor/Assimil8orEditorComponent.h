@@ -8,6 +8,7 @@
 #include "../../../AppProperties.h"
 #include "../../../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "../../../Assimil8or/Audio/StereoCollapse.h"
+#include "../../../Assimil8or/Audio/SampleRename.h"
 #include "../../../Assimil8or/Preset/PresetProperties.h"
 #include "../../DragValueEditor.h"
 #include "../../PresetEditSession.h"
@@ -47,6 +48,7 @@ private:
     friend struct StereoChannelUiTestAccess;
     friend struct ChannelPurgeUiTestAccess;
     friend struct StereoCollapseUiTestAccess;
+    friend struct SampleRenameUiTestAccess;
     RuntimeRootProperties runtimeRootProperties;
     AppProperties appProperties;
     AudioPlayerProperties audioPlayerProperties;
@@ -74,6 +76,16 @@ private:
     std::thread stereoCollapseThread;
     unsigned stereoCollapseConfirmation { 0 };
     bool stereoCollapseConfirming { false };
+    std::function<void (const juce::String&, const juce::String&, const juce::String&, std::function<void (std::optional<juce::String>)>)> promptSampleRename;
+    std::function<void (bool, const juce::String&, const juce::String&)> notifySampleRename;
+    std::function<bool (std::function<void ()>)> dispatchSampleRename;
+    std::function<juce::Result (const juce::File&, const juce::ValueTree&, const juce::String&, const juce::String&, SampleRename::Result&)> prepareSampleRename;
+    struct SampleRenameJob;
+    std::shared_ptr<SampleRenameJob> sampleRenameJob;
+    std::thread sampleRenameThread;
+    unsigned sampleRenameConfirmation { 0 };
+    bool sampleRenamePrompting { false };
+    std::unique_ptr<juce::AlertWindow> sampleRenameAlert;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::Label titleLabel, savePendingLabel;
@@ -122,6 +134,14 @@ private:
     void startStereoCollapse (const PresetEditSession::Snapshot& source, int channelIndex, StereoCollapse::Mode mode);
     void finishStereoCollapse (std::shared_ptr<StereoCollapseJob> job);
     void stopStereoCollapseAudition ();
+    juce::PopupMenu createSampleFileMenu (int channelIndex, int zoneIndex);
+    static std::unique_ptr<juce::AlertWindow> createSampleRenamePrompt (const juce::String& title, const juce::String& message,
+                                                                     const juce::String& initialName);
+    void requestSampleRename (const PresetEditSession::Snapshot& source, const juce::String& filename,
+                              const juce::String& proposedName, const juce::String& error = {});
+    void startSampleRename (const PresetEditSession::Snapshot& source, const juce::String& filename, const juce::String& requestedName);
+    void finishSampleRename (std::shared_ptr<SampleRenameJob> job);
+    bool channelFileOperationBusy () const;
     void synchronizeStereoZones (int sourceChannel, int zoneIndex);
     void synchronizeAllStereoZones ();
     void explodeChannel (int channelIndex, int explodeCount);

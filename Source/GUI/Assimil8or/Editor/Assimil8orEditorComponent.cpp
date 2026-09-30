@@ -19,6 +19,60 @@
 #include <algorithm>
 #include <atomic>
 
+namespace
+{
+    class SampleRenamePrompt final : public juce::AlertWindow
+    {
+    public:
+        SampleRenamePrompt (const juce::String& title, const juce::String& message, const juce::String& initialName)
+            : juce::AlertWindow (title, message, juce::AlertWindow::NoIcon)
+        {
+            setComponentID ("sample-rename-dialog");
+            addTextEditor ("sample-rename-name", initialName, "New name (.wav is kept):");
+            addButton ("CREATE COPY", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            feedback.setComponentID ("sample-rename-character-count");
+            feedback.setSize (520, 66);
+            feedback.setFont (juce::FontOptions (13.0f));
+            feedback.setMinimumHorizontalScale (1.0f);
+            feedback.setJustificationType (juce::Justification::topLeft);
+            addCustomComponent (&feedback);
+            auto* input { getTextEditor ("sample-rename-name") };
+            // Assigned designer files end in a generated ID and voice number.
+            // Select the useful, visible beginning without locking that suffix.
+            const auto stem { initialName.endsWithIgnoreCase (".wav") ? initialName.dropLastCharacters (4) : initialName };
+            const auto prefixLength { stem.length () - 16 };
+            const auto generatedSuffix { prefixLength > 0 && stem[prefixLength] == '-'
+                && stem[stem.length () - 3] == '-'
+                && stem.substring (prefixLength + 1, stem.length () - 3).containsOnly ("0123456789abcdefABCDEF")
+                && stem.getLastCharacters (2).startsWithChar ('0')
+                && stem.getLastCharacters (1).containsOnly ("12345678") };
+            input->setSelectAllWhenFocused (! generatedSuffix);
+            input->setHighlightedRegion ({ 0, generatedSuffix ? prefixLength : initialName.length () });
+            input->onTextChange = [this] { updateNameFeedback (); };
+            updateNameFeedback ();
+        }
+
+        ~SampleRenamePrompt () override { removeCustomComponent (0); }
+
+    private:
+        juce::Label feedback;
+
+        void updateNameFeedback ()
+        {
+            const auto requested { getTextEditorContents ("sample-rename-name").trim () };
+            const auto displayed { requested.endsWithIgnoreCase (".wav") ? requested : requested + ".wav" };
+            juce::String filename;
+            const auto valid { SampleRename::validateName (requested, filename) };
+            feedback.setText (juce::String (displayed.length ()) + " / 47 characters including .wav\n"
+                + (valid.wasOk () ? "Valid WAV filename. Existing files are never overwritten." : valid.getErrorMessage ())
+                + "\nA8 shows the beginning: keep important words first.", juce::dontSendNotification);
+            Theme::bindColour (feedback, juce::Label::textColourId, [error = valid.failed ()] { return error ? Theme::warning : Theme::text; });
+            getButton ("CREATE COPY")->setEnabled (valid.wasOk ());
+        }
+    };
+}
+
 struct Assimil8orEditorComponent::StereoCollapseJob
 {
     PresetEditSession::Snapshot source;
@@ -31,6 +85,20 @@ struct Assimil8orEditorComponent::StereoCollapseJob
     ~StereoCollapseJob ()
     {
         if (! committed) StereoCollapse::cleanup (prepared);
+    }
+};
+
+struct Assimil8orEditorComponent::SampleRenameJob
+{
+    PresetEditSession::Snapshot source;
+    SampleRename::Result prepared;
+    juce::Result outcome { juce::Result::fail ("The sample copy did not finish.") };
+    bool committed { false };
+    std::atomic<bool> deliveryFailed { false };
+
+    ~SampleRenameJob ()
+    {
+        if (! committed) SampleRename::cleanup (prepared);
     }
 };
 
@@ -76,6 +144,30 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
                                  StereoCollapse::Mode mode, StereoCollapse::Result& result)
     {
         return StereoCollapse::prepare (folder, preset, channel, mode, result);
+    };
+    promptSampleRename = [this] (const juce::String& title, const juce::String& message, const juce::String& initialName,
+                                std::function<void (std::optional<juce::String>)> completion)
+    {
+        sampleRenameAlert = createSampleRenamePrompt (title, message, initialName);
+        auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+        auto window = juce::Component::SafePointer<juce::AlertWindow> (sampleRenameAlert.get ());
+        sampleRenameAlert->enterModalState (true, juce::ModalCallbackFunction::create ([safe, window, completion = std::move (completion)] (int response)
+        {
+            if (safe == nullptr || window == nullptr || safe->sampleRenameAlert.get () != window.getComponent ()) return;
+            const auto entered { window->getTextEditorContents ("sample-rename-name") };
+            safe->sampleRenameAlert.reset ();
+            completion (response == 1 ? std::optional<juce::String> { entered } : std::nullopt);
+        }));
+    };
+    notifySampleRename = [] (bool error, const juce::String& title, const juce::String& message)
+    {
+        juce::AlertWindow::showMessageBoxAsync (error ? juce::AlertWindow::WarningIcon : juce::AlertWindow::InfoIcon, title, message);
+    };
+    dispatchSampleRename = [] (std::function<void ()> completion) { return juce::MessageManager::callAsync (std::move (completion)); };
+    prepareSampleRename = [] (const juce::File& folder, const juce::ValueTree& preset, const juce::String& filename,
+                              const juce::String& requestedName, SampleRename::Result& result)
+    {
+        return SampleRename::prepare (folder, preset, filename, requestedName, result);
     };
 
     auto setupButton = [this] (juce::TextButton& button, juce::String text, std::function<void ()> buttonFunction)
@@ -135,11 +227,16 @@ Assimil8orEditorComponent::~Assimil8orEditorComponent ()
 {
     stopTimer ();
     ++stereoCollapseConfirmation;
+    ++sampleRenameConfirmation;
+    sampleRenameAlert.reset ();
     if (stereoCollapseThread.joinable ()) stereoCollapseThread.join ();
+    if (sampleRenameThread.joinable ()) sampleRenameThread.join ();
     // A queued completion may outlive this editor. Remove only still-owned,
     // unapplied outputs now; its shared job also cleans up if delivery is lost.
     if (stereoCollapseJob && ! stereoCollapseJob->committed)
         StereoCollapse::cleanup (stereoCollapseJob->prepared);
+    if (sampleRenameJob && ! sampleRenameJob->committed)
+        SampleRename::cleanup (sampleRenameJob->prepared);
 }
 
 void Assimil8orEditorComponent::setupPresetComponents ()
@@ -495,6 +592,7 @@ void Assimil8orEditorComponent::init (juce::ValueTree rootPropertiesVT)
         {
             displayChannelToolsMenu (channelIndex);
         };
+        channelEditors[channelIndex].createSampleFileActions = [this] (int channel, int zone) { return createSampleFileMenu (channel, zone); };
         return true;
     });
     channelEditorsInitialized = true;
@@ -612,7 +710,7 @@ void Assimil8orEditorComponent::addChannelPurgeMenuItem (juce::PopupMenu& menu, 
 void Assimil8orEditorComponent::addStereoCollapseMenu (juce::PopupMenu& menu, int channelIndex)
 {
     const auto source { channelActionSession.snapshot () };
-    const auto enabled { source && ! stereoCollapseConfirming && ! stereoCollapseJob
+    const auto enabled { source && ! channelFileOperationBusy ()
         && StereoCollapse::pairLeftIndex (source->preset, channelIndex) >= 0 };
     auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
     juce::PopupMenu choices;
@@ -630,7 +728,7 @@ void Assimil8orEditorComponent::addStereoCollapseMenu (juce::PopupMenu& menu, in
 
 void Assimil8orEditorComponent::requestStereoCollapse (const PresetEditSession::Snapshot& source, int channelIndex, StereoCollapse::Mode mode)
 {
-    if (stereoCollapseConfirming || stereoCollapseJob || ! channelActionSession.matches (source)) return;
+    if (channelFileOperationBusy () || ! channelActionSession.matches (source)) return;
     const auto left { StereoCollapse::pairLeftIndex (source.preset, channelIndex) };
     if (left < 0) return;
     auto zones { 0 };
@@ -680,7 +778,7 @@ void Assimil8orEditorComponent::stopStereoCollapseAudition ()
 
 void Assimil8orEditorComponent::startStereoCollapse (const PresetEditSession::Snapshot& source, int channelIndex, StereoCollapse::Mode mode)
 {
-    if (stereoCollapseJob || ! channelActionSession.matches (source)) return;
+    if (channelFileOperationBusy () || ! channelActionSession.matches (source)) return;
     const auto left { StereoCollapse::pairLeftIndex (source.preset, channelIndex) };
     if (left < 0) return;
     if (stereoCollapseThread.joinable ()) stereoCollapseThread.join ();
@@ -765,6 +863,156 @@ void Assimil8orEditorComponent::finishStereoCollapse (std::shared_ptr<StereoColl
         "CH " + juce::String (left + 1) + " now uses mono WAVs; CH " + juce::String (left + 2) + " is free.\n\nCreated "
         + juce::String (job->prepared.createdFiles.size ()) + " mono file(s) in:\n" + job->source.folder.getFullPathName ()
         + "\n\nOriginal WAVs are unchanged. SAVE IS PENDING: click SAVE to write these preset changes.");
+}
+
+bool Assimil8orEditorComponent::channelFileOperationBusy () const
+{
+    return stereoCollapseConfirming || stereoCollapseJob || sampleRenamePrompting || sampleRenameJob;
+}
+
+juce::PopupMenu Assimil8orEditorComponent::createSampleFileMenu (int channelIndex, int zoneIndex)
+{
+    juce::PopupMenu menu;
+    const auto source { channelActionSession.snapshot () };
+    if (! source || channelIndex < 0 || channelIndex >= kNumChannels || zoneIndex < 0 || zoneIndex >= kNumZones) return menu;
+    const auto filename { source->preset.getChild (channelIndex).getChild (zoneIndex).getProperty (ZoneProperties::SamplePropertyId).toString () };
+    if (filename.isEmpty ()) return menu;
+    auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+    menu.addItem ("Rename sample copy...", ! channelFileOperationBusy (), false, [safe, source, filename]
+    {
+        if (safe != nullptr && safe->channelActionSession.matches (*source))
+            safe->requestSampleRename (*source, filename, source->folder.getChildFile (filename).getFileNameWithoutExtension ());
+    });
+    return menu;
+}
+
+std::unique_ptr<juce::AlertWindow> Assimil8orEditorComponent::createSampleRenamePrompt (const juce::String& title,
+                                                                                     const juce::String& message,
+                                                                                     const juce::String& initialName)
+{
+    return std::make_unique<SampleRenamePrompt> (title, message, initialName);
+}
+
+void Assimil8orEditorComponent::requestSampleRename (const PresetEditSession::Snapshot& source, const juce::String& filename,
+                                                    const juce::String& proposedName, const juce::String& error)
+{
+    if (channelFileOperationBusy () || ! channelActionSession.matches (source)) return;
+    auto references { 0 };
+    for (const auto& channel : source.preset)
+        for (const auto& zone : channel)
+            if (zone.getProperty (ZoneProperties::SamplePropertyId).toString ().equalsIgnoreCase (filename)) ++references;
+    if (references == 0) return;
+    sampleRenamePrompting = true;
+    const auto request { ++sampleRenameConfirmation };
+    auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+    promptSampleRename ("Rename sample copy",
+        (error.isEmpty () ? juce::String () : "Name not accepted: " + error + "\n\n")
+        + "Create a copy of '" + filename + "' with a new name in this folder. All " + juce::String (references)
+        + " matching sample references in the current preset will follow the copy, including stereo partners and other zones.\n\n"
+        "The original WAV and other saved presets stay unchanged. The .wav extension is kept; the full name can contain up to 47 characters. Click SAVE afterward to write the updated preset.",
+        proposedName, [safe, source, filename, request] (std::optional<juce::String> entered)
+        {
+            if (safe == nullptr || safe->sampleRenameConfirmation != request) return;
+            ++safe->sampleRenameConfirmation;
+            safe->sampleRenamePrompting = false;
+            if (! entered) return;
+            if (! safe->channelActionSession.matches (source))
+            {
+                safe->notifySampleRename (true, "Sample copy cancelled", "The preset or folder changed while entering the name. Nothing was changed; reopen the FILE menu and try again.");
+                return;
+            }
+            juce::String finalName;
+            auto requestedName { entered->trim () };
+            // The prompt edits the stem. Keep the original extension's case so
+            // accepting an unchanged Foo.WAV is a no-op on every platform.
+            if (! requestedName.endsWithIgnoreCase (".wav") && filename.endsWithIgnoreCase (".wav"))
+                requestedName += filename.getLastCharacters (4);
+            auto valid { SampleRename::validateName (requestedName, finalName) };
+            if (valid.wasOk () && finalName != filename)
+            {
+                const auto target { source.folder.getChildFile (finalName) };
+                if (target.exists () || target.isSymbolicLink ()) valid = juce::Result::fail ("That filename is already in use. Choose another name; existing files are never overwritten.");
+            }
+            if (valid.failed ())
+            {
+                safe->requestSampleRename (source, filename, *entered, valid.getErrorMessage ());
+                return;
+            }
+            safe->startSampleRename (source, filename, finalName);
+        });
+}
+
+void Assimil8orEditorComponent::startSampleRename (const PresetEditSession::Snapshot& source, const juce::String& filename, const juce::String& requestedName)
+{
+    if (channelFileOperationBusy () || ! channelActionSession.matches (source)) return;
+    if (sampleRenameThread.joinable ()) sampleRenameThread.join ();
+    stopStereoCollapseAudition ();
+    auto job { std::make_shared<SampleRenameJob> () };
+    job->source = source;
+    sampleRenameJob = job;
+    auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+    try
+    {
+        sampleRenameThread = std::thread ([safe, job, filename, requestedName, prepare = prepareSampleRename, dispatch = dispatchSampleRename]
+        {
+            try { job->outcome = prepare (job->source.folder, job->source.preset, filename, requestedName, job->prepared); }
+            catch (...) { job->outcome = juce::Result::fail ("Unexpected failure while creating the named sample copy."); }
+            bool delivered { false };
+            try
+            {
+                delivered = dispatch ([safe, job]
+                {
+                    if (safe != nullptr) safe->finishSampleRename (job);
+                });
+            }
+            catch (...) {}
+            if (! delivered)
+            {
+                const auto removed { SampleRename::cleanup (job->prepared) };
+                job->outcome = juce::Result::fail ("Could not deliver the sample copy result; the preset was not changed. " + removed.getErrorMessage ());
+                job->deliveryFailed.store (true);
+            }
+        });
+    }
+    catch (...)
+    {
+        job->outcome = juce::Result::fail ("Could not start the sample copy. Please try again.");
+        finishSampleRename (job);
+    }
+}
+
+void Assimil8orEditorComponent::finishSampleRename (std::shared_ptr<SampleRenameJob> job)
+{
+    if (sampleRenameJob != job) return;
+    auto result { job->outcome };
+    if (result.wasOk () && ! channelActionSession.matches (job->source))
+        result = juce::Result::fail ("The preset or folder changed while copying the sample. Your current edits were not replaced; reopen the FILE menu and try again.");
+    if (result.wasOk () && job->prepared.references > 0)
+    {
+        stopStereoCollapseAudition ();
+        // Sample filenames are applied before saved markers within each zone.
+        // The existing copy helper preserves tree identities and stereo pairing.
+        result = channelActionSession.apply (job->source, job->prepared.editedPreset);
+    }
+    if (result.failed ())
+    {
+        const auto removed { SampleRename::cleanup (job->prepared) };
+        auto message { result.getErrorMessage () };
+        if (removed.failed ()) message += "\n\n" + removed.getErrorMessage ();
+        sampleRenameJob.reset ();
+        notifySampleRename (true, "Cannot rename sample copy", message);
+        return;
+    }
+
+    job->committed = true;
+    updateAllChannelTabNames ();
+    updateSaveIndicator ();
+    sampleRenameJob.reset ();
+    if (job->prepared.references == 0)
+        notifySampleRename (false, "Sample name unchanged", "The name is unchanged. No files or preset references were changed.");
+    else
+        notifySampleRename (false, "Named sample copy created", "Created '" + job->prepared.filename + "' in:\n" + job->source.folder.getFullPathName ()
+            + "\n\nUpdated " + juce::String (job->prepared.references) + " sample reference(s) in this preset. Original WAVs and other saved presets are unchanged.\n\nSAVE IS PENDING: click SAVE to write the preset.");
 }
 
 juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIndex)
@@ -1340,6 +1588,8 @@ void Assimil8orEditorComponent::timerCallback ()
 {
     if (stereoCollapseJob && stereoCollapseJob->deliveryFailed.load ())
         finishStereoCollapse (stereoCollapseJob);
+    if (sampleRenameJob && sampleRenameJob->deliveryFailed.load ())
+        finishSampleRename (sampleRenameJob);
     updateSaveIndicator ();
 }
 

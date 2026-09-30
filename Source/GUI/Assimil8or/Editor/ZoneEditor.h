@@ -35,6 +35,8 @@ public:
     // TODO - can we make this local, since we should be able to access the edits through the EditManager
     std::function<void (int zoneIndex)> displayToolsMenu;
     std::function<void (bool continueSlice)> copyToNext;
+    std::function<juce::PopupMenu ()> createSampleFileActions;
+    juce::Rectangle<int> getSampleFileBounds () const { return sampleNameLabel.getBounds ().getUnion (sampleNameSelectLabel.getBounds ()); }
 
 private:
     void lookAndFeelChanged () override { sampleNameSelectLabel.setOutline (Theme::border); repaint (); }
@@ -42,6 +44,7 @@ private:
     friend struct AudioAuditTestAccess;
     friend struct CvAuditionTestAccess;
     friend struct SimulationUiTestAccess;
+    friend struct SampleRenameUiTestAccess;
     class ClickListener : public juce::MouseListener
     {
     public:
@@ -118,6 +121,7 @@ private:
     juce::TextButton rightChannelSelectButton;
     juce::Label sampleNameLabel;
     FileSelectLabel sampleNameSelectLabel; // filename
+    juce::PopupMenu createSampleFileMenu ();
     juce::Label sampleEndLabel;
     DragValueEditorInt64 sampleEndTextEditor; // int
     juce::Label sampleStartLabel;

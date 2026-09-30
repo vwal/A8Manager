@@ -2342,6 +2342,10 @@ void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree u
         auto& zoneEditor { zoneEditors [zoneIndex] };
         zoneEditor.init (zonePropertiesVT, uneditedChannelProperties.getZoneVT (zoneIndex), rootPropertiesVT);
         zoneEditor.copyToNext = [this, zoneIndex] (bool continueSlice) { copyToNextZone (zoneIndex, continueSlice); };
+        zoneEditor.createSampleFileActions = [this, zoneIndex]
+        {
+            return createSampleFileActions ? createSampleFileActions (channelIndex, zoneIndex) : juce::PopupMenu {};
+        };
         zoneEditor.displayToolsMenu = [this] (int zoneIndex)
         {
             auto* popupMenuLnF { new ModernLookAndFeel };
@@ -2922,6 +2926,9 @@ void ChannelEditor::resized ()
     }
     activeAreas.add (toolsButton.getBounds ().expanded (2));
     activeAreas.add (sampleWaveformDisplay.getBounds ());
+    const auto selectedZone { zoneTabs.getCurrentTabIndex () };
+    if (selectedZone >= 0 && selectedZone < 8)
+        activeAreas.add (getLocalArea (&zoneEditors[selectedZone], zoneEditors[selectedZone].getSampleFileBounds ()));
     stereoRightTransparantOverly.setUndimmedAreas (std::move (activeAreas));
 }
 

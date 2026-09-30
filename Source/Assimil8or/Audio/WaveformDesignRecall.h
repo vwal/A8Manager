@@ -2,6 +2,7 @@
 
 #include "WaveformDesign.h"
 #include "CvSampleSafety.h"
+#include <juce_cryptography/juce_cryptography.h>
 #include <cmath>
 #include <cstring>
 
@@ -112,11 +113,37 @@ namespace WaveformDesignRecall
         }
     }
 
-    inline juce::Result loadRecipe (const juce::File& file, RecalledDesign& result)
+    // Renamed copies retain a full recipe with an explicit WAV/voice/hash
+    // binding. Long stems use a deterministic suffix to keep sidecars <=47.
+    inline juce::File copiedRecipe (const juce::File& wave)
+    {
+        auto stem { wave.getFileNameWithoutExtension () };
+        if (stem.length () > 35)
+        {
+            const auto name { wave.getFileName () };
+            stem = stem.substring (0, 22) + "-" + juce::SHA256 (name.toRawUTF8 (), name.getNumBytesAsUTF8 ()).toHexString ().substring (0, 12);
+        }
+        return wave.getSiblingFile (stem + ".design.json");
+    }
+
+    inline juce::File adjacentRecipe (const juce::File& wave)
+    {
+        const auto alias { copiedRecipe (wave) };
+        if (alias.exists () || alias.isSymbolicLink ()) return alias;
+        const auto stem { wave.getFileNameWithoutExtension () };
+        if (stem.length () < 4 || stem[stem.length () - 3] != '-' || ! stem.getLastCharacters (2).containsOnly ("0123456789")) return {};
+        const auto voice { stem.getLastCharacters (2).getIntValue () };
+        const auto family { stem.dropLastCharacters (3) };
+        if (voice < 1 || voice > 8 || (family != "voice" && ! detail::hasAssignmentToken (family))) return {};
+        return wave.getSiblingFile (family == "voice" ? "design.json" : family + ".design.json");
+    }
+
+    inline juce::Result loadRecipe (const juce::File& file, RecalledDesign& result, juce::var* document = nullptr)
     {
         result = {};
         constexpr int maximumBytes { 1024 * 1024 };
-        if (! file.existsAsFile ()) return juce::Result::fail ("The saved waveform recipe is missing: " + file.getFileName ());
+        if (document != nullptr) *document = juce::var {};
+        if (! file.existsAsFile () || file.isSymbolicLink ()) return juce::Result::fail ("The saved waveform recipe is missing or linked: " + file.getFileName ());
         const auto size { file.getSize () };
         if (size <= 0 || size > maximumBytes) return juce::Result::fail ("The waveform recipe must be nonempty and no larger than 1 MB.");
         auto stream { file.createInputStream () };
@@ -145,6 +172,7 @@ namespace WaveformDesignRecall
             recalled.displayName = original.toString ();
         }
         result = std::move (recalled);
+        if (document != nullptr) *document = json;
         return juce::Result::ok ();
     }
 
@@ -152,24 +180,37 @@ namespace WaveformDesignRecall
     {
         result = {};
         auto noRecipe = [] () { return juce::Result::fail ("This WAV has no recognized generated waveform recipe. Use Load recipe to open a saved design explicitly."); };
-        if (! wave.existsAsFile () || ! wave.hasFileExtension ("wav")) return noRecipe ();
+        if (! wave.existsAsFile () || wave.isSymbolicLink () || ! wave.hasFileExtension ("wav")) return noRecipe ();
         const auto stem { wave.getFileNameWithoutExtension () };
-        if (stem.length () < 4 || stem[stem.length () - 3] != '-' || ! stem.getLastCharacters (2).containsOnly ("0123456789")) return noRecipe ();
-        const auto voice { stem.getLastCharacters (2).getIntValue () - 1 };
-        if (voice < 0 || voice >= 8) return noRecipe ();
-        const auto family { stem.dropLastCharacters (3) };
-        const auto package { family == "voice" };
-        if (! package && ! detail::hasAssignmentToken (family)) return noRecipe ();
-        const auto recipe { wave.getSiblingFile (package ? "design.json" : family + ".design.json") };
+        const auto recipe { adjacentRecipe (wave) };
+        if (recipe == juce::File ()) return noRecipe ();
         RecalledDesign recalled;
-        if (const auto loaded { loadRecipe (recipe, recalled) }; loaded.failed ()) return loaded;
+        juce::var document;
+        if (const auto loaded { loadRecipe (recipe, recalled, &document) }; loaded.failed ()) return loaded;
+        auto voice { stem.getLastCharacters (2).getIntValue () - 1 };
+        juce::String copiedHash;
+        if (recipe == copiedRecipe (wave))
+        {
+            const auto* binding { document.getProperty ("copiedWave", {}).getDynamicObject () };
+            if (binding == nullptr || ! binding->getProperty ("filename").isString ()
+                || binding->getProperty ("filename").toString () != wave.getFileName ()
+                || ! binding->getProperty ("voiceIndex").isInt () || ! binding->getProperty ("sha256").isString ())
+                return juce::Result::fail ("The renamed waveform recipe does not identify this WAV and voice.");
+            voice = static_cast<int> (binding->getProperty ("voiceIndex"));
+            copiedHash = binding->getProperty ("sha256").toString ();
+            if (copiedHash.length () != 64 || ! copiedHash.containsOnly ("0123456789abcdef"))
+                return juce::Result::fail ("The renamed waveform recipe has an invalid content fingerprint.");
+        }
         const auto& settings { recalled.settings };
         const auto count { settings.mode == WaveformDesign::Mode::layers ? settings.voiceCount : 1 };
-        if (voice >= count) return juce::Result::fail ("This voice is not present in the adjacent waveform recipe.");
+        if (voice < 0 || voice >= count) return juce::Result::fail ("This voice is not present in the adjacent waveform recipe.");
         const auto frames { settings.mode == WaveformDesign::Mode::modulation ? std::llround (settings.sampleRate * settings.durationSeconds) : settings.cycleFrames };
         auto stream { wave.createInputStream () };
         if (! stream || stream->getStatus ().failed () || ! detail::boundedWave (*stream, frames))
             return juce::Result::fail ("The WAV is not an intact generated waveform matching this recipe.");
+        if (copiedHash.isNotEmpty () && (juce::SHA256 (*stream).toHexString () != copiedHash
+            || stream->getStatus ().failed () || ! stream->setPosition (0)))
+            return juce::Result::fail ("The renamed WAV has changed since its waveform recipe was copied.");
         juce::WavAudioFormat format;
         std::unique_ptr<juce::AudioFormatReader> reader { format.createReaderFor (stream.release (), true) };
         if (! reader || reader->numChannels != 1 || reader->bitsPerSample != 24 || reader->usesFloatingPointData

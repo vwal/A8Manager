@@ -19,6 +19,8 @@ void testAudioAudit ();
 void testAudioFileSafety ();
 void testStereoAssignment ();
 void testStereoCollapse ();
+void testSampleRename ();
+void testSampleRenameUi ();
 void testStereoCollapseUi ();
 void testStereoChannelUi ();
 void testPairedZoneEdits ();
@@ -151,6 +153,8 @@ int main (int argc, char* argv[])
         if (argc == 2 && juce::String (argv[1]) == "--simulation-ui") { testSimulationUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--channel-purge-ui") { testChannelPurgeUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--stereo-collapse") { testStereoCollapse (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--sample-rename") { testSampleRename (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--sample-rename-ui") { testSampleRenameUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--stereo-collapse-ui") { testStereoCollapseUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--generated-sidecar-validator") { testGeneratedSidecarValidator (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--waveform-design-recall") { testWaveformDesignRecall (); return 0; }
