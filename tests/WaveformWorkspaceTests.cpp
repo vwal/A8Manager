@@ -191,6 +191,11 @@ struct WaveformWorkspaceTestAccess
         answer (true);
         check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (bank)) && target.getSelectedId () == 5,
                "Recalling a bank follower restores all voices and selects the original bank's first channel");
+        check (std::abs (control<juce::Slider> (workspace, "design-detune-spread-value").getValue () - 19) < 1.0e-7
+               && std::abs (control<juce::Slider> (workspace, "design-phase-spread-value").getValue () - 137) < 1.0e-7
+               && std::abs (control<juce::Slider> (workspace, "design-pan-spread-value").getValue () - 0.6) < 1.0e-7
+               && control<juce::Label> (workspace, "design-spread-status").getText ().contains ("Custom"),
+               "Legacy bank recall derives accurate master spreads and marks custom positions without altering its recipe");
         const auto bankBefore { juce::JSON::toString (toJson (workspace.getSettings ())) };
         ZoneProperties missing (live.getChild (0).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
         missing.setSample ("ordinary.wav", false); ++revision;
@@ -514,6 +519,183 @@ struct WaveformWorkspaceTestAccess
         settle (workspace);
         cancelWith ([&] { click (workspace, "Supersaw (7 voices)"); });
         std::cout << "PASS: real waveform transpose range pause/resume, live cycle changes, retained Stop and lifecycle cancellation\n";
+    }
+
+    static void layerSpreadWorkflow ()
+    {
+        using namespace WaveformDesign;
+        const auto near = [] (double a, double b) { return std::abs (a - b) < 1.0e-7; };
+        WaveformAudition engine;
+        engine.prepareToPlay (48000.0);
+        int starts { 0 }, publications { 0 };
+        WaveformAudition::PayloadPtr audible;
+        WaveformWorkspace workspace;
+        workspace.setSize (1160, 800);
+        workspace.onAuditionPayload = [&] (auto payload)
+        {
+            audible = payload;
+            if (payload) ++publications;
+            engine.setPayload (std::move (payload));
+        };
+        workspace.onStartAudition = [&] { ++starts; return engine.start (); };
+        workspace.onStopAudition = [&] { engine.setPlaying (false); };
+        workspace.onAuditionMonitorChange = [&] (double db, double semitones)
+        {
+            engine.setMonitorGain (juce::Decibels::decibelsToGain (db));
+            return engine.setTransposeSemitones (semitones);
+        };
+        workspace.isAuditionActive = [&] { return engine.isActive (); };
+        workspace.isAuditionPausedForRange = [&] { return engine.isPausedForRange (); };
+        auto& mode { control<juce::ComboBox> (workspace, "design-mode") };
+        mode.setSelectedId (3, juce::sendNotificationSync);
+        auto& voices { control<juce::Slider> (workspace, "design-voices-value") };
+        auto& detune { control<juce::Slider> (workspace, "design-detune-spread-value") };
+        auto& phase { control<juce::Slider> (workspace, "design-phase-spread-value") };
+        auto& pan { control<juce::Slider> (workspace, "design-pan-spread-value") };
+        auto& transpose { control<juce::Slider> (workspace, "design-monitor-transpose-value") };
+        auto& spreadStatus { control<juce::Label> (workspace, "design-spread-status") };
+        const auto editVoice = [&] (int index, int column, double value)
+        {
+            control<juce::Slider> (workspace, "design-voice-" + juce::String (index) + "-" + juce::String (column) + "-value")
+                .setValue (value, juce::sendNotificationSync);
+        };
+        auto render = [&]
+        {
+            juce::AudioBuffer<float> output (2, 4096);
+            output.clear ();
+            engine.process ({ &output, 0, output.getNumSamples () });
+            workspace.timerCallback ();
+        };
+        check (button (workspace, "Apply voice spread") == nullptr && phase.getMinimum () == -360 && phase.getMaximum () == 360,
+               "Layer spreads are live controls with signed phase, without an Apply action");
+        check (voices.getValue () == 7 && near (detune.getValue (), 24) && near (phase.getValue (), 300) && near (pan.getValue (), 0.8),
+               "A fresh Layer Bank displays the actual seven-voice defaults");
+
+        editVoice (1, 1, -125);
+        editVoice (1, 3, 0.17);
+        editVoice (3, 2, -0.41);
+        editVoice (8, 0, 1900); editVoice (8, 1, -359); editVoice (8, 2, 0.97); editVoice (8, 3, 0.29);
+        auto before { workspace.getSettings () };
+        detune.setValue (48, juce::sendNotificationSync);
+        for (size_t i { 0 }; i < before.voices.size (); ++i)
+        {
+            const auto& old { before.voices[i] };
+            const auto current { workspace.getSettings ().voices[i] };
+            check (near (current.detuneCents, i < 7 ? -48.0 + 16.0 * i : old.detuneCents)
+                   && near (current.phaseDegrees, old.phaseDegrees) && near (current.pan, old.pan) && near (current.level, old.level),
+                   "Live detune redistributes only active detunes, preserving other properties and inactive voices");
+        }
+        before = workspace.getSettings ();
+        phase.setValue (-180, juce::sendNotificationSync);
+        for (size_t i { 0 }; i < before.voices.size (); ++i)
+        {
+            const auto& old { before.voices[i] };
+            const auto current { workspace.getSettings ().voices[i] };
+            check (near (current.phaseDegrees, i < 7 ? -30.0 * i : old.phaseDegrees)
+                   && near (current.detuneCents, old.detuneCents) && near (current.pan, old.pan) && near (current.level, old.level),
+                   "Live signed phase spread preserves detune, pan, manual gains and inactive voices");
+        }
+        before = workspace.getSettings ();
+        pan.setValue (0.5, juce::sendNotificationSync);
+        for (size_t i { 0 }; i < before.voices.size (); ++i)
+        {
+            const auto& old { before.voices[i] };
+            const auto current { workspace.getSettings ().voices[i] };
+            check (near (current.pan, i < 7 ? -0.5 + static_cast<double> (i) / 6.0 : old.pan)
+                   && near (current.detuneCents, old.detuneCents) && near (current.phaseDegrees, old.phaseDegrees) && near (current.level, old.level),
+                   "Live pan spread preserves detune, phase, manual gains and inactive voices");
+        }
+        editVoice (4, 0, 155); editVoice (2, 1, -315); editVoice (7, 2, -0.91);
+        check (near (detune.getValue (), 155) && near (phase.getValue (), -315) && near (pan.getValue (), 0.91)
+               && spreadStatus.getText ().contains ("Custom"),
+               "Irregular active voices show their actual extents and a Custom indication");
+        auto retained { workspace.getSettings () };
+        voices.setValue (3, juce::sendNotificationSync);
+        retained.voiceCount = 3;
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (retained))
+               && near (detune.getValue (), 48) && near (phase.getValue (), -315) && near (pan.getValue (), 0.5),
+               "Voice-count changes retain every voice and summarize only the active subset");
+        voices.setValue (1, juce::sendNotificationSync);
+        check (! detune.isEnabled () && ! phase.isEnabled () && ! pan.isEnabled (),
+               "Single-voice banks disable spreads instead of suggesting a nonexistent distribution");
+        voices.setValue (8, juce::sendNotificationSync);
+        retained.voiceCount = 8;
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (retained))
+               && near (detune.getValue (), 1900) && near (phase.getValue (), -359) && near (pan.getValue (), 0.97),
+               "Restoring an inactive voice restores its manual settings and includes it in spread summaries");
+        const auto bankBeforeModeSwitch { juce::JSON::toString (toJson (workspace.getSettings ())) };
+        mode.setSelectedId (1, juce::sendNotificationSync);
+        mode.setSelectedId (3, juce::sendNotificationSync);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == bankBeforeModeSwitch
+               && near (detune.getValue (), 1900) && near (phase.getValue (), -359) && near (pan.getValue (), 0.97)
+               && spreadStatus.getText ().contains ("Custom"),
+               "Returning to Layer Bank restores custom voices and truthful spread controls without redistributing them");
+        control<juce::ComboBox> (workspace, "design-preset").setSelectedId (1, juce::sendNotificationSync);
+        check (workspace.getSettings ().shape == Shape::sine && voices.getValue () == 7
+               && near (detune.getValue (), 24) && near (phase.getValue (), 300) && near (pan.getValue (), 0.8),
+               "A fresh waveform preset resets both voices and spread controls");
+        detune.setValue (130, juce::sendNotificationSync);
+        phase.setValue (-210, juce::sendNotificationSync);
+        pan.setValue (0.37, juce::sendNotificationSync);
+        voices.setValue (4, juce::sendNotificationSync);
+        click (workspace, "Supersaw (7 voices)");
+        auto expected { startingPoint (Mode::layers, Shape::saw) };
+        spreadVoices (expected, 7, 24, 300, 0.8);
+        check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (expected))
+               && voices.getValue () == 7 && near (detune.getValue (), 24) && near (phase.getValue (), 300) && near (pan.getValue (), 0.8)
+               && ! spreadStatus.getText ().contains ("Custom"),
+               "Supersaw restores its complete seven-voice recipe and every master control");
+
+        settle (workspace);
+        workspace.setSize (975, 732);
+        auto& viewport { control<juce::Viewport> (workspace, "design-controls") };
+        viewport.setViewPosition (0, spreadStatus.getParentComponent ()->getY ());
+        snapshot (workspace, "waveform-workspace-spread-controls-compact");
+        workspace.setSize (1160, 800);
+        viewport.setViewPosition (0, 0);
+        click (workspace, "Start audition");
+        render ();
+        const auto started { starts }, published { publications };
+        for (int event { 0 }; event < 70; ++event)
+        {
+            phase.setValue (-90 + event * 3, juce::sendNotificationSync);
+            workspace.timerCallback ();
+            std::this_thread::sleep_for (std::chrono::milliseconds (10));
+        }
+        check (publications - published >= 3 && engine.isActive () && starts == started,
+               "Rapid master-spread dragging publishes live audition snapshots before release without restarting");
+        settle (workspace);
+        render ();
+        check (audible && near (audible->getSettings ().voices[6].phaseDegrees, 117) && engine.isActive () && starts == started,
+               "The audible bank catches up to the last master-spread value");
+        click (workspace, "Stop audition");
+        render ();
+        detune.setValue (30, juce::sendNotificationSync);
+        settle (workspace); render ();
+        check (! engine.isActive () && ! engine.isPausedForRange () && starts == started,
+               "Editing a stopped bank's master controls does not start audition");
+        click (workspace, "Start audition"); render ();
+        transpose.setValue (-48, juce::sendNotificationSync); render ();
+        check (engine.isPausedForRange () && ! engine.isActive (), "Fixture enters a genuine bank frequency pause");
+        phase.setValue (-120, juce::sendNotificationSync);
+        settle (workspace); render ();
+        check (engine.isPausedForRange () && ! engine.isActive () && starts == started + 1,
+               "Master-spread rendering does not resume an audition frequency pause");
+        click (workspace, "Stop audition");
+        control<juce::ComboBox> (workspace, "design-frames").setSelectedId (8192, juce::sendNotificationSync);
+        transpose.setValue (transpose.getMaximum (), juce::sendNotificationSync);
+        settle (workspace);
+        click (workspace, "Start audition"); render ();
+        check (engine.isActive (), "Long-cycle bank can audition at its current hardware transpose ceiling");
+        detune.setValue (300, juce::sendNotificationSync);
+        check (near (transpose.getMaximum (), 69) && near (transpose.getValue (), 69),
+               "Live master detune reserves A8 pitch headroom and immediately clamps the displayed transpose");
+        settle (workspace); render ();
+        check (! engine.isActive () && ! engine.isPausedForRange () && starts == started + 2
+               && control<juce::Label> (workspace, "design-audition-hint").getText ().contains ("Audition stopped"),
+               "A master-detune ceiling clamp stops safely and never restarts on render completion");
+        snapshot (workspace, "waveform-workspace-live-layer-spread");
+        std::cout << "PASS: live layer spreads, truthful custom summaries, preset resets, retained voices and audition safety\n";
     }
 
     static void hardwareTransposeRangeWorkflow ()
@@ -1119,6 +1301,7 @@ void testWaveformWorkspace ()
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
     WaveformWorkspaceTestAccess::rangePauseWorkflow ();
+    WaveformWorkspaceTestAccess::layerSpreadWorkflow ();
     WaveformWorkspaceTestAccess::hardwareTransposeRangeWorkflow ();
     WaveformWorkspaceTestAccess::assignmentWorkflow ();
     WaveformWorkspaceTestAccess::recallWorkflow ();

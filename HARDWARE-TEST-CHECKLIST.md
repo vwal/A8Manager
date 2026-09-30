@@ -6,6 +6,10 @@ presets, not whether Assimil8or's oscillator/DAC works. Sample-level software
 checks are the primary test of generation; a short hardware session checks our
 preset assumptions and the analog properties that a WAV cannot establish.
 
+**Testing today? Start with the [priority test plan](#priority-test-plan).**
+Its first four checks are the initial session; use the remaining detail only
+when you need instructions for a particular test.
+
 Use a separate test folder. Keep the exported recipe (`design.json` or the
 assigned WAV's `.design.json`, when present), preset, WAVs and observations
 together. Advanced test-output packages also include `test-manifest.json` with
@@ -29,41 +33,164 @@ the shapes, PolyBLEP correction, phase, harmonic filtering, DC preservation and
 timing. See [regression coverage and run commands](tests/README.md). Passing these
 does not establish voltage calibration or every module behavior.
 
-## Minimum useful test session
+## Priority test plan
 
-Do these first; the extended checklists below are optional follow-up, not a
-requirement to measure every waveform with the scope. Read
-[Before starting](#before-starting) before using the SD card or connecting outputs.
+**Start with 1–4, then take a break if needed.** Those protect your work and
+check the CV hazards. Continue with 5–9 for normal musical use; 10 is a final
+editing check. The rest of this document is a reference, not another mandatory
+to-do list. These are expected results to verify, not completed hardware tests.
 
-1. **Software:** run the regression tests for the build being evaluated. Keep the
-   test result/build identifier. Check one export/recall round-trip and one
-   non-001 shared preset assignment. Confirm the resulting slot and WAV contents
-   survive saving/reopening.
-2. **Load and route:** load one Audio Cycle preset and one two-voice bank on the
-   module. Confirm the files, channel/zone assignments, Master/Link modes and pan
-   match the export. Trigger the master; both bank voices should respond. This
-   establishes triggering, not sample-accurate phase lock between outputs.
-3. **Playback acceptance:** try One Shot, Loop and Gated loop using a clearly
-   recognizable audio signal and both short and long gates. Then check three
-   forward sample-to-loop cases: loop wholly inside the sample, loop extending
-   beyond Sample End, and Loop Start after Sample End. Record/listen for the
-   expected initial passage and repetition; in the last case, the striped bridge
-   must be traversed. Do not count loop-before-sample or all gate/release edge
-   cases as verified by our forward simulation.
-4. **Essential analog CV checks:** follow the setup below. Measure zero, modest
-   positive and negative constant levels and a slow varying CV at the individual
-   output. Confirm polarity, sustained DC and the actual intended voltage range.
-   Confirm Mix Off on the module and verify **both** mix outputs against an idle
-   baseline. Keep all tested outputs disconnected from speakers/headphones.
-5. **Save/reload:** save a copy on the module, reload it and compare its preset
-   back in A8Manager. Check the settings that matter here: mode, boundaries,
-   pitch, pan, zone assignment and CV Mix Off. Retain any changed representation,
-   especially the hardware's representation of Off.
+Before starting, back up the SD card and use disposable test folders. Record
+the app build and A8 firmware version. Disable external modulation/MIDI and
+automatic triggering unless the test calls for them. Keep every tested CV
+individual output and both mix outputs disconnected from speakers/headphones.
+Use the [scope setup below](#essential-analog-session-rigol-mho98): DC coupling,
+1 MΩ input, and the correct probe attenuation (1× for a plain BNC-to-3.5 mm lead).
+Follow its grounding precautions before patching.
 
-An oscillator-frequency spot check (512 frames at 48 kHz: 93.75 Hz at zero pitch)
-is optional. Repeated scope measurements of every shape, transpose and amplitude
-are not needed when the sample-level tests pass. Hardware pitch/duration checks
-remain useful if a preset setting appears to be interpreted incorrectly.
+For each test, write **Pass / Fail / Not tested** and one observation. If 1–2
+fail, stop that workflow. If 3–4 fail, do not connect the CV to speakers or other
+modules; keep the failing preset and capture for investigation. A different,
+isolated audio-only test can still be useful.
+
+### First session protecting work and checking CV
+
+1. **Saved work survives reopening — computer only.**
+   In a disposable non-001 preset, keep a stereo sample on CH 1–2, assign a
+   generated audio waveform to CH 3, and set PITCH +12 / PAN −0.25 on empty CH 4.
+   SAVE, switch presets, then close and reopen the app and that preset. Also
+   change one MIDI setup value, save, and reopen MIDI settings.
+   **Pass:** the intended preset slot, CH 3 assignment, stereo pair and empty
+   CH 4 settings survive; the MIDI edit survives without changing other slots
+   or unrelated files. If you already have a working preset with zone 1 empty
+   and a later zone populated, include it: saving must retain the later zone's
+   original number and settings. That sparse case also has an automated test;
+   you do not need to hand-edit a preset file to construct it.
+
+2. **CV cannot accidentally audition — computer only.**
+   With speakers/headphones disconnected, export a new CV waveform and open it
+   in Samples. Try a renamed copy of the tagged WAV without its recipe too.
+   **Pass:** CV audition is unavailable in both workspaces, while marker editing
+   still works; its channel has Mix and Mix modulation Off. Ordinary audio
+   remains auditionable. Do not use untagged external CV as a safety test: its
+   purpose cannot always be detected.
+
+3. **Ordinary CV exports stay out of both mix outputs — A8 and scope required.**
+   Use an ordinary Designer CV sine export/assignment, 2 seconds, one cycle,
+   modest amplitude, zero offset/pitch, Loop playback. Confirm Mix Off on A8.
+   Scope its individual output plus Mix L and Mix R, comparing stopped and
+   running traces. Silence other channels and disable sampling-input monitoring.
+   **Pass:** the individual output carries the CV; neither mix acquires a
+   repeatable CV-shaped signal above its recorded idle/noise baseline. Record
+   the scope resolution; do not require mathematically exact zero volts.
+   A Test output package alone is insufficient here because it has a separate
+   export path that forces every used channel's mix Off.
+
+4. **CV has the correct polarity and holds DC — A8 and scope required.**
+   Export **Test output → CV levels**, **10 seconds / 10%**. Trigger A8 CH 1.
+   **Pass:** its individual output shows five approximately two-second sections:
+   **zero → positive → zero → negative → zero**. The nonzero plateaus hold
+   steady rather than decaying toward zero. This file plays once; retrigger for
+   another capture. Then try CV sine at 10 seconds: expect one bipolar cycle
+   during that window. Record actual plateau voltages and extrema; **10% is not
+   an assumed 1 V**. Before patching into another module, measure the range at
+   the settings/gain/load you intend to use and check that module's accepted
+   input range. A low-level pass does not certify full-scale voltage safety.
+
+### Next session normal hardware operation
+
+5. **Files load and channels route correctly — A8, listening or recording.**
+   Use audio-only test presets: one Audio Cycle, a stereo sample with clearly
+   different left/right content, and a two-voice Layer Bank. Monitor at low
+   level through suitable attenuation, not a direct headphone connection.
+   **Pass:** no missing-file errors; the intended channels/zones contain the
+   intended files; stereo sides are not swapped. The bank is Master + Link,
+   not Stereo Right, and one master trigger starts both voices. Hard-panning
+   those voices separates them at Mix L/R while each individual output still
+   carries its own voice. Exact trigger phase lock is not required.
+
+6. **Channel pitch and zone offset agree with A8 — recording preferred, scope optional.**
+   Export **Test output → Audio tone**, **2 seconds**, modest level. It contains
+   a 440 Hz tone with short endpoint fades. Use its CH 1 individual output;
+   the package deliberately has Mix Off. In Samples use ONCE, Audition speed
+   1× and the complete sample region. Apply the same preset pitch settings on
+   A8, with no external modulation and no loop. Compare captures to these
+   nominal expectations (allow for measured clock/instrument accuracy):
+
+   | Channel PITCH | Zone PITCH OFFSET | Tone frequency | Playback duration |
+   | --- | --- | --- | --- |
+   | 0 | 0 | 440 Hz | 2 seconds |
+   | +12 | 0 | 880 Hz | 1 second |
+   | +12 | −12 | 440 Hz | 2 seconds |
+   | +12 | +12 | 1,760 Hz | 0.5 seconds |
+
+   **Pass:** both A8 and Samples follow these pitch/duration ratios. At 1×,
+   toggling Keep pitch must not undo the preset pitch. In Samples only, at 0.5×
+   with Keep pitch on, the pitched result takes twice as long without another pitch change.
+   Measure the test voice, not the reference channel's end signal: that signal
+   still marks the original scheduled window. Restore pitch to zero afterward.
+
+7. **Ordinary playback modes behave correctly — A8, listening or recording.**
+   Use a recognizable 1–2-second audio sample and separate preset copies with
+   the following settings. Set channel Attack/Release to zero, AutoTrigger Off,
+   and sample/loop markers to the full file. Try both short and long gates.
+   **Pass:**
+
+   - **One Shot** (Play One Shot, No Loop): one complete pass regardless of gate length.
+   - **Loop** (Play One Shot, Loop): repeats after the gate ends; needs a deliberate stop.
+   - **Gated loop** (Play Gated, Loop/Release): repeats while the gate is high and stops on release with zero Release.
+
+   These are the Designer's three export combinations, not every independent
+   play/loop/envelope combination. A one-cycle file is too short to make the
+   once-through test easy to judge.
+
+8. **The sample really plays into the loop — A8 and app comparison, scope optional.**
+   Use audio with recognizable sections, looping enabled, zero pitch and a
+   held gate or One Shot play mode. Compare the app's **Trigger sample into loop
+   simulation** with A8 for a loop (a) inside the sample, (b) starting inside
+   but ending beyond Sample End, and (c) starting after Sample End.
+   **Pass:** playback starts at Sample Start, travels forward to the loop and
+   then repeats that loop only. In (c), the striped bridge is heard, not skipped.
+   In the app, SAMPLE/ONCE STOP is highlighted during the initial passage and
+   bridge; LOOP/LOOP STOP takes over when playback enters the loop. Either
+   active STOP stops playback. Do not require the whole sample region to play
+   once before an internal loop captures playback.
+
+9. **Hardware save and reload retains the preset meaning — A8 and computer.**
+   Save a populated test preset as a separate copy on A8, reload it there,
+   then copy it back and open it in A8Manager. Preserve the original export.
+   **Pass:** sample references, assignments, marker positions, pitch, pan and
+   playback modes remain equivalent; a CV channel still displays Mix Off.
+   Text formatting/default omission may differ. An unrecognized field is a
+   compatibility finding: keep the file, do not delete the field just to pass.
+   Hardware normalization of empty-channel templates is separate from test 1's
+   requirement that A8Manager preserve work in progress.
+
+### Final editing check
+
+10. **Stereo edits and waveform recall preserve intent — computer first, A8 spot check.**
+    On copies, replace an existing stereo sample, change zones, purge one zone,
+    then purge the stereo channel pair. Separately recall a generated waveform
+    recipe and re-export it.
+    **Pass:** both stereo sides update/follow/clear together; unrelated content
+    and source WAV files remain intact. Reopening the saved preset retains the
+    result. Recipe shaping controls return, and re-export does not overwrite
+    the earlier WAVs. Designer Monitor level/Transpose are audition controls,
+    not missing recipe or preset values. Load one edited result on A8 to
+    confirm the intended assignments.
+
+### What can wait
+
+Defer exhaustive waveform/harmonic measurements, all eight bank voices, exact
+interchannel trigger phase, unusual loop-before-sample/equal-boundary cases,
+live CV marker motion, and extreme pitch limits. Do not listen-test ultrasonic
+or very low CV-like settings. The regression suite already checks generated PCM,
+file fidelity and many editing/save edge cases; keep its result for your build
+rather than repeating every software assertion on a scope.
+
+Record failures simply: **test number, preset/recipe, exact settings, expected
+result, actual result**, plus a capture when useful. Do not invent a universal
+millivolt or timing tolerance: record the resolution/accuracy of the measurement.
 
 ### Essential analog session: RIGOL MHO98
 

@@ -472,7 +472,8 @@ struct WaveformWorkspace::Impl
     Card drawing { "EDIT THE SHAPE", "Click or drag to set points. Preview above shows the result." };
     Card layers { "LAYER BANK", "Phase/gain shape each WAV; detune/pan are saved as independent channel settings." };
     Field rate { "Sample rate", "design-rate" }, frames { "Cycle frames", "design-frames" }, playback { "Playback", "design-playback" }, match { "Match selection", "design-match" };
-    juce::TextButton matchButton { "Use selected length" }, tempoButton { "Use BPM / beats" }, spreadButton { "Apply voice spread" }, supersaw { "Supersaw (7 voices)" }, flat { "Flat" }, ramp { "Ramp" }, sine { "Sine" };
+    juce::TextButton matchButton { "Use selected length" }, tempoButton { "Use BPM / beats" }, supersaw { "Supersaw (7 voices)" }, flat { "Flat" }, ramp { "Ramp" }, sine { "Sine" };
+    juce::Label spreadStatus;
     juce::Component drawingActions;
     juce::ToggleButton unipolar { "Unipolar (positive-going)" }, invert { "Invert waveform" };
     CurveEditor curve;
@@ -481,9 +482,10 @@ struct WaveformWorkspace::Impl
     std::array<juce::Component, 8> voiceRows;
     std::array<juce::Label, 8> voiceLabels;
     std::array<std::array<Control*, 4>, 8> voiceControls {};
+    std::array<Control*, 3> spreadControls {};
     Control *duration {}, *cycles {}, *bpm {}, *beats {}, *attack {}, *decay {}, *release {}, *stepCount {}, *voiceCount {};
     Control *symmetry {}, *width {}, *harmonics {}, *brightness {}, *drive {}, *fold {}, *glide {}, *seed {};
-    double tempo { 120 }, beatCount { 4 }, detuneSpread { 24 }, phaseSpread { 300 }, panSpread { 0.8 };
+    double tempo { 120 }, beatCount { 4 };
     std::shared_ptr<AsyncState> worker { std::make_shared<AsyncState> () };
     std::thread workerThread;
     std::unique_ptr<juce::FileChooser> chooser;
@@ -639,10 +641,30 @@ struct WaveformWorkspace::Impl
         for (auto* button : { &flat, &ramp, &sine }) drawingActions.addAndMakeVisible (button);
         drawing.addRow (drawingActions);
         voiceCount = add (layers, "Voice count", "design-voices", 1, 8, 1, "", [this] { return settings.voiceCount; }, [this] (double v) { settings.voiceCount = juce::roundToInt (v); });
-        add (layers, "Detune spread", "design-detune-spread", 0, 2400, 0.1, " ct", [this] { return detuneSpread; }, [this] (double v) { detuneSpread = v; });
-        add (layers, "Phase spread", "design-phase-spread", 0, 360, 1, " deg", [this] { return phaseSpread; }, [this] (double v) { phaseSpread = v; });
-        add (layers, "Pan spread", "design-pan-spread", 0, 1, 0.01, "", [this] { return panSpread; }, [this] (double v) { panSpread = v; });
-        layers.addRow (spreadButton); layers.addRow (supersaw);
+        voiceCount->slider.setTooltip ("Enable 1-8 voices, retaining each voice's individual settings. Adjust a spread to redistribute that setting across the active voices.");
+        auto spreadControl = [this] (int column, const juce::String& label, const juce::String& name, double low, double high, double step,
+                                     const juce::String& suffix, double Voice::* member)
+        {
+            auto* control { add (layers, label, name, low, high, step, suffix,
+                [this, member] { return voiceSpread (member); },
+                [this, member] (double value)
+                {
+                    if (settings.voiceCount < 2) return;
+                    for (int i { 0 }; i < settings.voiceCount; ++i)
+                        settings.voices[static_cast<size_t> (i)].*member = spreadValue (member, value, i);
+                }) };
+            spreadControls[static_cast<size_t> (column)] = control;
+            control->slider.setTooltip ("Updates this setting across active voices immediately, including running audition. Other settings and individual gains are preserved. For custom voices, the displayed value is the outermost offset; adjusting it restores an even spread. Requires at least two voices.");
+        };
+        spreadControl (0, "Detune spread", "design-detune-spread", 0, 2400, 0.1, " ct", &Voice::detuneCents);
+        spreadControl (1, "Phase spread", "design-phase-spread", -360, 360, 1, " deg", &Voice::phaseDegrees);
+        spreadControl (2, "Pan spread", "design-pan-spread", 0, 1, 0.01, "", &Voice::pan);
+        spreadStatus.setName ("design-spread-status");
+        styleLabel (spreadStatus, {}, 12.0f);
+        spreadStatus.setMinimumHorizontalScale (1.0f);
+        Theme::bindColour (spreadStatus, juce::Label::textColourId, [] { return Theme::muted; });
+        layers.addRow (spreadStatus);
+        layers.addRow (supersaw);
         for (size_t i { 0 }; i < 8; ++i)
         {
             styleLabel (voiceLabels[i], "CH " + juce::String (static_cast<int> (i + 1)), 12.0f, true);
@@ -702,6 +724,39 @@ struct WaveformWorkspace::Impl
     {
         auto* pointer { &value };
         return add (card, label, name, low, high, 0.1, "%", [pointer] { return *pointer * 100; }, [pointer] (double v) { *pointer = v / 100; });
+    }
+
+    double voiceSpread (double Voice::* member) const
+    {
+        // Derive display values from the saved voices, not separate UI state.
+        // This also handles old recipes and arbitrary individual voice edits
+        // without redistributing or otherwise changing them during sync().
+        double outermost { 0 };
+        for (int i { 0 }; i < settings.voiceCount; ++i)
+        {
+            const auto value { settings.voices[static_cast<size_t> (i)].*member };
+            if (std::abs (value) > std::abs (outermost)) outermost = value;
+        }
+        return member == &Voice::phaseDegrees ? outermost : std::abs (outermost);
+    }
+
+    double spreadValue (double Voice::* member, double spread, int index) const
+    {
+        if (settings.voiceCount < 2) return 0;
+        const auto fraction { static_cast<double> (index) / (settings.voiceCount - 1) };
+        return (member == &Voice::phaseDegrees ? fraction : 2.0 * fraction - 1.0) * spread;
+    }
+
+    bool hasCustomVoicePositions () const
+    {
+        for (auto member : { &Voice::detuneCents, &Voice::phaseDegrees, &Voice::pan })
+        {
+            const auto spread { voiceSpread (member) };
+            for (int i { 0 }; i < settings.voiceCount; ++i)
+                if (std::abs (settings.voices[static_cast<size_t> (i)].*member - spreadValue (member, spread, i)) > 1.0e-7)
+                    return true;
+        }
+        return false;
     }
 
     void connect ()
@@ -844,7 +899,6 @@ struct WaveformWorkspace::Impl
             sync (); changed ();
         };
         flat.onClick = [fill] { fill (0); }; ramp.onClick = [fill] { fill (1); }; sine.onClick = [fill] { fill (2); };
-        spreadButton.onClick = [this] { spreadVoices (settings, settings.voiceCount, detuneSpread, phaseSpread, panSpread); sync (); changed (); };
         supersaw.onClick = [this] { if (isRangePaused ()) clearAudition (); settings = startingPoint (Mode::layers, Shape::saw); spreadVoices (settings, 7, 24, 300, 0.8); sync (); changed (); };
         load.onClick = [this] { loadRecipe (); };
         recall.onClick = [this] { recallAssigned (targetChannel.box.getSelectedId () - 1, targetZone.box.getSelectedId () - 1); };
@@ -905,6 +959,10 @@ struct WaveformWorkspace::Impl
         decay->slider.setRange (0, juce::jmax (0.001, (1.0 - settings.attack - settings.release) * 100), 0.1);
         release->slider.setRange (0, juce::jmax (0.001, (1.0 - settings.attack - settings.decay) * 100), 0.1);
         for (auto& binding : controls) binding.control->slider.setValue (binding.read (), juce::dontSendNotification);
+        for (auto* control : spreadControls) control->setEnabled (settings.voiceCount > 1);
+        spreadStatus.setText (settings.voiceCount < 2 ? "Enable two or more voices to adjust spreads. Individual settings are retained."
+            : hasCustomVoicePositions () ? "Custom voice positions: spreads show outermost offsets. Changes redistribute only that setting."
+            : "Spreads update live. Each slider changes only its own setting; individual gains are retained.", juce::dontSendNotification);
         for (auto* component : std::initializer_list<juce::Component*> { duration, cycles, bpm, beats, &tempoButton, &match, &matchButton }) component->setVisible (cv);
         frames.setVisible (! cv);
         envelope.setVisible (cv && settings.shape == Shape::envelope);

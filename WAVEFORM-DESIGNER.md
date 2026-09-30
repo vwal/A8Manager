@@ -389,9 +389,29 @@ possibilities such as zone-linked companion CV, triggers and envelope following.
 ## Layer Bank / Supersaw
 
 Start with the supersaw preset, or another periodic shape. Choose 1–8 voices.
-Spread controls provide initial detune, phase and pan values; each voice can then
-be edited independently for detune in cents, phase in degrees, pan and level.
-Applying a spread resets those per-voice values, including their levels.
+The **Supersaw (7 voices)** button resets the design and displayed controls to
+seven saw voices, ±24 cents detune, phases from 0° to 300°, pan from −0.8 to
++0.8, and the preset's per-voice levels.
+
+Spread sliders update the voices, waveform preview and running audition as you
+drag—there is no separate Apply step. Detune and pan spread evenly around zero;
+phase spreads from zero to the selected angle (negative angles reverse the spread).
+Each slider changes **only its own setting** across the active voices, preserving
+the other settings, individual gains and inactive voices. Start audition first
+to hear the changes; editing does not start stopped playback or resume a paused
+audition. Increasing detune can lower the available Transpose limit; if the
+current transpose exceeds it, audition stops and the UI explains the adjustment.
+
+Each voice can still be edited independently for detune, phase, pan and level.
+For custom voice positions, the spread sliders display the outermost offsets,
+with a **Custom voice positions** note. Moving a spread slider restores an even
+distribution for that setting only. Recalling a recipe or switching modes
+refreshes these summaries without changing the saved voice settings.
+
+Changing Voice count retains each voice's settings rather than resetting them.
+After changing the count, adjust the spreads if you want a fresh even distribution.
+Spreads require at least two active voices; the individual controls remain
+available for a single voice.
 
 Each voice becomes a separate mono WAV on a separate channel. The first assigned
 channel (channel 1 for a standalone package) is **Master**; subsequent channels
