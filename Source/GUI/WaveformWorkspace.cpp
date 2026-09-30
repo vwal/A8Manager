@@ -1,8 +1,10 @@
 #include "WaveformWorkspace.h"
 #include "ModernTheme.h"
+#include "A8NamePreview.h"
 #include "HardwareTestOutputComponent.h"
 #include "../Assimil8or/Audio/WaveformDesignExport.h"
 #include "../Assimil8or/Audio/WaveformDesignRecall.h"
+#include "../Assimil8or/Audio/RawCycleImport.h"
 #include "../Assimil8or/Preset/PresetProperties.h"
 #include <atomic>
 #include <condition_variable>
@@ -272,7 +274,7 @@ namespace
     {
         struct RenderRequest { Settings settings; unsigned generation, epoch; };
         struct ExportRequest { Settings settings; juce::File folder; juce::String name; int presetNumber; };
-        struct AssignmentRequest { Settings settings; WaveformWorkspace::AssignmentContext context; juce::String name; int channel, zone; };
+        struct AssignmentRequest { Settings settings; WaveformWorkspace::AssignmentContext context; juce::String name, generationId; int channel, zone; };
         std::mutex mutex;
         std::condition_variable ready;
         bool stopping { false }, rendering { false }, exporting { false };
@@ -326,7 +328,8 @@ namespace
             if (assignmentRequest)
             {
                 const auto result { prepareAssignment (assignmentRequest->settings, assignmentRequest->context.folder,
-                    assignmentRequest->name, assignmentRequest->context.preset, assignmentRequest->channel, assignmentRequest->zone, assignmentOutput) };
+                    assignmentRequest->name, assignmentRequest->context.preset, assignmentRequest->channel, assignmentRequest->zone, assignmentOutput,
+                    assignmentRequest->generationId) };
                 std::lock_guard<std::mutex> lock (state->mutex);
                 state->assignmentFinished = true;
                 state->assignmentFailed = result.failed ();
@@ -442,10 +445,11 @@ struct WaveformWorkspace::Impl
     Settings settings { startingPoint (Mode::oscillator, Shape::sine) };
     std::array<std::optional<Settings>, 3> modeDesigns;
     ModernLookAndFeel look;
-    juce::Label title, subtitle, summary, status, nameLabel, renderStats, auditionTitle, auditionHint, assignmentHeading, packageHeading;
-    juce::TextButton load { "Load recipe / WAV..." }, create { "Export new package..." }, openExport { "Open in Sample workspace" }, assign { "Generate & Assign..." }, recall { "Recall assigned..." };
+    juce::Label title, subtitle, summary, status, nameLabel, namePreview, nameAdvice, renderStats, auditionTitle, auditionHint, assignmentHeading, packageHeading;
+    juce::TextButton load { "Load recipe / cycle WAV..." }, create { "Export new package..." }, openExport { "Open in Sample workspace" }, assign { "Generate & Assign..." }, recall { "Recall assigned..." };
     juce::TextButton testOutput { "Test output..." };
     juce::TextEditor fileName;
+    juce::String assignmentGenerationId { reserveAssignmentId () };
     Field mode { "Workspace", "design-mode" }, shape { "Shape", "design-shape" }, preset { "Starting point", "design-preset" };
     Field targetChannel { "Target channel", "design-target-channel" }, targetZone { "Target zone", "design-target-zone" }, exportSlot { "Package preset", "design-export-slot" };
     std::optional<WaveformWorkspace::AssignmentContext> assignmentContext;
@@ -456,11 +460,17 @@ struct WaveformWorkspace::Impl
     int targetVoiceCount { 0 };
     Preview preview;
     juce::TextButton expand { "Expand waveform..." };
+    juce::TextButton createLayers { "Create layer bank..." };
     std::unique_ptr<ExpandedPreview> expandedPreview;
     juce::TextButton auditionButton { "Start audition" };
     Control monitorLevel { "Monitor level", "design-monitor-level", -60, 0, 0.1, " dB" };
     Control monitorTranspose { "Transpose", "design-monitor-transpose", -48, 72, 0.01, " st" };
     WaveformAudition::PayloadPtr auditionPayload;
+    WaveformAudition::PayloadPtr inspectedPayload, approvedAuditionPayload;
+    double inspectedTranspose {}, approvedTranspose {}, approvedLevel {};
+    AuditionSignalCheck::Report inspectedSignal;
+    unsigned auditionWarningRequest { 0 };
+    bool auditionWarningPending { false };
     juce::String auditionError, rangePauseReason, transposeLimitNotice;
     bool auditionSuspended { false }, deferredTransposeChange { false };
     juce::Viewport viewport;
@@ -523,6 +533,14 @@ struct WaveformWorkspace::Impl
         status.setName ("design-status");
         Theme::bindColour (status, juce::Label::textColourId, [] { return Theme::muted; });
         styleLabel (nameLabel, "Design name", 12.0f);
+        styleLabel (namePreview, "", 12.0f);
+        namePreview.setName ("design-name-preview");
+        namePreview.setMinimumHorizontalScale (1.0f);
+        styleLabel (nameAdvice, "Put identifying information in the first 6-10 characters.", 11.5f);
+        nameAdvice.setName ("design-name-advice");
+        nameAdvice.setMinimumHorizontalScale (1.0f);
+        nameAdvice.setJustificationType (juce::Justification::centredRight);
+        Theme::bindColour (nameAdvice, juce::Label::textColourId, [] { return Theme::muted; });
         styleLabel (assignmentHeading, "CURRENT PRESET - assign, then Save", 12.0f, true);
         assignmentHeading.setName ("design-assignment-heading");
         Theme::bindColour (assignmentHeading, juce::Label::textColourId, [] { return Theme::accent; });
@@ -530,7 +548,8 @@ struct WaveformWorkspace::Impl
         packageHeading.setName ("design-package-heading");
         fileName.setName ("design-name");
         fileName.setText ("New Waveform", false);
-        fileName.setTooltip ("A name for generated WAVs and the repeatable recipe. Assignment creates unique files; package export creates a new folder.");
+        fileName.setTooltip ("A name for generated WAVs and the repeatable recipe. Assignment creates unique files; package export creates a new folder. " + A8NamePreview::advice ());
+        fileName.onTextChange = [this] { updateNamePreview (); };
         for (auto channel { 1 }; channel <= 8; ++channel) targetChannel.box.addItem ("CH " + juce::String (channel), channel);
         for (auto zone { 1 }; zone <= 8; ++zone) targetZone.box.addItem (juce::String (zone), zone);
         for (auto slot { 1 }; slot <= 199; ++slot) exportSlot.box.addItem (juce::String (slot).paddedLeft ('0', 3), slot);
@@ -555,7 +574,9 @@ struct WaveformWorkspace::Impl
         preview.setName ("design-compact-preview");
         expand.setName ("design-expand-preview");
         expand.setTooltip ("Open a larger, resizable source-waveform view. It follows design edits and mode changes. Escape or X closes only the view, not audition.");
-        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &assignmentHeading, &packageHeading, &load, &create, &assign, &recall, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &monitorLevel, &monitorTranspose, &viewport })
+        createLayers.setName ("design-create-layers");
+        createLayers.setTooltip ("Make seven related voices from this Audio Cycle, preserving its waveform and shaping, including imported cycles. Adjust voice count, detune, phase, pan and levels afterward. The original Audio Cycle stays available in the Workspace menu. Audition stops; no preset or files change until Generate & Assign, then Save.");
+        for (auto* component : std::initializer_list<juce::Component*> { &title, &subtitle, &summary, &status, &nameLabel, &namePreview, &nameAdvice, &assignmentHeading, &packageHeading, &load, &create, &assign, &recall, &targetChannel, &targetZone, &exportSlot, &fileName, &mode, &shape, &preset, &preview, &expand, &createLayers, &renderStats, &auditionTitle, &auditionHint, &auditionButton, &monitorLevel, &monitorTranspose, &viewport })
             owner.addAndMakeVisible (component);
         viewport.setViewedComponent (&content, false);
         viewport.setName ("design-controls");
@@ -571,10 +592,10 @@ struct WaveformWorkspace::Impl
         Theme::bindColour (assign, juce::TextButton::buttonColourId, [] { return Theme::accent.darker (0.6f); });
         assign.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
         assign.setEnabled (false);
-        assign.setTooltip ("Create WAVs and a recipe in the current folder, then update the selected preset in memory. Designer Save writes the preset and creates or refreshes its self-contained PRnn - name folder, preserving the originals. Copy that folder directly under the SD-card root. An already-open named preset folder is saved in place.");
+        assign.setTooltip ("Create WAVs and a recipe in the current folder, then update the selected preset in memory. Designer Save writes the preset and creates or refreshes its self-contained Pnn - name folder, preserving the originals. Copy that folder directly under the SD-card root. An already-open named preset folder is saved in place.");
         recall.setName ("design-recall");
-        recall.setTooltip ("Reopen the saved design behind the WAV in Target channel / Target zone. A bank restores all its voices. Requires the original recipe beside the WAV; does not change the preset.");
-        load.setTooltip ("Open a saved JSON recipe, or a generated WAV with its recipe still beside it. Ordinary audio cannot be reverse-engineered into design controls.");
+        recall.setTooltip ("Reopen the saved design behind the target zone's WAV, or import a raw single-cycle audio WAV (4-8192 frames). A generated bank restores all voices. Raw imports retain the source shape as editable cycle data, not reverse-engineered oscillator settings. Does not change the preset.");
+        load.setTooltip ("Open a JSON recipe, a generated WAV with its recipe, or a raw single-cycle audio WAV (4-8192 frames) from any folder. Raw stereo WAVs offer left, right or average. Original files remain unchanged; the new recipe embeds the source cycle.");
         openExport.setName ("design-open-export");
         openExport.setTooltip ("Open the last successfully exported folder in the sample workspace. The usual unsaved-preset check runs before changing folders. No automatic playback.");
         owner.addChildComponent (openExport);
@@ -761,6 +782,7 @@ struct WaveformWorkspace::Impl
 
     void connect ()
     {
+        createLayers.onClick = [this] { requestLayerBank (); };
         expand.onClick = [this]
         {
             if (! expandedPreview)
@@ -780,7 +802,14 @@ struct WaveformWorkspace::Impl
             if (settings.mode == Mode::modulation || auditionSuspended) return;
             transposeLimitNotice.clear ();
             deferredTransposeChange = false;
-            if ((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
+            if (auditionWarningPending)
+            {
+                ++auditionWarningRequest;
+                auditionWarningPending = false;
+                auditionError.clear ();
+                if (owner.onStopAudition) owner.onStopAudition ();
+            }
+            else if ((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
             {
                 if (owner.onStopAudition) owner.onStopAudition ();
                 auditionError.clear ();
@@ -788,26 +817,15 @@ struct WaveformWorkspace::Impl
             }
             else if (auditionPayload && displayedGeneration == generation && owner.onStartAudition)
             {
-                if (owner.onAuditionPayload) owner.onAuditionPayload (auditionPayload);
-                if (owner.onAuditionMonitorChange)
-                {
-                    const auto monitor { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
-                    if (monitor.failed ())
-                    {
-                        auditionError = monitor.getErrorMessage ();
-                        if (owner.onStopAudition) owner.onStopAudition ();
-                        updateAuditionControls ();
-                        return;
-                    }
-                }
-                const auto started { owner.onStartAudition () };
-                auditionError = started.getErrorMessage ();
+                if (approveAuditionSignal ()) startAuditionNow ();
             }
             updateAuditionControls ();
         };
         auto monitorChanged = [this] (bool transposeChanged)
         {
             if (applying) return;
+            ++auditionWarningRequest;
+            auditionWarningPending = false;
             auditionError.clear ();
             transposeLimitNotice.clear ();
             // A pending source can have different hardware AND audible bounds.
@@ -824,6 +842,11 @@ struct WaveformWorkspace::Impl
             if (settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange
                 && monitorTranspose.slider.getValue () <= WaveformAudition::maximumTransposeSemitones (auditionPayload->getSettings ()))
             {
+                // Check a live pitch change before publishing it. Audible-range
+                // failures still use the existing pause/resume mechanism.
+                if (((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
+                    && currentSignalReport ().needsConfirmation () && ! approveAuditionSignal ())
+                { updateAuditionControls (); return; }
                 const auto result { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
                 if (isRangePaused ()) rangePauseReason = result.getErrorMessage ();
                 else
@@ -844,6 +867,11 @@ struct WaveformWorkspace::Impl
             modeDesigns[static_cast<size_t> (settings.mode)] = settings;
             const auto& saved { modeDesigns[static_cast<size_t> (next)] };
             if (saved.has_value ()) settings = *saved;
+            else if (next == Mode::layers && settings.shape == Shape::imported)
+            {
+                settings.mode = Mode::layers;
+                spreadVoices (settings, 7, 24, 300, 0.8);
+            }
             else
             {
                 settings = startingPoint (next, next == Mode::modulation ? Shape::triangle : next == Mode::layers ? Shape::saw : Shape::sine);
@@ -910,9 +938,27 @@ struct WaveformWorkspace::Impl
         };
     }
 
+    void updateNamePreview ()
+    {
+        const auto name { juce::File::createLegalFileName (fileName.getText ().trim ()).trim () };
+        const auto usable { name.isNotEmpty () && name != "." && name != ".." };
+        const auto filename { usable ? assignmentWaveName (name, assignmentGenerationId, 1) : juce::String () };
+        const auto shortened { A8NamePreview::fromGeneratedPrefix (usable ? ExportSupport::safeStem (name).substring (0, 22) : juce::String (), 1) };
+        namePreview.setText ("A8 Select: " + (usable ? shortened.select : "--")
+            + "    A8 Channels: " + (usable ? shortened.channel : "--"), juce::dontSendNotification);
+        const auto help { "First-voice filename for the next Generate & Assign: " + (usable ? filename : "enter a design name")
+            + ". " + A8NamePreview::generatedAdvice () + " The 12-character unique identifier is automatic and not editable. The final two characters are the automatic voice number "
+              "(01 for the first voice, 02 onward for a bank), not the final characters of your design name. "
+              "A new identifier is reserved after each successful assignment. "
+              "Separate package exports instead use voice-01.wav, voice-02.wav, etc. " + A8NamePreview::advice () };
+        namePreview.setTooltip (help);
+        nameAdvice.setTooltip (help);
+    }
+
     void sync ()
     {
         const juce::ScopedValueSetter<bool> guard (applying, true);
+        updateNamePreview ();
         const bool cv { settings.mode == Mode::modulation }, bank { settings.mode == Mode::layers };
         const auto maximumTranspose { WaveformAudition::maximumTransposeSemitones (settings) };
         if (monitorTranspose.slider.getValue () > maximumTranspose)
@@ -937,6 +983,8 @@ struct WaveformWorkspace::Impl
             shape.box.addItem (label, i + 1);
             preset.box.addItem (label + " preset", i + 1);
         }
+        if (! cv && ! settings.importedCycle.empty ())
+            shape.box.addItem (shapeName (Shape::imported), static_cast<int> (Shape::imported) + 1);
         shape.box.setSelectedId (static_cast<int> (settings.shape) + 1, juce::dontSendNotification);
         preset.box.setTextWhenNothingSelected ("Choose a fresh starting point");
         rate.box.setSelectedId (settings.sampleRate == 96000 ? 2 : 1, juce::dontSendNotification);
@@ -957,7 +1005,7 @@ struct WaveformWorkspace::Impl
         envelope.setVisible (cv && settings.shape == Shape::envelope);
         drawing.setVisible (cv && (settings.shape == Shape::steps || settings.shape == Shape::drawn || settings.shape == Shape::random));
         stepCount->setVisible (settings.shape == Shape::steps || settings.shape == Shape::random);
-        symmetry->setVisible (settings.shape == Shape::sine || settings.shape == Shape::triangle || settings.shape == Shape::saw || settings.shape == Shape::trapezoid);
+        symmetry->setVisible (settings.shape == Shape::sine || settings.shape == Shape::triangle || settings.shape == Shape::saw || settings.shape == Shape::trapezoid || settings.shape == Shape::imported);
         width->setVisible (settings.shape == Shape::pulse || settings.shape == Shape::trapezoid);
         for (auto* control : { harmonics, brightness, drive, fold }) control->setVisible (! cv);
         glide->setVisible (settings.shape == Shape::steps || settings.shape == Shape::random);
@@ -969,6 +1017,7 @@ struct WaveformWorkspace::Impl
         curve.setVisible (settings.shape == Shape::steps || settings.shape == Shape::drawn);
         drawingActions.setVisible (curve.isVisible ());
         layers.setVisible (bank);
+        createLayers.setVisible (settings.mode == Mode::oscillator);
         for (size_t i { 0 }; i < 8; ++i) voiceRows[i].setVisible (static_cast<int> (i) < settings.voiceCount);
         curve.repaint ();
         if (targetVoiceCount != (bank ? settings.voiceCount : 1)) refreshTargets (false);
@@ -978,6 +1027,8 @@ struct WaveformWorkspace::Impl
     void changed ()
     {
         if (applying) return;
+        ++auditionWarningRequest;
+        auditionWarningPending = false;
         ++generation;
         const auto now { juce::Time::getMillisecondCounterHiRes () };
         // Idle edits (especially long CV curves) are debounced. During live
@@ -1031,6 +1082,52 @@ struct WaveformWorkspace::Impl
         create.setEnabled (! busy && validate (settings).wasOk ());
         testOutput.setEnabled (! busy); // Built-in test signals remain available even if this design is invalid.
         load.setEnabled (! busy); openExport.setEnabled (! busy);
+        createLayers.setEnabled (! busy && ! chooser && settings.mode == Mode::oscillator && validate (settings).wasOk ());
+    }
+
+    void requestLayerBank ()
+    {
+        if (settings.mode != Mode::oscillator || chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming) return;
+        if (const auto valid { validate (settings) }; valid.failed ()) { notice (valid.getErrorMessage (), true); return; }
+        const auto beforeGeneration { generation };
+        const auto beforeName { fileName.getText () };
+        const auto request { ++recallConfirmation };
+        // Design replacement shares the recall barrier so file operations and
+        // other replacement dialogs cannot overlap this confirmation.
+        recallConfirming = true;
+        updateAssignmentControls ();
+        juce::Component::SafePointer<WaveformWorkspace> safe (&owner);
+        auto convert = [safe, beforeGeneration, beforeName, request] (bool accepted)
+        {
+            if (safe == nullptr || safe->impl->recallConfirmation != request) return;
+            auto& self { *safe->impl };
+            ++self.recallConfirmation;
+            self.recallConfirming = false;
+            self.updateAssignmentControls ();
+            if (! accepted) { self.notice ("Layer bank creation canceled. Both designs and the preset are unchanged."); return; }
+            if (self.generation != beforeGeneration || self.fileName.getText () != beforeName
+                || self.settings.mode != Mode::oscillator || self.auditionSuspended)
+            {
+                self.notice ("The design or workspace changed while confirmation was open. Nothing was replaced; create the layer bank again when ready.", true);
+                return;
+            }
+            self.clearAudition ();
+            self.modeDesigns[static_cast<size_t> (Mode::oscillator)] = self.settings;
+            // Copy the complete source, including embedded imported frames. A
+            // starting-point preset would discard the user's waveform edits.
+            self.settings.mode = Mode::layers;
+            spreadVoices (self.settings, 7, 24, 300, 0.8);
+            self.changed ();
+            self.refreshContext ();
+            self.viewport.setViewPosition (0, self.layers.getY ());
+            self.notice ("Created seven voices from this waveform. Adjust Voices and spreads below; Start audition to listen. Preset unchanged: Generate & Assign, then Save.");
+        };
+        if (modeDesigns[static_cast<size_t> (Mode::layers)])
+            owner.confirmLayerConversion ("Replace the current Layer Bank design with seven voices from this Audio Cycle?\n\n"
+                "The source waveform and all shaping settings are kept, including imported cycle data. The original Audio Cycle remains available in the Workspace menu.\n\n"
+                "Cancel and generate/assign or export first if you want to keep the existing Layer Bank. Audition will stop. Preset values and WAV files are not changed.", std::move (convert));
+        else
+            convert (true);
     }
 
     void refreshTargets (bool suggest)
@@ -1118,11 +1215,12 @@ struct WaveformWorkspace::Impl
             (settings.mode == Mode::modulation ? "CV uses Mix Off and individual outputs only; audio and CV cannot share a channel. " : "Audio and CV cannot share a channel. ") +
             "\n\nThe preset is changed in memory only. Use Save afterward to write the preset." };
         const auto snapshot { settings };
+        const auto generationId { assignmentGenerationId };
         const auto request { ++assignmentConfirmation };
         assignmentConfirming = true;
         updateAssignmentControls ();
         auto safe = juce::Component::SafePointer<WaveformWorkspace> (&owner);
-        owner.confirmAssignment (message, [safe, context = *context, snapshot, name, channel, zone, request] (bool accepted)
+        owner.confirmAssignment (message, [safe, context = *context, snapshot, name, generationId, channel, zone, request] (bool accepted)
         {
             if (safe == nullptr || safe->impl->assignmentConfirmation != request) return;
             auto& self { *safe->impl };
@@ -1141,7 +1239,7 @@ struct WaveformWorkspace::Impl
             self.notice ("Generating WAVs and a recipe for this preset... Existing files are not overwritten.");
             {
                 std::lock_guard<std::mutex> lock (self.worker->mutex);
-                self.worker->assignmentRequest = AsyncState::AssignmentRequest { snapshot, context, name, channel, zone };
+                self.worker->assignmentRequest = AsyncState::AssignmentRequest { snapshot, context, name, generationId, channel, zone };
             }
             self.worker->ready.notify_one ();
         });
@@ -1156,12 +1254,92 @@ struct WaveformWorkspace::Impl
         expandedPreview->waveform.repaint ();
     }
 
+    const AuditionSignalCheck::Report& currentSignalReport ()
+    {
+        const auto transpose { monitorTranspose.slider.getValue () };
+        if (inspectedPayload != auditionPayload || inspectedTranspose != transpose)
+        {
+            inspectedPayload = auditionPayload;
+            inspectedTranspose = transpose;
+            inspectedSignal = owner.inspectAuditionSignal ? owner.inspectAuditionSignal (auditionPayload, transpose)
+                                                         : AuditionSignalCheck::Report {};
+        }
+        return inspectedSignal;
+    }
+
+    void startAuditionNow ()
+    {
+        if (auditionSuspended || settings.mode == Mode::modulation || ! auditionPayload
+            || displayedGeneration != generation || ! owner.onStartAudition) return;
+        if (owner.onAuditionPayload) owner.onAuditionPayload (auditionPayload);
+        if (owner.onAuditionMonitorChange)
+        {
+            const auto result { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
+            if (result.failed ())
+            {
+                auditionError = result.getErrorMessage ();
+                if (owner.onStopAudition) owner.onStopAudition ();
+                updateAuditionControls ();
+                return;
+            }
+        }
+        auditionError = owner.onStartAudition ().getErrorMessage ();
+        updateAuditionControls ();
+    }
+
+    bool approveAuditionSignal ()
+    {
+        const auto& report { currentSignalReport () };
+        if (report.isBlocked ())
+        {
+            auditionError = report.explanation ();
+            if (owner.onStopAudition) owner.onStopAudition ();
+            return false;
+        }
+        if (! report.needsConfirmation ()) return true;
+        const auto transpose { monitorTranspose.slider.getValue () }, level { monitorLevel.slider.getValue () };
+        if (approvedAuditionPayload == auditionPayload && approvedTranspose == transpose && level <= approvedLevel) return true;
+        if (auditionWarningPending) return false;
+        if (owner.onStopAudition) owner.onStopAudition ();
+        if (owner.onAuditionPayload) owner.onAuditionPayload ({});
+        auditionWarningPending = true;
+        const auto request { ++auditionWarningRequest };
+        const auto beforeGeneration { generation }, beforeEpoch { auditionEpoch };
+        const auto beforeName { fileName.getText () };
+        const auto payload { auditionPayload };
+        auditionError = "Audition is stopped pending signal-warning confirmation.";
+        updateAuditionControls ();
+        juce::Component::SafePointer<WaveformWorkspace> safe (&owner);
+        owner.confirmAuditionWarning (report.explanation (), [safe, request, beforeGeneration, beforeEpoch, beforeName, payload, transpose, level] (bool accepted)
+        {
+            if (safe == nullptr || safe->impl->auditionWarningRequest != request) return;
+            auto& self { *safe->impl };
+            ++self.auditionWarningRequest;
+            self.auditionWarningPending = false;
+            if (! accepted || self.auditionSuspended || self.generation != beforeGeneration || self.auditionEpoch != beforeEpoch
+                || self.fileName.getText () != beforeName || self.auditionPayload != payload
+                || self.monitorTranspose.slider.getValue () != transpose || self.monitorLevel.slider.getValue () != level)
+            {
+                self.auditionError = accepted ? "The audition changed. Press Start again when ready." : "Audition canceled.";
+                self.updateAuditionControls ();
+                return;
+            }
+            self.approvedAuditionPayload = payload;
+            self.approvedTranspose = transpose;
+            self.approvedLevel = level;
+            self.startAuditionNow ();
+        });
+        return false;
+    }
+
     void clearAudition (bool forgetPayload = true)
     {
         // Mode, recipe, invalid-design and visibility transitions form hard
         // barriers. A stop ramp may still report active, but no older worker
         // result is permitted to cross this boundary and restore its payload.
         ++auditionEpoch;
+        ++auditionWarningRequest;
+        auditionWarningPending = false;
         if (owner.onStopAudition) owner.onStopAudition ();
         if (owner.onAuditionPayload) owner.onAuditionPayload ({});
         if (forgetPayload) auditionPayload.reset ();
@@ -1196,7 +1374,7 @@ struct WaveformWorkspace::Impl
         const bool active { ! cv && owner.isAuditionActive && owner.isAuditionActive () };
         const bool paused { ! cv && isRangePaused () };
         if (! paused) rangePauseReason.clear ();
-        auditionButton.setButtonText (active || paused ? "Stop audition" : "Start audition");
+        auditionButton.setButtonText (active || paused || auditionWarningPending ? "Stop audition" : "Start audition");
         auditionButton.setEnabled (! cv && ! auditionSuspended && (active || paused || (auditionPayload && displayedGeneration == generation && owner.onStartAudition)));
         monitorLevel.setEnabled (! cv); monitorTranspose.setEnabled (! cv);
         auditionTitle.setText (cv ? "CV - VISUAL ONLY" : "LIVE AUDITION", juce::dontSendNotification);
@@ -1268,7 +1446,9 @@ struct WaveformWorkspace::Impl
             auditionPayload = std::move (completedAudition);
             auditionError = preparedError;
             rangePauseReason.clear (); // Cached limits belong to the previous render.
-            if (! auditionSuspended && owner.onAuditionPayload)
+            const auto needsSignalApproval { ! auditionSuspended && (wasAuditioning || wasRangePaused)
+                && auditionPayload && currentSignalReport ().needsConfirmation () && ! approveAuditionSignal () };
+            if (! auditionSuspended && ! needsSignalApproval && owner.onAuditionPayload)
             {
                 owner.onAuditionPayload (settings.mode == Mode::modulation ? WaveformAudition::PayloadPtr {} : auditionPayload);
                 // A valid design edit can put an actively monitored voice
@@ -1356,6 +1536,11 @@ struct WaveformWorkspace::Impl
                 const auto cleanup { cleanupAssignmentFiles (assigned) };
                 if (cleanup.failed ()) assignmentMessage += " " + cleanup.getErrorMessage ();
             }
+            else
+            {
+                assignmentGenerationId = reserveAssignmentId ();
+                updateNamePreview ();
+            }
             assignmentBusy = false;
             refreshContext ();
             auto destination { juce::String ("this preset") };
@@ -1373,9 +1558,115 @@ struct WaveformWorkspace::Impl
         updateAuditionControls ();
     }
 
+    void requestRawImport (juce::File file, std::optional<AssignmentContext> context = {}, int channel = -1, int zone = -1)
+    {
+        if (chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming) return;
+        RawCycleImport::Info info;
+        const auto inspected { RawCycleImport::inspect (file, info) };
+        if (inspected.failed ()) { notice ("Could not recall or import cycle: " + inspected.getErrorMessage (), true); return; }
+        const auto beforeGeneration { generation };
+        const auto beforeName { fileName.getText () };
+        const auto destination { settings.mode == Mode::layers ? Mode::layers : Mode::oscillator };
+        const auto request { ++recallConfirmation };
+        recallConfirming = true;
+        updateAssignmentControls ();
+        juce::Component::SafePointer<WaveformWorkspace> safe (&owner);
+        // Recheck the live editor and source after each asynchronous choice.
+        const auto unchanged = [safe, context, beforeGeneration, beforeName, request] ()
+        {
+            if (safe == nullptr || safe->impl->recallConfirmation != request) return false;
+            auto& self { *safe->impl };
+            const auto current { safe->onGetAssignmentContext ? safe->onGetAssignmentContext () : std::nullopt };
+            if (self.generation == beforeGeneration && self.fileName.getText () == beforeName
+                && (! context || (current && current->revision == context->revision && current->folder == context->folder
+                    && current->preset.isEquivalentTo (context->preset)))) return true;
+            ++self.recallConfirmation;
+            self.recallConfirming = false;
+            self.updateAssignmentControls ();
+            self.notice ("The design or source preset changed. Nothing was imported; select the WAV again.", true);
+            return false;
+        };
+        const auto choose = [safe, file, context, channel, zone, destination, unchanged] (int choice)
+        {
+            if (! unchanged ()) return;
+            auto& self { *safe->impl };
+            if (choice < 1 || choice > 3)
+            {
+                ++self.recallConfirmation;
+                self.recallConfirming = false;
+                self.updateAssignmentControls ();
+                self.notice ("Import canceled. Your design and preset are unchanged.");
+                return;
+            }
+            Settings imported;
+            RawCycleImport::Info importedInfo;
+            const auto side { static_cast<RawCycleImport::StereoChannel> (choice) };
+            const auto loaded { RawCycleImport::load (file, side, imported, &importedInfo) };
+            if (loaded.failed ())
+            {
+                ++self.recallConfirmation;
+                self.recallConfirming = false;
+                self.updateAssignmentControls ();
+                self.notice ("Could not import cycle: " + loaded.getErrorMessage (), true);
+                return;
+            }
+            const auto approvedSource { juce::JSON::toString (toJson (imported)) };
+            const auto message { "Import '" + file.getFileName () + "' as one complete AUDIO cycle?\n\n"
+                + juce::String (importedInfo.frames) + " source frames at " + juce::String (importedInfo.sampleRate, 0) + " Hz. "
+                + (importedInfo.channels == 2 ? "Stereo: " + juce::String (choice == 1 ? "left" : choice == 2 ? "right" : "average L/R") + ". " : "")
+                + "Output: " + juce::String (imported.cycleFrames) + " frames at " + juce::String (imported.sampleRate, 0) + " Hz.\n\n"
+                + importedInfo.warnings.joinIntoString ("\n") + "\n\n"
+                + "Only import audio intended as a single cycle, not a CV/control signal. Unknown WAVs cannot reliably be classified as CV.\n\n"
+                + "This replaces the current " + juce::String (destination == Mode::layers ? "Layer Bank" : "Audio Cycle")
+                + " design. Original WAV and preset stay unchanged; audition does not start automatically. "
+                + "The recipe will embed the source cycle. After editing, Generate & Assign, then Save." };
+            safe->confirmRawImport (message, [safe, file, context, channel, zone, destination, side, approvedSource, unchanged] (bool accepted)
+            {
+                if (! unchanged ()) return;
+                auto& current { *safe->impl };
+                ++current.recallConfirmation;
+                current.recallConfirming = false;
+                current.updateAssignmentControls ();
+                if (! accepted) { current.notice ("Import canceled. Your design and preset are unchanged."); return; }
+                Settings reloaded;
+                RawCycleImport::Info source;
+                const auto result { RawCycleImport::load (file, side, reloaded, &source) };
+                if (result.failed () || juce::JSON::toString (toJson (reloaded)) != approvedSource)
+                {
+                    current.notice ("The source WAV changed or became unavailable. Nothing was imported; select it again.", true);
+                    return;
+                }
+                current.clearAudition ();
+                current.modeDesigns[static_cast<size_t> (current.settings.mode)] = current.settings;
+                reloaded.mode = destination;
+                if (destination == Mode::layers) spreadVoices (reloaded, 7, 24, 300, 0.8);
+                current.settings = std::move (reloaded);
+                current.fileName.setText (source.name, false);
+                current.initialFolder = file.getParentDirectory ();
+                current.sync (); current.changed (); current.refreshContext ();
+                if (context)
+                {
+                    current.targetChannel.box.setSelectedId (current.targetChannel.box.isItemEnabled (channel + 1) ? channel + 1 : 0, juce::dontSendNotification);
+                    current.targetZone.box.setSelectedId (zone + 1, juce::dontSendNotification);
+                    current.updateAssignmentControls ();
+                }
+                current.notice ("Imported " + file.getFileName () + " as an audio cycle. Original WAV and preset unchanged; Generate & Assign, then Save.");
+            });
+        };
+        if (info.channels == 2) owner.chooseRawChannel (file.getFileName (), choose);
+        else choose (1);
+    }
+
     void requestRecall (juce::File file, bool fromWave, std::optional<AssignmentContext> context = {}, int channel = -1, int zone = -1)
     {
         if (chooser || exportBusy || assignmentBusy || assignmentConfirming || recallConfirming) return;
+        // A recognized (even broken) recipe must not be bypassed as raw audio:
+        // it may be the only surviving provenance of a CV/test waveform.
+        if (fromWave && WaveformDesignRecall::adjacentRecipe (file) == juce::File ())
+        {
+            requestRawImport (file, context, channel, zone);
+            return;
+        }
         WaveformDesignRecall::RecalledDesign design;
         const auto result { fromWave ? WaveformDesignRecall::recallWave (file, design) : WaveformDesignRecall::loadRecipe (file, design) };
         if (result.failed ()) { notice ("Could not recall design: " + result.getErrorMessage (), true); return; }
@@ -1455,7 +1746,7 @@ struct WaveformWorkspace::Impl
         if (! context || channel < 0 || channel >= 8 || zone < 0 || zone >= 8)
         { notice ("Select a preset and an assigned channel/zone to recall.", true); return; }
         const auto sample { context->preset.getChild (channel).getChild (zone).getProperty (ZoneProperties::SamplePropertyId).toString () };
-        if (sample.isEmpty ()) { notice ("This zone is empty. Select a zone containing a generated waveform.", true); return; }
+        if (sample.isEmpty ()) { notice ("This zone is empty. Select a generated waveform or a raw single-cycle WAV.", true); return; }
         if (juce::File::isAbsolutePath (sample) || sample.containsAnyOf ("/\\"))
         { notice ("The zone does not reference a WAV in the current preset folder.", true); return; }
         requestRecall (context->folder.getChildFile (sample), true, context, channel, zone);
@@ -1467,7 +1758,7 @@ struct WaveformWorkspace::Impl
         // Cancelling (or rejecting) a recipe must not discard the current
         // design's readiness. A successful replacement clears it below.
         clearAudition (false);
-        chooser = std::make_unique<juce::FileChooser> ("Load waveform recipe or generated WAV", initialFolder, "*.json;*.wav");
+        chooser = std::make_unique<juce::FileChooser> ("Load recipe, generated WAV, or raw single-cycle WAV", initialFolder, "*.json;*.wav");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                              [safe = juce::Component::SafePointer<WaveformWorkspace> (&owner)] (const juce::FileChooser& dialog)
         {
@@ -1487,6 +1778,7 @@ struct WaveformWorkspace::Impl
         const auto name { juce::File::createLegalFileName (fileName.getText ().trim ()).trim () };
         if (name.isEmpty () || name == "." || name == "..") { notice ("Enter a usable design name before creating files.", true); return; }
         fileName.setText (name, false);
+        updateNamePreview ();
         const auto snapshot { settings };
         const auto presetNumber { exportSlot.box.getSelectedId () };
         chooser = std::make_unique<juce::FileChooser> ("Export separate package - choose parent folder (current preset unchanged)", initialFolder, "");
@@ -1517,7 +1809,7 @@ struct WaveformWorkspace::Impl
         if (owner.getWidth () <= 0 || owner.getHeight () <= 0) return;
         auto bounds { owner.getLocalBounds ().reduced (18, 12) };
         auto heading { bounds.removeFromTop (54) };
-        load.setBounds (heading.removeFromRight (160).withHeight (32));
+        load.setBounds (heading.removeFromRight (210).withHeight (32));
         title.setBounds (heading.removeFromTop (28)); subtitle.setBounds (heading);
         auto toolbar { bounds.removeFromTop (40) };
         const auto third { toolbar.getWidth () / 3 };
@@ -1528,6 +1820,7 @@ struct WaveformWorkspace::Impl
         auto picture { previewRow.removeFromLeft (juce::jlimit (400, 480, juce::roundToInt (previewRow.getWidth () * 0.42))) };
         auto expandRow { picture.removeFromBottom (28) };
         expand.setBounds (expandRow.removeFromRight (156));
+        createLayers.setBounds (expandRow.removeFromLeft (228));
         preview.setBounds (picture.withTrimmedBottom (4));
         previewRow.removeFromLeft (20);
         auto auditionHeading { previewRow.removeFromTop (29) };
@@ -1539,11 +1832,15 @@ struct WaveformWorkspace::Impl
         auditionHint.setBounds (previewRow.removeFromTop (42));
         renderStats.setBounds (previewRow.withTrimmedTop (5));
         summary.setBounds (bounds.removeFromTop (27));
-        auto footer { bounds.removeFromBottom (200) };
+        auto footer { bounds.removeFromBottom (250) };
         status.setBounds (footer.removeFromBottom (31));
+        const auto nameAdviceRow { footer.removeFromTop (22) };
         auto nameRow { footer.removeFromTop (31) };
         nameLabel.setBounds (nameRow.removeFromLeft (90));
         fileName.setBounds (nameRow.withWidth (juce::jmin (440, nameRow.getWidth ())));
+        nameAdvice.setBounds (fileName.getX (), nameAdviceRow.getY (), fileName.getWidth (), nameAdviceRow.getHeight ());
+        auto namePreviewRow { footer.removeFromTop (28) };
+        namePreview.setBounds (namePreviewRow.removeFromLeft (460));
         footer.removeFromTop (5);
         constexpr int packageWidth { 430 }, columnGap { 12 };
         auto footerHeadings { footer.removeFromTop (20) };
@@ -1614,13 +1911,46 @@ WaveformWorkspace::WaveformWorkspace () : impl (std::make_unique<Impl> (*this))
         juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Recall waveform design", message, "Recall", "Cancel", nullptr,
             juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
     };
+    confirmRawImport = [] (const juce::String& message, std::function<void (bool)> callback)
+    {
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Import single-cycle audio", message, "Import cycle", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
+    };
+    confirmLayerConversion = [] (const juce::String& message, std::function<void (bool)> callback)
+    {
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Create layer bank from waveform", message, "Replace layer bank", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
+    };
+    chooseRawChannel = [] (const juce::String& filename, std::function<void (int)> callback)
+    {
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Import stereo cycle: " + filename);
+        menu.addItem (1, "Keep left");
+        menu.addItem (2, "Keep right");
+        menu.addItem (3, "Merge L/R (average)");
+        menu.showMenuAsync ({}, std::move (callback));
+    };
+    inspectAuditionSignal = [] (WaveformAudition::PayloadPtr payload, double transpose)
+    { return WaveformAudition::inspectSignal (std::move (payload), transpose); };
+    confirmAuditionWarning = [] (const juce::String& message, std::function<void (bool)> callback)
+    {
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Check signal before audition", message
+            + "\n\nThis is a warning heuristic, not a speaker-safety guarantee. Check the file's purpose and lower your listening level before continuing.",
+            "Continue audition", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
+    };
     startTimerHz (30);
 }
 WaveformWorkspace::~WaveformWorkspace () { stopTimer (); impl.reset (); }
 void WaveformWorkspace::setInitialFolder (juce::File folder) { impl->initialFolder = std::move (folder); }
 void WaveformWorkspace::refreshAssignmentContext () { impl->refreshContext (); }
+bool WaveformWorkspace::hasPendingFileOperation () const
+{
+    return impl && (impl->chooser != nullptr || impl->exportBusy || impl->assignmentBusy || impl->assignmentConfirming || impl->recallConfirming);
+}
 void WaveformWorkspace::showPresetSaveStatus (const juce::String& message, bool error) { impl->notice (message, error); }
 void WaveformWorkspace::recallAssigned (int channel, int zone) { impl->recallAssigned (channel, zone); }
+void WaveformWorkspace::importSingleCycle (juce::File file) { impl->requestRawImport (std::move (file)); }
 WaveformDesign::Settings WaveformWorkspace::getSettings () const { return impl->settings; }
 void WaveformWorkspace::timerCallback () { impl->tick (); }
 void WaveformWorkspace::resized () { if (impl) impl->layout (); }

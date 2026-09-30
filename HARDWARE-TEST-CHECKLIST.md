@@ -16,7 +16,7 @@ together. Advanced test-output packages also include `test-manifest.json` with
 their expected values and reference-marker positions.
 
 For A8, place that complete named folder **directly under the SD-card root**:
-`SD card/PR01 - koe-01/prst001.yml`, with its WAVs beside the preset. Do not copy loose
+`SD card/P01 - koe-01/prst001.yml`, with its WAVs beside the preset. Do not copy loose
 preset/WAV files to the card root or nest a preset folder inside another folder.
 **Generate & Assign → designer SAVE** now creates/refreshes this self-contained
 named folder while preserving working files. Copy that generated folder, not
@@ -156,14 +156,32 @@ isolated audio-only test can still be useful.
 8. **The sample really plays into the loop — A8 and app comparison, scope optional.**
    Use audio with recognizable sections, looping enabled, zero pitch and a
    held gate or One Shot play mode. Compare the app's **Trigger sample into loop
-   simulation** with A8 for a loop (a) inside the sample, (b) starting inside
-   but ending beyond Sample End, and (c) starting after Sample End.
+   simulation** with A8 for a loop (a) inside the sample, (b) equal to the sample,
+   and (c) touching either sample boundary. Hardware testing confirmed that
+   a static loop outside the sample does not normally loop. The default editor
+   mode prevents that layout; **Allow loop outside sample** permits advanced CV-driven layouts.
    **Pass:** playback starts at Sample Start, travels forward to the loop and
-   then repeats that loop only. In (c), the striped bridge is heard, not skipped.
-   In the app, SAMPLE/ONCE STOP is highlighted during the initial passage and
-   bridge; LOOP/LOOP STOP takes over when playback enters the loop. Either
+   then repeats that loop only. The striped tail from Loop End to Sample End is
+   not played while looping remains active. In the app, SAMPLE/ONCE STOP is
+   highlighted during the initial passage; LOOP/LOOP STOP takes over when playback enters the loop. Either
    active STOP stops playback. Do not require the whole sample region to play
    once before an internal loop captures playback.
+
+   Also test boundary edits in both **Length** and **End** modes. **Pass:**
+   Length mode pushes the complete loop without changing its length and limits
+   sample contraction accordingly; End mode contracts the contacted loop edge,
+   never below four frames. An unset loop follows the sample. Save and reload
+   these presets on both A8 and the computer. Import a file-bounded out-of-sample
+   loop: its positions must stay unchanged, the channel override must enable,
+   and stripes must disappear. Direct LOOP audition remains available, but the
+   static Sample > Loop simulation must not invent external CV behavior. The
+   four-frame loop minimum applies in both modes. Turning the override off must
+   ask before resetting external loops; Cancel preserves everything.
+
+   Optional advanced A8 check: patch Sample End CV and use a held gate or suitable
+   play/loop mode. Record whether expanding the sample region exposes the loop
+   and whether contracting it removes looping. This is a hardware behavior check,
+   not a claim that the app emulates the CV-modulated playback engine.
 
 9. **Hardware save and reload retains the preset meaning — A8 and computer.**
    Save a populated test preset as a separate copy on A8, reload it there,
@@ -391,6 +409,16 @@ below supplement the standalone preset-001 tests in the rest of this checklist.
   slots asks before discarding it. Cancel leaves the original slot and edits.
 - [ ] Export a standalone package with a chosen non-001 Package preset number;
   verify its YAML filename/header and loading instructions agree.
+- [ ] Use **Save/Export Bank** to combine two saved presets from separate
+  folders, explicitly resolving a duplicate slot if needed. Open the bank in
+  A8Manager: both presets must load with the correct samples, and generated
+  WAVs must still recall their recipes. Original folders must remain unchanged.
+  Save a new slot from Designer while in the bank: its `prstNNN.yml` and WAVs
+  must stay at bank level, with no additional `PNN - ...` folder.
+- [ ] Copy that bank folder directly to the SD-card root and load it on A8.
+  **Pass:** both exported preset numbers are selectable in the same loaded
+  folder and play the intended channel assignments. This is a preset/file-layout
+  acceptance test, not an oscilloscope measurement; retain CV speaker precautions.
 
 ### Test record
 
@@ -407,7 +435,7 @@ instrument, and record it with the measurement.
 | Software regression/build identifier | Tests pass; record output, not hardware claims | | |
 | Preset load and save/reload | Intended assignments/settings survive | | |
 | One Shot / Loop / Gated loop | Behaviors in Extended 4 | | |
-| Forward sample-to-loop cases | Initial passage, bridge when applicable, then repeated loop | | |
+| Forward sample-to-loop cases | Initial passage then contained loop; striped post-loop sample tail is not reached while looping | | |
 | Essential CV constants: 0 / +10% / -10% | Record actual volts; correct polarity, sustained DC | | |
 | Essential CV intended operating range | Measured extrema safe for the intended destination | | |
 | Essential Mix L and Mix R isolation | Both Off; no CV-correlated signal above recorded baseline | | |

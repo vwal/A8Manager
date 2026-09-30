@@ -6,11 +6,11 @@
 // File I/O belongs on a worker thread; pass a detached preset snapshot.
 namespace PresetFolderCopy
 {
-    // PRnn - <name>, with a hardware-safe maximum of 31 characters.
+    // Pnn - <name>, with a hardware-safe maximum of 31 characters.
     juce::String folderName (int slot, const juce::String& presetName);
 
     // An already-open named folder for this slot is saved normally, never
-    // wrapped in another folder. Also recognizes the legacy A8 Preset prefix.
+    // wrapped in another folder. Also recognizes legacy PR and A8 Preset prefixes.
     // The editable preset name may have changed.
     bool isNamedPresetFolder (const juce::File& folder, const juce::ValueTree& preset);
 

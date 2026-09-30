@@ -56,6 +56,8 @@ set(SOURCE_FILES
     Source/SystemServices.h)
 
 set(ASSIMIL8OR_FILES
+    Source/Assimil8or/PresetBankExport.cpp
+    Source/Assimil8or/PresetBankExport.h
     Source/Assimil8or/PresetFolderCopy.cpp
     Source/Assimil8or/PresetFolderCopy.h
     Source/Assimil8or/Assimil8orPreset.cpp
@@ -81,6 +83,10 @@ set(ASSIMIL8OR_AUDIO_FILES
     Source/Assimil8or/Audio/ChannelCvSafety.h
     Source/Assimil8or/Audio/WaveformDesign.cpp
     Source/Assimil8or/Audio/WaveformDesign.h
+    Source/Assimil8or/Audio/RawCycleImport.cpp
+    Source/Assimil8or/Audio/RawCycleImport.h
+    Source/Assimil8or/Audio/AuditionSignalCheck.cpp
+    Source/Assimil8or/Audio/AuditionSignalCheck.h
     Source/Assimil8or/Audio/WaveformDesignExport.cpp
     Source/Assimil8or/Audio/WaveformDesignExport.h
     Source/Assimil8or/Audio/WaveformDesignAssignment.cpp
@@ -126,6 +132,9 @@ set(ASSIMIL8OR_PRESET_FILES
     Source/Assimil8or/Preset/StereoChannelTools.h
     Source/Assimil8or/Preset/ZoneProperties.cpp
     Source/Assimil8or/Preset/ZoneProperties.h
+    Source/Assimil8or/Preset/ZoneSampleRanges.h
+    Source/Assimil8or/Preset/PresetLoopRanges.h
+    Source/Assimil8or/Preset/AutomaticLoopDefaults.h
     Source/Assimil8or/Preset/ZonePurge.h)
 
 set(ASSIMIL8OR_PRESET_DATA_FILES
@@ -142,11 +151,16 @@ set(ASSIMIL8OR_VALIDATOR_FILES
     Source/Assimil8or/Validator/ValidatorResultProperties.h)
 
 set(GUI_FILES
+    Source/GUI/BankExportComponent.cpp
+    Source/GUI/BankExportComponent.h
+    Source/GUI/A8NamePreview.h
+    Source/GUI/SelectableFileLabel.h
     Source/GUI/HardwareTestOutputComponent.cpp
     Source/GUI/HardwareTestOutputComponent.h
     Source/GUI/WaveformWorkspace.cpp
     Source/GUI/WaveformWorkspace.h
     Source/GUI/PresetEditSession.h
+    Source/GUI/DesignerPresetSaveStatus.h
     Source/GUI/BottomStatusWindow.cpp
     Source/GUI/BottomStatusWindow.h
     Source/GUI/CurrentFolderComponent.cpp

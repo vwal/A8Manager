@@ -18,8 +18,10 @@ namespace ZoneContinuation
         ZoneProperties next (result, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
         next.setSampleStart (end, false);
         next.setSampleEnd (end + nextLength, false);
-        next.setLoopStart (end, false);
-        next.setLoopLength (static_cast<double> (nextLength), false);
+        // A newly continued slice starts with an automatic full-sample loop;
+        // it must not pin the slice's length before the user edits the loop.
+        next.setLoopStart (-1, false);
+        next.setLoopLength (-1.0, false);
         return result;
     }
 }

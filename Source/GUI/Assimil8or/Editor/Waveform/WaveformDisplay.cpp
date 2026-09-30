@@ -2,12 +2,15 @@
 #include <cmath>
 #include "../../../ModernTheme.h"
 #include "../../../../Assimil8or/Audio/PlaybackPitch.h"
+#include "../../../../Assimil8or/Preset/ZoneSampleRanges.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 
 namespace
 {
-    // The Assimil8or's own loop can never be shorter than this.
-    constexpr juce::int64 kMinLoopLength { 4 };
+    ZoneSampleRanges::Mode markerMode (bool endMode)
+    {
+        return endMode ? ZoneSampleRanges::Mode::end : ZoneSampleRanges::Mode::length;
+    }
 }
 
 WaveformDisplay::WaveformDisplay ()
@@ -39,7 +42,12 @@ WaveformDisplay::WaveformDisplay ()
     markerOverlay.attach (&waveform);
     markerOverlay.constrainPosition = [this] (int markerIndex, double proposedPosition) { return constrainMarker (markerIndex, proposedPosition); };
     markerOverlay.onMarkerMoved = [this] (int markerIndex) { markerMoved (markerIndex); };
-    markerOverlay.onSelectMarker = [this] (int marker) { selectRegion (marker >= kLoopStart); };
+    markerOverlay.onSelectMarker = [this] (int marker)
+    {
+        selectRegion (marker >= kLoopStart);
+        if (canEdit () && hasSample ()) markerDrag = MarkerDrag { marker, getSampleLength (), ZoneSampleRanges::read (zoneProperties) };
+    };
+    markerOverlay.onMarkerGestureEnded = [this] { markerDrag.reset (); };
     markerOverlay.labelText = [this] (int marker) { return markerLabel (marker); };
     addAndMakeVisible (markerOverlay);
 
@@ -53,8 +61,8 @@ WaveformDisplay::WaveformDisplay ()
     for (auto* button : std::array<juce::Button*, 6> { &expandButton, &menuButton, &zoomIn, &zoomOut, &zoomInfo, &simulationButton })
         addAndMakeVisible (button);
     simulationButton.setEnabled (false);
-    simulationButton.setTooltip ("Trigger sample into loop simulation: play forward from Sample Start through any gap, then repeat between the loop markers. "
-                                 "Stops with this button or the highlighted STOP in Zones. Requires an audio sample and a loop ending after Sample Start; "
+    simulationButton.setTooltip ("Trigger sample into loop simulation: play forward from Sample Start, then repeat between the loop markers. "
+                                 "Stops with this button or the highlighted STOP in Zones. Requires an audio sample and a loop of at least four frames entirely inside SAMPLE; "
                                  "does not change the preset's play or loop mode.");
     simulationButton.onClick = [this] () { triggerSimulation (); };
     zoomIn.setTooltip ("Zoom in around the centre. Scroll over the waveform to zoom at the pointer.");
@@ -71,8 +79,8 @@ WaveformDisplay::WaveformDisplay ()
     durationInfo.setBorderSize ({ 0, 3, 0, 3 });
     durationInfo.setTooltip ("File, sample region and loop lengths in minutes:seconds at channel PITCH + zone PITCH OFFSET, capped at the sampler's playback-rate limit. "
                              "Excludes audition speed and external CV. Marker timestamps remain source-file positions. "
-                             "Gray stripes always mark a gap from Sample End to a later Loop Start. With hardware looping enabled they extend through Loop End. "
-                             "This hardware loop-extent hint does not change which region the audition buttons play.");
+                             "When looping is enabled, gray stripes mark the sample tail from Loop End to Sample End: it is not reached while the loop repeats. "
+                             "This hint does not change which region the audition buttons play.");
     addAndMakeVisible (durationInfo);
     auditionRateLabel.setText ("Audition speed", juce::dontSendNotification);
     auditionRateLabel.setFont (juce::FontOptions (13.0f));
@@ -187,7 +195,8 @@ bool WaveformDisplay::beginRegionMove (juce::Point<float> point)
         if (! inSample) targetLoop = true;
         if (! inLoop) targetLoop = false;
     }
-    movingRegion = RegionMove::capture (zoneProperties, targetLoop ? RegionMove::Target::loop : RegionMove::Target::sample, getSampleLength ());
+    movingRegion = RegionMove::capture (zoneProperties, targetLoop ? RegionMove::Target::loop : RegionMove::Target::sample,
+                                      getSampleLength (), channelProperties.getAllowLoopOutsideSample ());
     if (movingRegion) selectRegion (targetLoop);
     return movingRegion.has_value ();
 }
@@ -281,7 +290,14 @@ void WaveformDisplay::init (juce::ValueTree channelPropertiesVT, juce::ValueTree
     RuntimeRootProperties runtimeRootProperties (rootPropertiesVT, RuntimeRootProperties::WrapperType::client, RuntimeRootProperties::EnableCallbacks::no);
     channelProperties.wrap (channelPropertiesVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     channelProperties.onLoopModeChange = [this] (int) { updateMarkerPositions (); };
-    channelProperties.onLoopLengthIsEndChange = [this] (bool) { ++matchGeneration; };
+    channelProperties.onAllowLoopOutsideSampleChange = [this] (bool)
+    {
+        waveform.cancelDrag ();
+        markerOverlay.cancelDrag ();
+        movingRegion.reset ();
+        updateMarkerPositions ();
+    };
+    channelProperties.onLoopLengthIsEndChange = [this] (bool) { ++matchGeneration; markerOverlay.cancelDrag (); };
     channelProperties.onPitchChange = [this] (double) { updateDurations (); };
     sampleManagerProperties.wrap (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     audioPlayerProperties.wrap (runtimeRootProperties.getValueTree (), AudioPlayerProperties::WrapperType::client, AudioPlayerProperties::EnableCallbacks::yes);
@@ -394,35 +410,32 @@ void WaveformDisplay::updateMarkerPositions ()
     refreshSimulationControls ();
     if (! hasSample ())
     {
-        markerOverlay.setLoopExtension ({});
+        markerOverlay.setLoopTail ({});
         return;
     }
 
-    const auto sampleLength { getSampleLength () };
-    const auto sampleStart { zoneProperties.getSampleStart ().value_or (0) };
-    const auto sampleEnd { zoneProperties.getSampleEnd ().value_or (sampleLength) };
-    const auto loopStart { zoneProperties.getLoopStart ().value_or (0) };
-    const auto loopLength { zoneProperties.getLoopLength ().value_or (static_cast<double> (sampleLength - loopStart)) };
+    const auto ranges { ZoneSampleRanges::resolve (ZoneSampleRanges::read (zoneProperties), getSampleLength (), channelProperties.getAllowLoopOutsideSample ()) };
 
-    markerOverlay.setPosition (kSampleStart, static_cast<double> (sampleStart));
-    markerOverlay.setPosition (kSampleEnd, static_cast<double> (sampleEnd));
-    markerOverlay.setPosition (kLoopStart, static_cast<double> (loopStart));
+    markerOverlay.setPosition (kSampleStart, static_cast<double> (ranges.sampleStart));
+    markerOverlay.setPosition (kSampleEnd, static_cast<double> (ranges.sampleEnd));
+    markerOverlay.setPosition (kLoopStart, static_cast<double> (ranges.loopStart));
     // oolib draws handles at whole frames. Keep the exact fractional endpoint
     // in the model/readouts and round only its handle representation.
-    markerOverlay.setPosition (kLoopEnd, static_cast<double> (loopStart) + loopLength);
-    const auto loopMode { channelProperties.getLoopMode () };
-    juce::Range<double> extension;
-    if (sampleLength > 0 && std::isfinite (loopLength))
-    {
-        const auto start { std::clamp (static_cast<double> (sampleEnd), 0.0, static_cast<double> (sampleLength)) };
-        // A separated bridge is useful editing information even when the saved
-        // hardware Loop mode is off (audition looping is a different control).
-        const auto loopEnabled { loopMode == 1 || loopMode == 2 };
-        const auto end { std::clamp (static_cast<double> (loopStart) + (loopEnabled ? loopLength : 0.0), start, static_cast<double> (sampleLength)) };
-        extension = { start, end };
-    }
-    markerOverlay.setLoopExtension (extension);
+    markerOverlay.setPosition (kLoopEnd, ranges.loopEnd ());
     updateDurations ();
+}
+
+void WaveformDisplay::updateLoopTail ()
+{
+    juce::Range<double> tail;
+    if (hasSample () && ! channelProperties.getAllowLoopOutsideSample ())
+    {
+        const auto ranges { ZoneSampleRanges::resolve (ZoneSampleRanges::read (zoneProperties), getSampleLength ()) };
+        const auto loopMode { channelProperties.getLoopMode () };
+        if (ranges.loopValid && (loopMode == 1 || loopMode == 2 || isSimulatingThisZone ()) && ranges.loopEnd () < ranges.sampleEnd)
+            tail = { ranges.loopEnd (), static_cast<double> (ranges.sampleEnd) };
+    }
+    markerOverlay.setLoopTail (tail);
 }
 
 // The timeline and the overlay both position by sample, so they have to be
@@ -456,6 +469,7 @@ void WaveformDisplay::refreshSimulationControls ()
     simulationButton.setButtonText (active ? "Stop simulation" : "Sample > Loop");
     simulationButton.setToggleState (active, juce::dontSendNotification);
     simulationButton.setEnabled (canEdit () && (active || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
+    updateLoopTail ();
 }
 
 void WaveformDisplay::triggerSimulation ()
@@ -474,12 +488,13 @@ void WaveformDisplay::triggerSimulation ()
 double WaveformDisplay::markerPosition (int marker)
 {
     if (! hasSample ()) return 0.0;
+    const auto ranges { ZoneSampleRanges::resolve (ZoneSampleRanges::read (zoneProperties), getSampleLength (), channelProperties.getAllowLoopOutsideSample ()) };
     switch (marker)
     {
-        case kSampleStart: return static_cast<double> (zoneProperties.getSampleStart ().value_or (0));
-        case kSampleEnd: return static_cast<double> (zoneProperties.getSampleEnd ().value_or (getSampleLength ()));
-        case kLoopStart: return static_cast<double> (zoneProperties.getLoopStart ().value_or (0));
-        case kLoopEnd: return markerPosition (kLoopStart) + zoneProperties.getLoopLength ().value_or (getSampleLength () - markerPosition (kLoopStart));
+        case kSampleStart: return static_cast<double> (ranges.sampleStart);
+        case kSampleEnd: return static_cast<double> (ranges.sampleEnd);
+        case kLoopStart: return static_cast<double> (ranges.loopStart);
+        case kLoopEnd: return ranges.loopEnd ();
         default: return 0.0;
     }
 }
@@ -654,8 +669,12 @@ void WaveformDisplay::beginBoundaryMove (int marker, bool right, bool matching)
     const auto rate { sampleProperties.getSampleRate () };
     if (! std::isfinite (rate) || rate <= 0.0) return;
     const auto endBoundary { marker == kSampleEnd || marker == kLoopEnd };
-    const auto minimum { static_cast<juce::int64> (constrainMarker (marker, 0.0, matching)) };
-    const auto maximum { static_cast<juce::int64> (constrainMarker (marker, static_cast<double> (getSampleLength ()), matching)) };
+    const auto limits { ZoneSampleRanges::limits (ZoneSampleRanges::read (zoneProperties), getSampleLength (),
+        static_cast<ZoneSampleRanges::Marker> (marker), markerMode (channelProperties.getLoopLengthIsEnd ()), matching,
+        channelProperties.getAllowLoopOutsideSample ()) };
+    if (! limits.editable) return;
+    const auto minimum { static_cast<juce::int64> (std::ceil (limits.minimum)) };
+    const auto maximum { static_cast<juce::int64> (std::floor (limits.maximum)) };
     const auto original { markerPosition (marker) };
     auto request { std::make_shared<BoundaryMoveRequest> (BoundaryMoveRequest {
         generation, sourceGeneration, buffer, rate, original, marker, getDisplayChannel (), right,
@@ -742,41 +761,15 @@ bool WaveformDisplay::keyPressed (const juce::KeyPress& key)
 
 double WaveformDisplay::constrainMarker (int markerIndex, double proposedPosition, bool keepOppositeBoundary)
 {
-    if (! hasSample ())
+    if (! hasSample () || markerIndex < kSampleStart || markerIndex > kLoopEnd)
         return proposedPosition;
-
-    const auto sampleLength { getSampleLength () };
-    const auto position { static_cast<juce::int64> (proposedPosition) };
-
-    switch (markerIndex)
-    {
-        case kSampleStart:
-        {
-            const auto sampleEnd { zoneProperties.getSampleEnd ().value_or (sampleLength) };
-            return static_cast<double> (std::clamp (position, juce::int64 { 0 }, std::max (juce::int64 { 0 }, sampleEnd - 1)));
-        }
-        case kSampleEnd:
-        {
-            const auto sampleStart { zoneProperties.getSampleStart ().value_or (0) };
-            return static_cast<double> (std::clamp (position, std::min (sampleStart + 1, sampleLength), sampleLength));
-        }
-        case kLoopStart:
-        {
-            const auto length { markerPosition (kLoopEnd) - markerPosition (kLoopStart) };
-            const auto maxLoopStart { static_cast<juce::int64> (std::floor ((keepOppositeBoundary || channelProperties.getLoopLengthIsEnd ())
-                ? markerPosition (kLoopEnd) - kMinLoopLength : sampleLength - length)) };
-            return static_cast<double> (std::clamp (position, juce::int64 { 0 }, std::max (juce::int64 { 0 }, maxLoopStart)));
-        }
-        case kLoopEnd:
-        {
-            const auto loopStart { zoneProperties.getLoopStart ().value_or (0) };
-            return static_cast<double> (std::clamp (position, std::min (loopStart + kMinLoopLength, sampleLength), sampleLength));
-        }
-        default:
-        {
-            return proposedPosition;
-        }
-    }
+    const auto stored { markerDrag && markerDrag->marker == markerIndex && markerDrag->fileLength == getSampleLength ()
+        ? markerDrag->original : ZoneSampleRanges::read (zoneProperties) };
+    const auto limits { ZoneSampleRanges::limits (stored, getSampleLength (),
+        static_cast<ZoneSampleRanges::Marker> (markerIndex), markerMode (channelProperties.getLoopLengthIsEnd ()), keepOppositeBoundary,
+        channelProperties.getAllowLoopOutsideSample ()) };
+    if (! limits.editable || ! std::isfinite (proposedPosition)) return markerPosition (markerIndex);
+    return std::clamp (std::round (proposedPosition), std::ceil (limits.minimum), std::floor (limits.maximum));
 }
 
 // A marker was dragged; write it back to the zone. A property setter here comes
@@ -789,48 +782,15 @@ void WaveformDisplay::markerMoved (int markerIndex)
 
 void WaveformDisplay::setMarker (int markerIndex, double proposedPosition, bool keepOppositeBoundary)
 {
-    if (! hasSample () || ! canEdit () || ! std::isfinite (proposedPosition)) return;
+    if (! hasSample () || ! canEdit () || ! std::isfinite (proposedPosition) || markerIndex < kSampleStart || markerIndex > kLoopEnd) return;
     const auto sampleLength { getSampleLength () };
-    const auto position { static_cast<juce::int64> (constrainMarker (markerIndex, std::round (std::clamp (proposedPosition, 0.0, static_cast<double> (sampleLength))), keepOppositeBoundary)) };
     selectRegion (markerIndex >= kLoopStart);
-
-    switch (markerIndex)
-    {
-        case kSampleStart:
-        {
-            zoneProperties.setSampleStart (position == 0 ? -1 : position, true);
-        }
-        break;
-
-        case kSampleEnd:
-        {
-            zoneProperties.setSampleEnd (position == sampleLength ? -1 : position, true);
-        }
-        break;
-
-        case kLoopStart:
-        {
-            const auto originalLoopStart { zoneProperties.getLoopStart ().value_or (0) };
-            const auto oldLength { zoneProperties.getLoopLength ().value_or (static_cast<double> (sampleLength - originalLoopStart)) };
-            const auto length { (keepOppositeBoundary || channelProperties.getLoopLengthIsEnd ()) ? oldLength + originalLoopStart - position : oldLength };
-            auto setStart = [&] () { zoneProperties.setLoopStart (position == 0 ? -1 : position, true); };
-            auto setLength = [&] () { zoneProperties.setLoopLength (length, true); };
-            if (position >= originalLoopStart) { setLength (); setStart (); }
-            else { setStart (); setLength (); }
-        }
-        break;
-
-        case kLoopEnd:
-        {
-            const auto loopStart { zoneProperties.getLoopStart ().value_or (0) };
-            const auto newLoopLength { static_cast<double> (position - loopStart) };
-            zoneProperties.setLoopLength (position == sampleLength && loopStart == 0 ? -1.0 : newLoopLength, true);
-        }
-        break;
-
-        default:
-        break;
-    }
+    const auto stored { markerDrag && markerDrag->marker == markerIndex && markerDrag->fileLength == sampleLength
+        ? markerDrag->original : ZoneSampleRanges::read (zoneProperties) };
+    const auto edited { ZoneSampleRanges::edit (stored, sampleLength,
+        static_cast<ZoneSampleRanges::Marker> (markerIndex), std::round (proposedPosition),
+        markerMode (channelProperties.getLoopLengthIsEnd ()), keepOppositeBoundary, channelProperties.getAllowLoopOutsideSample ()) };
+    ZoneSampleRanges::apply (zoneProperties, edited, sampleLength, true, channelProperties.getAllowLoopOutsideSample ());
     updateMarkerPositions ();
 }
 

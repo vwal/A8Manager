@@ -6,6 +6,7 @@
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/Preset/PresetProperties.h"
 #include "Assimil8or/PresetFolderCopy.h"
+#include "Assimil8or/PresetBankExport.h"
 #include "Assimil8or/Validator/ValidatorResultProperties.h"
 #include <iostream>
 #include <stdexcept>
@@ -77,6 +78,21 @@ struct GeneratedSidecarValidatorTestAccess
         const auto copyManifest { copiedFolder.getChildFile (".a8-preset-copy.json") };
         validateSidecar (copyManifest, true);
         const auto genuineManifest { copyManifest.loadFileAsString () };
+        PresetBankExport::Report bank;
+        check (PresetBankExport::exportBank ({ { copiedFolder.getChildFile ("prst047.yml"), 47 } },
+                folder.getChildFile ("Validation bank"), bank).wasOk (), "Create real bank metadata for validator coverage");
+        const auto bankManifest { bank.folder.getChildFile (".a8-preset-bank.json") };
+        validateSidecar (bankManifest, true);
+        const auto genuineBank { bankManifest.loadFileAsString () };
+        check (bankManifest.replaceWithText ("{\"format\":\"A8ManagerPresetBank\",\"version\":999}"), "Create unsupported bank marker in owned fixture");
+        ValidatorResultProperties unknownBank;
+        unknownBank.update (ValidatorResultProperties::ResultTypeInfo, "File: " + bankManifest.getFileName (), false);
+        validator.validateFile (bankManifest, unknownBank.getValueTree ());
+        check (unknownBank.getType () == ValidatorResultProperties::ResultTypeWarning
+               && unknownBank.getText ().contains ("(ignored)") && ! PresetBankExport::isBankFolder (bank.folder),
+               "Malformed bank markers do not suppress warnings or enable in-place bank saves");
+        check (bankManifest.replaceWithText (genuineBank), "Restore valid bank metadata");
+        check (PresetBankExport::isBankFolder (bank.folder), "A valid exported bank is recognized for flat in-place workspace saves");
         auto validateMalformedManifest = [&] (const juce::String& contents)
         {
             check (copyManifest.replaceWithText (contents), "Write malformed manifest in the owned preset-copy fixture");

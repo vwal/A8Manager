@@ -1,10 +1,15 @@
 #include "GUI/WaveformWorkspace.h"
 #include "GUI/ModernTheme.h"
+#include "GUI/A8NamePreview.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/Preset/PresetProperties.h"
+#include "Assimil8or/Audio/RawCycleImport.h"
+#include "Assimil8or/Audio/WaveformDesignRecall.h"
+#include "Assimil8or/Audio/CvSampleSafety.h"
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <unordered_map>
 
 namespace
 {
@@ -71,7 +76,7 @@ namespace
             return workspace.getLocalArea (component, component->getLocalBounds ());
         };
         std::vector<juce::Rectangle<int>> controls;
-        for (const auto* name : { "design-assignment-heading", "design-package-heading", "design-target-channel", "design-target-zone",
+        for (const auto* name : { "design-name", "design-name-preview", "design-name-advice", "design-assignment-heading", "design-package-heading", "design-target-channel", "design-target-zone",
                                   "design-export-slot", "design-assign", "design-recall", "design-export", "design-open-export", "design-test-output" })
         {
             const auto bounds { boundsFor (name) };
@@ -120,6 +125,85 @@ namespace
 
 struct WaveformWorkspaceTestAccess
 {
+    static void namePreviewWorkflow ()
+    {
+        const auto example { A8NamePreview::fromFilename ("test-waveform-0123456789ab-01.wav") };
+        check (example.select == "test-w" && example.channel == "test-wavef...01", "Module filename preview preserves identifying prefix and voice tail without .wav");
+        const auto confirmed { A8NamePreview::fromFilename ("1234567890abcdefg-a4e6352772f0-01.wav") };
+        check (confirmed.select == "123456" && confirmed.channel == "1234567890...01",
+               "Filename previews match the hardware-confirmed Select and Channels displays");
+        const auto shortName { A8NamePreview::fromFilename ("Bass.WAV") };
+        check (shortName.select == "Bass" && shortName.channel == "Bass", "Short names and uppercase WAV suffix remain readable without artificial truncation");
+        check (A8NamePreview::fromFilename ("abcdefghij.wav").channel == "abcdefghij"
+               && A8NamePreview::fromFilename ("abcdefghijk.wav").channel == "abcdefghij...jk"
+               && A8NamePreview::fromFilename ("abcdefghijklm.wav").channel == "abcdefghij...lm"
+               && A8NamePreview::fromFilename ("tone.v1.wav").channel == "tone.v1"
+               && A8NamePreview::fromFilename ({}).select.isEmpty (), "Filename preview handles threshold, embedded dots and empty names");
+        const auto generatedShort { A8NamePreview::fromGeneratedPrefix ("test", 1) };
+        const auto generatedLong { A8NamePreview::fromGeneratedPrefix ("1234567890abc", 8) };
+        check (generatedShort.select == "test" && generatedShort.channel == "test...01"
+               && generatedLong.select == "123456" && generatedLong.channel == "1234567890...08"
+               && A8NamePreview::fromGeneratedPrefix ("test-", 1).channel == "test-...01"
+               && A8NamePreview::fromGeneratedPrefix ({}, 1).select.isEmpty ()
+               && A8NamePreview::fromGeneratedPrefix ("test", 9).channel.isEmpty (),
+               "Generated previews use only the friendly prefix and valid automatic voice number, preserving user-entered hyphens");
+        WaveformWorkspace workspace;
+        workspace.setSize (975, 732);
+        auto& name { control<juce::TextEditor> (workspace, "design-name") };
+        auto& preview { control<juce::Label> (workspace, "design-name-preview") };
+        auto& advice { control<juce::Label> (workspace, "design-name-advice") };
+        check (preview.getText ().contains ("New-Wa"), "Initial design name has an immediate device preview");
+        const auto before { juce::JSON::toString (WaveformDesign::toJson (workspace.getSettings ())) };
+        name.setText ("test waveform", false);
+        check (name.onTextChange != nullptr, "Typing is wired to the filename preview");
+        name.onTextChange ();
+        const auto plannedFilename = [&] { return preview.getTooltip ().fromFirstOccurrenceOf (": ", false, false).upToFirstOccurrenceOf (".wav", true, false); };
+        const auto filename { plannedFilename () };
+        const auto id { filename.dropLastCharacters (7).getLastCharacters (12) };
+        check (preview.getText () == "A8 Select: test-w    A8 Channels: test-wavef...01"
+               && filename == WaveformDesign::assignmentWaveName ("test waveform", id, 1)
+               && WaveformDesign::isAssignmentIdValid (id) && ! preview.getTooltip ().containsChar ('?')
+               && advice.getText ().contains ("first 6-10") && preview.getTooltip ().contains ("not editable")
+               && preview.getTooltip ().contains ("automatic voice number") && preview.getTooltip ().contains ("user-controlled name portion")
+               && preview.getTooltip ().contains ("hardware display can reveal"),
+               "Typing previews the name portion while the tooltip explains and gives the real reserved filename");
+        name.onTextChange ();
+        check (plannedFilename () == filename, "Refreshing the preview keeps its reserved identifier stable");
+        name.setText ("adf", false); name.onTextChange ();
+        const auto shortFilename { WaveformDesign::assignmentWaveName ("adf", id, 1) };
+        check (plannedFilename () == shortFilename && preview.getText () == "A8 Select: adf    A8 Channels: adf...01"
+               && ! preview.getText ().containsChar ('?'),
+               "Short generated-name previews omit automatic separators and identifiers while retaining the actual filename in the tooltip");
+        name.setText ("test", false); name.onTextChange ();
+        check (preview.getText () == "A8 Select: test    A8 Channels: test...01", "A four-character generated name has no automatic dash in either preview");
+        name.setText ("1234567890abc", false); name.onTextChange ();
+        check (preview.getText () == "A8 Select: 123456    A8 Channels: 1234567890...01", "Long generated names retain the established six/ten-character prefix widths");
+        name.setText ("test-", false); name.onTextChange ();
+        check (preview.getText () == "A8 Select: test-    A8 Channels: test-...01", "A genuinely user-entered hyphen is not stripped from the prefix");
+        name.setText ("test waveform", false); name.onTextChange ();
+        check (plannedFilename () == filename, "Editing a name and restoring it does not consume a generation identifier");
+        check (juce::JSON::toString (WaveformDesign::toJson (workspace.getSettings ())) == before,
+               "Filename guidance changes no waveform settings");
+        for (const auto width : { 975, 1117, 1400 })
+        {
+            workspace.setSize (width, 732);
+            for (auto* label : { &preview, &advice })
+                check (workspace.getLocalBounds ().contains (label->getBounds ())
+                       && juce::GlyphArrangement::getStringWidth (label->getFont (), label->getText ()) <= label->getWidth (),
+                       "Device-name previews and naming advice fit compact and wide layouts without squeezing text");
+            check (! preview.getBounds ().intersects (advice.getBounds ()), "Name preview and advice never overlap");
+            check (advice.getBottom () <= name.getY () && advice.getRight () == name.getRight ()
+                   && advice.getJustificationType () == juce::Justification::centredRight
+                   && preview.getY () >= name.getBottom (),
+                   "A single right-aligned naming hint sits above Design name, with live device previews below it");
+        }
+        name.setText ("Changed silently", false);
+        control<juce::ComboBox> (workspace, "design-preset").setSelectedId (2, juce::sendNotificationSync);
+        check (preview.getText ().contains ("Change"), "Loading a fresh design preset resynchronizes name guidance");
+        name.setText ({}, false); name.onTextChange ();
+        check (preview.getText () == "A8 Select: --    A8 Channels: --", "Empty names use the explicit -- placeholder, not a generated filename");
+    }
+
     static void testOutputEntry ()
     {
         using namespace WaveformDesign;
@@ -130,6 +214,7 @@ struct WaveformWorkspaceTestAccess
         workspace.setInitialFolder (folder);
         control<juce::ComboBox> (workspace, "design-export-slot").setSelectedId (47, juce::sendNotificationSync);
         control<juce::TextEditor> (workspace, "design-name").setText ("Timing check", false);
+        control<juce::TextEditor> (workspace, "design-name").onTextChange ();
         workspace.onStopAudition = [&] { ++stopped; };
         workspace.onAuditionPayload = [&] (WaveformAudition::PayloadPtr payload) { if (! payload) ++cleared; };
         workspace.onApplyAssignment = [&] (const auto&, const auto&) { ++applied; return juce::Result::ok (); };
@@ -228,6 +313,9 @@ struct WaveformWorkspaceTestAccess
         check (juce::JSON::toString (toJson (workspace.getSettings ())) == juce::JSON::toString (toJson (audio)) &&
                target.getSelectedId () == 3 && zone.getSelectedId () == 1,
                "Recall restores every audio shaping setting and keeps its original destination");
+        check (control<juce::TextEditor> (workspace, "design-name").getText () == "Recall me"
+               && control<juce::Label> (workspace, "design-name-preview").getText ().contains ("A8 Select: Recall"),
+               "Recipe recall immediately refreshes the name preview without requiring another typed character");
         check (live.isEquivalentTo (liveBefore) && folder.findChildFiles (juce::File::findFiles, false).size () == filesBefore,
                "Recall does not assign, save, or generate any preset/WAV files");
         click (workspace, "Recall assigned...");
@@ -280,6 +368,445 @@ struct WaveformWorkspaceTestAccess
         std::cout << "PASS: saved audio/CV/bank recall, destinations, non-mutating confirmation, stale rejection and lifetime safety\n";
     }
 
+    static void signalWarningWorkflow ()
+    {
+        WaveformWorkspace workspace;
+        workspace.setSize (1000, 760);
+        workspace.updateAuditionVisibility (true);
+        bool active { false };
+        int starts {}, prompts {}, inspections {};
+        auto signalStatus { AuditionSignalCheck::Status::warning };
+        std::function<void (bool)> answer;
+        workspace.isAuditionActive = [&] { return active; };
+        workspace.onStopAudition = [&] { active = false; };
+        workspace.onStartAudition = [&] { ++starts; active = true; return juce::Result::ok (); };
+        workspace.onAuditionPayload = [] (auto) {};
+        workspace.onAuditionMonitorChange = [] (double, double) { return juce::Result::ok (); };
+        workspace.inspectAuditionSignal = [&] (auto, double)
+        {
+            ++inspections;
+            AuditionSignalCheck::Report report;
+            report.status = signalStatus;
+            report.reasons.add ("Synthetic high-confidence DC test warning");
+            return report;
+        };
+        workspace.confirmAuditionWarning = [&] (const juce::String&, std::function<void (bool)> callback)
+        { ++prompts; answer = std::move (callback); };
+        settle (workspace);
+        click (workspace, "Start audition");
+        check (prompts == 1 && starts == 0 && ! active, "Signal warning holds Designer silent before Start");
+        auto oldAnswer { answer };
+        click (workspace, "Stop audition");
+        oldAnswer (true);
+        check (starts == 0, "STOP cancels a pending warning's playback intent");
+        click (workspace, "Start audition"); answer (false);
+        check (prompts == 2 && starts == 0, "Cancel never starts a suspicious audition");
+        click (workspace, "Start audition");
+        oldAnswer = answer;
+        control<juce::Slider> (workspace, "design-monitor-level-value").setValue (-24, juce::sendNotificationSync);
+        oldAnswer (true);
+        check (starts == 0, "A level change invalidates warning confirmation");
+        click (workspace, "Start audition"); answer (true);
+        check (starts == 1 && active, "Explicit approval starts the unchanged audition");
+        const auto approvedPrompts { prompts }, cachedInspections { inspections };
+        click (workspace, "Stop audition"); click (workspace, "Start audition");
+        check (starts == 2 && prompts == approvedPrompts && inspections == cachedInspections,
+               "Unchanged repeated playback reuses inspection and approval without more prompts");
+        control<juce::Slider> (workspace, "design-drive-value").setValue (0.2, juce::sendNotificationSync);
+        settle (workspace);
+        check (! active && starts == 2 && prompts == approvedPrompts + 1,
+               "A suspicious live design edit is held before publishing its new payload");
+        oldAnswer = answer;
+        workspace.updateAuditionVisibility (false);
+        oldAnswer (true);
+        check (! active && starts == 2, "Leaving the Designer invalidates a live-edit warning");
+        workspace.updateAuditionVisibility (true);
+        signalStatus = AuditionSignalCheck::Status::blocked;
+        control<juce::Slider> (workspace, "design-drive-value").setValue (0.3, juce::sendNotificationSync);
+        settle (workspace);
+        click (workspace, "Start audition");
+        check (starts == 2 && ! active && prompts == approvedPrompts + 1,
+               "Invalid signal data is blocked, not offered an unsafe override");
+        std::cout << "PASS: Designer preflight warning, exact approval cache, stale/STOP/visibility rejection and live-edit gate\n";
+    }
+
+    static void layerConversionWorkflow ()
+    {
+        using namespace WaveformDesign;
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-workspace-layer-conversion", "", false) };
+        check (folder.createDirectory ().wasOk (), "Create owned layer-conversion fixture");
+        struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+        const auto live { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType).createCopy () };
+        WaveformWorkspace workspace;
+        workspace.setSize (1000, 760);
+        workspace.updateAuditionVisibility (true);
+        int prompts {}, starts {}, applications {};
+        bool playing { false };
+        WaveformAudition::PayloadPtr payload;
+        std::function<void (bool)> answer;
+        workspace.onGetAssignmentContext = [&] () -> std::optional<WaveformWorkspace::AssignmentContext>
+        { return WaveformWorkspace::AssignmentContext { folder, live.createCopy (), 1 }; };
+        workspace.onApplyAssignment = [&] (const auto&, const auto&) { ++applications; return juce::Result::ok (); };
+        workspace.onAuditionPayload = [&] (auto value) { payload = std::move (value); };
+        workspace.onStartAudition = [&] { ++starts; playing = true; return juce::Result::ok (); };
+        workspace.onStopAudition = [&] { playing = false; };
+        workspace.isAuditionActive = [&] { return playing; };
+        workspace.confirmLayerConversion = [&] (const juce::String& message, std::function<void (bool)> callback)
+        {
+            check (message.contains ("Replace the current Layer Bank") && message.contains ("Preset values and WAV files are not changed"),
+                   "Replacing a cached bank explains what is replaced and what stays unchanged");
+            ++prompts; answer = std::move (callback);
+        };
+        workspace.refreshAssignmentContext ();
+        auto& mode { control<juce::ComboBox> (workspace, "design-mode") };
+        auto& phase { control<juce::Slider> (workspace, "design-phase-value") };
+        auto& name { control<juce::TextEditor> (workspace, "design-name") };
+        auto& convert { control<juce::Button> (workspace, "design-create-layers") };
+        const auto state = [&] { return juce::JSON::toString (toJson (workspace.getSettings ())); };
+        const auto expectedBank = [] (Settings source)
+        {
+            source.mode = Mode::layers;
+            spreadVoices (source, 7, 24, 300, 0.8);
+            return source;
+        };
+        name.setText ("My cycle", false);
+        control<juce::ComboBox> (workspace, "design-shape").setSelectedId (static_cast<int> (Shape::pulse) + 1, juce::sendNotificationSync);
+        control<juce::ComboBox> (workspace, "design-rate").setSelectedId (2, juce::sendNotificationSync);
+        control<juce::ComboBox> (workspace, "design-frames").setSelectedId (1024, juce::sendNotificationSync);
+        control<juce::ComboBox> (workspace, "design-playback").setSelectedId (1, juce::sendNotificationSync);
+        phase.setValue (37, juce::sendNotificationSync);
+        for (const auto& setting : { std::pair { "design-width-value", 33.0 }, { "design-harmonics-value", 17.0 },
+                                    { "design-brightness-value", 59.0 }, { "design-drive-value", 12.0 },
+                                    { "design-fold-value", 9.0 }, { "design-amplitude-value", 45.0 } })
+            control<juce::Slider> (workspace, setting.first).setValue (setting.second, juce::sendNotificationSync);
+        const auto source { workspace.getSettings () };
+        const auto original { state () };
+        check (convert.isVisible () && convert.isEnabled () && convert.getBounds ().getRight () <= find (workspace, "design-expand-preview")->getX ()
+               && convert.getBottom () <= find (workspace, "design-summary")->getY (),
+               "Create layer bank fits beneath the compact preview without overlapping expansion or summary");
+        settle (workspace);
+        snapshot (workspace, "waveform-workspace-create-layers");
+        click (workspace, "Start audition");
+        check (playing && starts == 1, "The source cycle is auditioning before explicit conversion");
+        click (workspace, "Create layer bank...");
+        check (prompts == 0 && ! workspace.hasPendingFileOperation () && ! playing && starts == 1 && ! payload,
+               "First conversion is immediate, stops audition, and invalidates its old payload");
+        check (state () == juce::JSON::toString (toJson (expectedBank (source))) && name.getText () == "My cycle",
+               "Conversion preserves all edited source settings and name, changing only mode and seven-voice spread");
+        auto& target { control<juce::ComboBox> (workspace, "design-target-channel") };
+        check (target.isItemEnabled (1) && target.isItemEnabled (2) && ! target.isItemEnabled (3),
+               "Seven-voice conversion recomputes destinations to require seven consecutive channels");
+        auto& viewport { control<juce::Viewport> (workspace, "design-controls") };
+        check (viewport.getViewPositionY () > 0 && viewport.getLocalBounds ().intersects (viewport.getLocalArea (find (workspace, "design-voices"), find (workspace, "design-voices")->getLocalBounds ())),
+               "Conversion scrolls to the Layer Bank voice controls");
+        settle (workspace);
+        check (payload && payload->getSettings ().mode == Mode::layers && payload->getSettings ().voiceCount == 7 && ! playing && starts == 1,
+               "New audition payload includes the full bank without automatically starting playback");
+        snapshot (workspace, "waveform-workspace-converted-bank");
+        Theme::setAppearance (true); Theme::refreshComponentTree (workspace);
+        snapshot (workspace, "waveform-workspace-converted-bank-light");
+        Theme::setAppearance (false); Theme::refreshComponentTree (workspace);
+        check (! convert.isVisible () && ! convert.isEnabled (), "Bank mode cannot recursively convert itself");
+        control<juce::Slider> (workspace, "design-voices-value").setValue (3, juce::sendNotificationSync);
+        control<juce::Slider> (workspace, "design-voice-2-0-value").setValue (13, juce::sendNotificationSync);
+        const auto customBank { state () };
+        mode.setSelectedId (1, juce::sendNotificationSync);
+        check (state () == original, "Returning to Audio Cycle restores the original waveform and all shaping exactly");
+        click (workspace, "Create layer bank...");
+        check (prompts == 1 && workspace.hasPendingFileOperation () && ! convert.isEnabled ()
+               && ! button (workspace, "Load recipe / cycle WAV...")->isEnabled ()
+               && ! find (workspace, "design-assign")->isEnabled (), "Existing bank asks before replacement and blocks overlapping file operations");
+        convert.onClick ();
+        check (prompts == 1, "Repeated invocation cannot stack replacement prompts");
+        const auto canceled { answer }; canceled (false); canceled (true);
+        check (state () == original && ! workspace.hasPendingFileOperation (), "Canceled replacement is single-use and leaves the source unchanged");
+        mode.setSelectedId (3, juce::sendNotificationSync);
+        check (state () == customBank, "Cancel also preserves every edit in the prior Layer Bank");
+        mode.setSelectedId (1, juce::sendNotificationSync);
+
+        click (workspace, "Create layer bank..."); phase.setValue (43, juce::sendNotificationSync);
+        const auto edited { state () }; answer (true);
+        check (state () == edited && ! workspace.hasPendingFileOperation (), "A stale confirmation cannot replace a newly edited design");
+        click (workspace, "Create layer bank..."); name.setText ("Renamed cycle", false); answer (true);
+        check (state () == edited && name.getText () == "Renamed cycle", "Renaming during confirmation invalidates conversion");
+        click (workspace, "Create layer bank..."); mode.setSelectedId (2, juce::sendNotificationSync);
+        const auto cv { state () }; answer (true); convert.onClick ();
+        check (state () == cv && ! convert.isVisible () && ! convert.isEnabled (), "Mode changes reject stale conversion and CV cannot become auditionable audio");
+        mode.setSelectedId (1, juce::sendNotificationSync);
+        click (workspace, "Create layer bank..."); workspace.updateAuditionVisibility (false); answer (true);
+        check (state () == edited, "Leaving the workspace rejects a pending conversion");
+        workspace.updateAuditionVisibility (true);
+        const auto latestSource { workspace.getSettings () };
+        click (workspace, "Create layer bank..."); answer (true);
+        check (state () == juce::JSON::toString (toJson (expectedBank (latestSource))),
+               "Confirmed replacement initializes a fresh spread without restoring the previous bank");
+        mode.setSelectedId (1, juce::sendNotificationSync);
+        check (state () == edited, "Confirmed replacement retains the latest source cycle");
+        check (applications == 0 && starts == 1 && folder.findChildFiles (juce::File::findFiles, false).isEmpty (),
+               "Design conversion and confirmations never assign a preset or create files");
+
+        // Exercise the same action with actual raw WAV data, not a synthesized
+        // starting point or a generated WAV with a pre-existing recipe.
+        const auto raw { folder.getChildFile ("Imported.wav") };
+        {
+            std::unique_ptr<juce::OutputStream> stream { raw.createOutputStream () };
+            auto writer { juce::WavAudioFormat ().createWriterFor (stream, juce::AudioFormatWriterOptions {}.withSampleRate (48000).withNumChannels (1).withBitsPerSample (24)) };
+            juce::AudioBuffer<float> audio (1, 128);
+            for (int i { 0 }; i < 128; ++i)
+                audio.setSample (0, i, static_cast<float> (0.4 * std::sin (juce::MathConstants<double>::twoPi * i / 128.0)
+                                                       + 0.1 * std::sin (juce::MathConstants<double>::twoPi * 3 * i / 128.0)));
+            check (writer && writer->writeFromAudioSampleBuffer (audio, 0, 128) && writer->flush (), "Write raw source cycle");
+        }
+        juce::MemoryBlock rawBefore, rawAfter;
+        check (raw.loadFileAsData (rawBefore), "Snapshot original imported WAV");
+        workspace.confirmRawImport = [] (const juce::String&, std::function<void (bool)> callback) { callback (true); };
+        workspace.importSingleCycle (raw);
+        phase.setValue (25, juce::sendNotificationSync);
+        control<juce::Slider> (workspace, "design-harmonics-value").setValue (11, juce::sendNotificationSync);
+        const auto imported { workspace.getSettings () };
+        click (workspace, "Create layer bank..."); answer (true);
+        const auto bank { workspace.getSettings () };
+        check (imported.shape == Shape::imported && bank.importedCycle == imported.importedCycle && ! bank.importedCycle.empty ()
+               && state () == juce::JSON::toString (toJson (expectedBank (imported))),
+               "Imported source frames, name and edited shaping survive explicit conversion despite an existing bank");
+        Render rendered;
+        check (render (bank, rendered).wasOk () && rendered.voices.size () == 7 && rendered.frames == imported.cycleFrames,
+               "Converted imported cycle renders all seven voices at the retained cycle length");
+        AssignmentResult assignment;
+        check (prepareAssignment (bank, folder, "Imported bank", live, 0, 0, assignment).wasOk (), "Converted bank assigns through the real seven-channel exporter");
+        WaveformDesignRecall::RecalledDesign recalled;
+        const auto loaded { WaveformDesignRecall::loadRecipe (assignment.recipe, recalled) };
+        if (loaded.failed ()) std::cerr << loaded.getErrorMessage () << '\n';
+        // Recipes serialize doubles to decimal JSON; source preservation must
+        // tolerate decimal roundoff, but remain well below one PCM24 step.
+        check (loaded.wasOk () && recalled.settings.importedCycle.size () == imported.importedCycle.size ()
+               && recalled.settings.voiceCount == 7 && recalled.settings.mode == Mode::layers && recalled.settings.shape == Shape::imported,
+               "Saved converted bank recipe recalls all voices and embeds the source cycle");
+        double sourceError { 0 }, renderError { 0 };
+        for (size_t frame { 0 }; frame < imported.importedCycle.size (); ++frame)
+            sourceError = std::max (sourceError, std::abs (recalled.settings.importedCycle[frame] - imported.importedCycle[frame]));
+        check (sourceError < 1.0e-14, "Saved imported cycle differs only by decimal JSON roundoff");
+        Render recalledAudio;
+        check (render (recalled.settings, recalledAudio).wasOk () && recalledAudio.voices.size () == rendered.voices.size ()
+               && recalledAudio.frames == rendered.frames, "Recalled bank renders with the original dimensions");
+        for (size_t voice { 0 }; voice < rendered.voices.size (); ++voice)
+            for (int frame { 0 }; frame < rendered.frames; ++frame)
+                renderError = std::max (renderError, std::abs (static_cast<double> (rendered.voices[voice].getSample (0, frame))
+                                                           - recalledAudio.voices[voice].getSample (0, frame)));
+        check (renderError <= 1.0 / 8388608.0, "Saved/recall bank render remains within one PCM24 step for every voice");
+        std::cout << "Converted bank round-trip max error: source=" << sourceError << ", rendered=" << renderError << '\n';
+        for (int channel { 0 }; channel < 7; ++channel)
+        {
+            const auto sample { assignment.editedPreset.getChild (channel).getChild (0).getProperty (ZoneProperties::SamplePropertyId).toString () };
+            check (sample.isNotEmpty () && folder.getChildFile (sample).existsAsFile (), "Every converted voice is assigned to its own existing WAV");
+        }
+        check (raw.loadFileAsData (rawAfter) && rawAfter == rawBefore && applications == 0, "Conversion and export leave the original WAV and live preset untouched");
+        auto doomed { std::make_unique<WaveformWorkspace> () };
+        std::function<void (bool)> late;
+        doomed->confirmLayerConversion = [&] (const juce::String&, auto callback) { late = std::move (callback); };
+        control<juce::ComboBox> (*doomed, "design-mode").setSelectedId (3, juce::sendNotificationSync);
+        control<juce::ComboBox> (*doomed, "design-mode").setSelectedId (1, juce::sendNotificationSync);
+        click (*doomed, "Create layer bank...");
+        check (late != nullptr, "Destruction fixture reaches conversion confirmation");
+        doomed.reset (); late (true);
+        std::cout << "PASS: explicit waveform-to-layer conversion, source/cache preservation, imported-cycle export/recall, target refresh and stale/cancel/lifetime guards\n";
+    }
+
+    static void rawImportWorkflow ()
+    {
+        using namespace WaveformDesign;
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-workspace-raw-import", "", false) };
+        check (folder.createDirectory ().wasOk (), "Create owned raw-cycle workspace fixture");
+        struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+        auto writeWave = [&] (const juce::File& file, int frames, int channels, bool cv = false, float offset = 0.0f)
+        {
+            auto fileStream { file.createOutputStream () };
+            check (fileStream && fileStream->setPosition (0) && fileStream->truncate ().wasOk (), "Create a complete owned raw WAV fixture");
+            std::unique_ptr<juce::OutputStream> stream { std::move (fileStream) };
+            auto options { juce::AudioFormatWriterOptions {}.withSampleRate (48000).withNumChannels (channels).withBitsPerSample (24) };
+            if (cv)
+            {
+                const auto metadata { CvSampleSafety::exportMetadata (true) };
+                std::unordered_map<juce::String, juce::String> values;
+                for (int index { 0 }; index < metadata.size (); ++index)
+                    values.emplace (metadata.getAllKeys ()[index], metadata.getAllValues ()[index]);
+                options = options.withMetadataValues (values);
+            }
+            auto writer { juce::WavAudioFormat ().createWriterFor (stream, options) };
+            juce::AudioBuffer<float> samples (channels, frames);
+            for (int channel { 0 }; channel < channels; ++channel)
+                for (int frame { 0 }; frame < frames; ++frame)
+                    samples.setSample (channel, frame, offset + 0.45f * static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * frame / frames + channel)));
+            check (writer && writer->writeFromAudioSampleBuffer (samples, 0, frames) && writer->flush (), "Write bounded raw audio/CV fixture samples");
+        };
+        const auto mono { folder.getChildFile ("Raw cycle.wav") }, stereo { folder.getChildFile ("Stereo cycle.wav") };
+        const auto altered { folder.getChildFile ("Altered cycle.wav") }, cv { folder.getChildFile ("CV cycle.wav") };
+        const auto tooShort { folder.getChildFile ("Too short.wav") }, tooLong { folder.getChildFile ("Too long.wav") };
+        writeWave (mono, 96, 1); writeWave (stereo, 96, 2); writeWave (altered, 96, 1);
+        writeWave (cv, 96, 1, true); writeWave (tooShort, 3, 1); writeWave (tooLong, 8193, 1);
+        juce::MemoryBlock originalMono, originalStereo;
+        check (mono.loadFileAsData (originalMono) && stereo.loadFileAsData (originalStereo), "Snapshot raw sources before any UI import");
+        const auto originalFileCount { folder.findChildFiles (juce::File::findFiles, false).size () };
+        auto live { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType).createCopy () };
+        live.setProperty (PresetProperties::IdPropertyId, 19, nullptr);
+        ZoneProperties rawZone (live.getChild (2).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        rawZone.setSample (mono.getFileName (), false);
+        const auto initialPreset { live.createCopy () };
+        std::uint64_t revision { 1 };
+        int rawPrompts { 0 }, stereoPrompts { 0 }, recipePrompts { 0 }, starts { 0 }, applications { 0 };
+        std::function<void (bool)> answer, recallAnswer;
+        std::function<void (int)> choose;
+        WaveformWorkspace workspace;
+        workspace.setSize (1000, 760);
+        workspace.onGetAssignmentContext = [&] () -> std::optional<WaveformWorkspace::AssignmentContext>
+        { return WaveformWorkspace::AssignmentContext { folder, live.createCopy (), revision }; };
+        workspace.onApplyAssignment = [&] (const auto&, const auto&) { ++applications; return juce::Result::ok (); };
+        workspace.onStartAudition = [&] { ++starts; return juce::Result::ok (); };
+        workspace.isAuditionActive = [] { return false; };
+        workspace.confirmRawImport = [&] (const juce::String&, std::function<void (bool)> callback)
+        { ++rawPrompts; answer = std::move (callback); };
+        workspace.chooseRawChannel = [&] (const juce::String&, std::function<void (int)> callback)
+        { ++stereoPrompts; choose = std::move (callback); };
+        workspace.confirmRecall = [&] (const juce::String&, std::function<void (bool)> callback)
+        { ++recipePrompts; recallAnswer = std::move (callback); };
+        workspace.refreshAssignmentContext ();
+        auto& name { control<juce::TextEditor> (workspace, "design-name") };
+        auto& phase { control<juce::Slider> (workspace, "design-phase-value") };
+        auto& mode { control<juce::ComboBox> (workspace, "design-mode") };
+        auto& shape { control<juce::ComboBox> (workspace, "design-shape") };
+        const auto state = [&] { return juce::JSON::toString (toJson (workspace.getSettings ())); };
+        const auto initial { state () };
+        workspace.importSingleCycle (mono);
+        check (rawPrompts == 1 && stereoPrompts == 0 && workspace.hasPendingFileOperation () && state () == initial,
+               "Raw mono import confirms replacement before changing the design and blocks competing file work");
+        const auto cancelled { answer };
+        cancelled (false); cancelled (true);
+        check (! workspace.hasPendingFileOperation () && state () == initial && live.isEquivalentTo (initialPreset),
+               "Raw import cancellation is single-use and preserves the current design and preset");
+
+        workspace.importSingleCycle (mono);
+        phase.setValue (37, juce::sendNotificationSync);
+        const auto editedDesign { state () };
+        answer (true);
+        check (! workspace.hasPendingFileOperation () && state () == editedDesign,
+               "Editing a shaping value during import confirmation cannot be overwritten by the old request");
+        workspace.importSingleCycle (mono);
+        name.setText ("Name edited during import", false); name.onTextChange ();
+        answer (true);
+        check (! workspace.hasPendingFileOperation () && state () == editedDesign && name.getText () == "Name edited during import",
+               "Editing only the design name also invalidates a pending raw import");
+        workspace.recallAssigned (2, 0);
+        ++revision;
+        answer (true);
+        check (! workspace.hasPendingFileOperation () && state () == editedDesign,
+               "Changing the shared preset revision rejects a pending raw import without replacing the design");
+        workspace.importSingleCycle (altered);
+        writeWave (altered, 96, 1, false, 0.12f);
+        answer (true);
+        check (! workspace.hasPendingFileOperation () && state () == editedDesign,
+               "A source WAV changed during confirmation is not silently imported with different samples");
+
+        for (const auto& invalid : { tooShort, tooLong, cv, folder.getChildFile ("missing.wav") })
+        {
+            const auto beforePrompts { rawPrompts }, beforeStereo { stereoPrompts };
+            workspace.importSingleCycle (invalid);
+            check (rawPrompts == beforePrompts && stereoPrompts == beforeStereo && ! workspace.hasPendingFileOperation () && state () == editedDesign,
+                   "Invalid, missing, overlong and known-CV sources are refused before any replacement confirmation");
+        }
+        mode.setSelectedId (2, juce::sendNotificationSync);
+        workspace.importSingleCycle (mono); answer (true);
+        Settings expectedMono;
+        check (RawCycleImport::load (mono, RawCycleImport::StereoChannel::unspecified, expectedMono).wasOk (), "Load reference raw mono through the production import backend");
+        check (workspace.getSettings ().mode == Mode::oscillator && workspace.getSettings ().shape == Shape::imported
+               && workspace.getSettings ().importedCycle == expectedMono.importedCycle && workspace.getSettings ().cycleFrames == 128
+               && shape.getSelectedId () == static_cast<int> (Shape::imported) + 1 && shape.isItemEnabled (static_cast<int> (Shape::imported) + 1),
+               "Raw import from CV switches to Audio Cycle, retains every source frame, and exposes the imported shape");
+        check (name.getText () == mono.getFileNameWithoutExtension (), "Imported raw cycle suggests its source basename as the editable design name");
+        const auto importedPoints { workspace.getSettings ().importedCycle };
+        control<juce::Slider> (workspace, "design-drive-value").setValue (40, juce::sendNotificationSync);
+        check (std::abs (workspace.getSettings ().drive - 0.4) < 1.0e-7 && workspace.getSettings ().importedCycle == importedPoints,
+               "Imported cycles support normal shaping controls without altering their stored source samples");
+        shape.setSelectedId (static_cast<int> (Shape::sine) + 1, juce::sendNotificationSync);
+        shape.setSelectedId (static_cast<int> (Shape::imported) + 1, juce::sendNotificationSync);
+        check (workspace.getSettings ().shape == Shape::imported && workspace.getSettings ().importedCycle == importedPoints,
+               "The shape chooser can leave and return to the imported source without losing it");
+        Settings restored;
+        check (fromJson (toJson (workspace.getSettings ()), restored).wasOk () && restored.importedCycle == importedPoints,
+               "The edited GUI design embeds its imported cycle in a reloadable recipe");
+        settle (workspace);
+        check (starts == 0 && applications == 0 && live.isEquivalentTo (initialPreset)
+               && folder.findChildFiles (juce::File::findFiles, false).size () == originalFileCount,
+               "Importing and shaping never auto-audition, assign, save, or create files");
+        snapshot (workspace, "waveform-workspace-imported-cycle");
+
+        const auto beforeStereo { state () };
+        const auto beforeRawPrompts { rawPrompts };
+        workspace.importSingleCycle (stereo);
+        check (stereoPrompts == 1 && rawPrompts == beforeRawPrompts && workspace.hasPendingFileOperation (),
+               "Stereo source asks for an explicit side before asking to replace the design");
+        const auto cancelledChoice { choose };
+        cancelledChoice (0); cancelledChoice (1);
+        check (! workspace.hasPendingFileOperation () && state () == beforeStereo && rawPrompts == beforeRawPrompts,
+               "Canceling stereo choice is single-use and never advances to a replacement confirmation");
+        workspace.importSingleCycle (stereo);
+        phase.setValue (51, juce::sendNotificationSync);
+        const auto choiceEdit { state () };
+        choose (2);
+        check (! workspace.hasPendingFileOperation () && rawPrompts == beforeRawPrompts && state () == choiceEdit,
+               "A design edited while stereo choice is open cannot be replaced by that stale choice");
+        for (int selection { 1 }; selection <= 3; ++selection)
+        {
+            workspace.importSingleCycle (stereo); choose (selection); answer (true);
+            Settings expected;
+            const auto channel { selection == 1 ? RawCycleImport::StereoChannel::left : selection == 2 ? RawCycleImport::StereoChannel::right : RawCycleImport::StereoChannel::average };
+            check (RawCycleImport::load (stereo, channel, expected).wasOk () && workspace.getSettings ().importedCycle == expected.importedCycle,
+                   "The actual stereo prompt maps Left, Right and Average to the selected production import channel");
+        }
+        mode.setSelectedId (3, juce::sendNotificationSync);
+        control<juce::Slider> (workspace, "design-voices-value").setValue (3, juce::sendNotificationSync);
+        workspace.importSingleCycle (mono); answer (true);
+        check (workspace.getSettings ().mode == Mode::layers && workspace.getSettings ().shape == Shape::imported
+               && workspace.getSettings ().voiceCount == 7 && workspace.getSettings ().importedCycle == expectedMono.importedCycle
+               && workspace.getSettings ().voices[0].detuneCents != workspace.getSettings ().voices[6].detuneCents,
+               "Raw import in Layer Bank keeps bank mode and establishes the default seven-voice spread around the source cycle");
+
+        mode.setSelectedId (1, juce::sendNotificationSync);
+        const auto beforeAssignedPrompts { rawPrompts };
+        workspace.recallAssigned (2, 0);
+        check (rawPrompts == beforeAssignedPrompts + 1 && recipePrompts == 0,
+               "Recall assigned offers raw import when the assigned WAV has no generated recipe");
+        answer (true);
+        check (workspace.getSettings ().shape == Shape::imported && workspace.getSettings ().importedCycle == expectedMono.importedCycle
+               && control<juce::ComboBox> (workspace, "design-target-channel").getSelectedId () == 3
+               && control<juce::ComboBox> (workspace, "design-target-zone").getSelectedId () == 1
+               && live.isEquivalentTo (initialPreset), "Assigned raw import keeps the source destination and does not mutate its preset");
+
+        auto savedDesign { startingPoint (Mode::oscillator, Shape::pulse) };
+        savedDesign.cycleFrames = 128;
+        AssignmentResult generated;
+        check (prepareAssignment (savedDesign, folder, "Strict recipe", initialPreset, 3, 0, generated).wasOk (), "Create actual generated WAV for strict recall regression");
+        live = generated.editedPreset; ++revision;
+        const auto rawBeforeRecipe { rawPrompts };
+        workspace.recallAssigned (3, 0);
+        check (recipePrompts == 1 && rawPrompts == rawBeforeRecipe, "A generated assigned WAV still takes the strict saved-recipe recall path");
+        recallAnswer (false);
+        const auto beforeCorruptRecipe { state () };
+        check (generated.recipe.replaceWithText ("{broken recipe"), "Corrupt only the owned generated-recipe fixture");
+        workspace.recallAssigned (3, 0);
+        check (recipePrompts == 1 && rawPrompts == rawBeforeRecipe && state () == beforeCorruptRecipe && ! workspace.hasPendingFileOperation (),
+               "A present but corrupt generated recipe is rejected instead of silently falling back to raw import");
+        juce::MemoryBlock monoAfter, stereoAfter;
+        check (mono.loadFileAsData (monoAfter) && stereo.loadFileAsData (stereoAfter) && monoAfter == originalMono && stereoAfter == originalStereo
+               && starts == 0 && applications == 0, "All raw import paths preserve source WAV bytes and never start audition or apply a preset");
+        auto doomed { std::make_unique<WaveformWorkspace> () };
+        std::function<void (bool)> lateAnswer;
+        doomed->confirmRawImport = [&] (const juce::String&, std::function<void (bool)> callback) { lateAnswer = std::move (callback); };
+        doomed->importSingleCycle (mono);
+        check (lateAnswer != nullptr, "Destroyed-workspace fixture reaches raw replacement confirmation");
+        doomed.reset (); lateAnswer (true);
+        std::cout << "PASS: raw-cycle workspace import, explicit stereo choice, stale-state guards, source/preset preservation, imported shaping/recipe, bank spread and strict generated recall\n";
+    }
+
     static void assignmentWorkflow ()
     {
         using namespace WaveformDesign;
@@ -298,6 +825,7 @@ struct WaveformWorkspaceTestAccess
         std::function<void (bool)> answer;
         WaveformWorkspace workspace;
         workspace.setSize (1000, 760);
+        check (! workspace.hasPendingFileOperation (), "Visual rendering alone is not a pending file operation");
         check (! control<juce::Button> (workspace, "design-assign").isEnabled (), "Assignment remains unavailable without a shared preset context");
         workspace.onGetAssignmentContext = [&] () -> std::optional<WaveformWorkspace::AssignmentContext>
         {
@@ -329,18 +857,26 @@ struct WaveformWorkspaceTestAccess
         check (live.isEquivalentTo (original), "Changing the package preset number never changes the shared preset");
         target.setSelectedId (2, juce::sendNotificationSync);
         control<juce::Slider> (workspace, "design-phase-value").setValue (79, juce::sendNotificationSync);
-        control<juce::TextEditor> (workspace, "design-name").setText ("Shared design", false);
+        auto& designName { control<juce::TextEditor> (workspace, "design-name") };
+        auto& namePreview { control<juce::Label> (workspace, "design-name-preview") };
+        auto plannedFilename = [&] { return namePreview.getTooltip ().fromFirstOccurrenceOf (": ", false, false).upToFirstOccurrenceOf (".wav", true, false); };
+        designName.setText ("Shared design", false); designName.onTextChange ();
+        const auto approvedFilename { plannedFilename () };
+        const auto approvedId { approvedFilename.dropLastCharacters (7).getLastCharacters (12) };
         const auto recipeBeforeContext { juce::JSON::toString (toJson (workspace.getSettings ())) };
         ++revision;
         workspace.refreshAssignmentContext ();
         check (target.getSelectedId () == 2 && juce::JSON::toString (toJson (workspace.getSettings ())) == recipeBeforeContext,
                "Refreshing an edited preset retains the chosen target and current waveform design");
         click (workspace, "Generate & Assign...");
+        check (workspace.hasPendingFileOperation (), "An open assignment confirmation blocks competing file operations");
         check (prompts == 1 && promptText.contains ("channel 2, zone 1") && promptText.contains ("channel-wide") &&
                promptText.contains ("other zones") && promptText.contains ("CV range") && promptText.contains ("Save"),
                "Assignment confirms the exact destination, channel-wide impact, CV split and unsaved result");
         check (applications == 0 && folder.findChildFiles (juce::File::findFiles, false).isEmpty (), "Confirmation happens before generating files or changing the preset");
         answer (false); answer (true);
+        check (! workspace.hasPendingFileOperation () && plannedFilename () == approvedFilename,
+               "Cancel releases the file-operation guard and keeps the same reserved filename");
         check (applications == 0 && live.isEquivalentTo (original) && folder.findChildFiles (juce::File::findFiles, false).isEmpty (),
                "Canceled assignment is single-use and leaves files and existing unsaved edits untouched");
         click (workspace, "Generate & Assign...");
@@ -349,8 +885,15 @@ struct WaveformWorkspaceTestAccess
         check (applications == 0 && folder.findChildFiles (juce::File::findFiles, false).isEmpty () &&
                control<juce::Label> (workspace, "design-status").getText ().contains ("confirmation"),
                "A stale confirmation is rejected before starting generation");
+        check (! workspace.hasPendingFileOperation () && plannedFilename () == approvedFilename,
+               "A stale confirmation does not consume the filename identifier");
         click (workspace, "Generate & Assign...");
+        designName.setText ("Renamed while confirming", false); designName.onTextChange ();
         answer (true);
+        check (workspace.hasPendingFileOperation (), "The file-operation guard remains active during generation and before apply");
+        designName.setText ("Renamed during generation", false); designName.onTextChange ();
+        check (plannedFilename () == assignmentWaveName (designName.getText (), approvedId, 1),
+               "Typing while generation is pending retains the current identifier without changing the captured request");
         auto waitForAssignment = [&]
         {
             for (auto tick { 0 }; tick < 500; ++tick)
@@ -363,26 +906,31 @@ struct WaveformWorkspaceTestAccess
         };
         waitForAssignment ();
         check (applications == 1 && createdFiles.size () >= 2 && recipe.existsAsFile (), "Worker generates files and recipe before applying its detached preset snapshot");
+        check (! workspace.hasPendingFileOperation () && plannedFilename () != assignmentWaveName (designName.getText (), approvedId, 1),
+               "A successful assignment releases the guard and reserves a new identifier for the next output");
         for (const auto& file : createdFiles) check (file.existsAsFile (), "Successful assignment retains every generated file");
         check (! folder.getChildFile ("prst007.yml").exists () && live.getProperty (PresetProperties::NamePropertyId) == original.getProperty (PresetProperties::NamePropertyId),
                "Assignment preserves an unsaved preset name and never writes its YAML automatically");
         PresetProperties assignedPreset (live, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
         ChannelProperties assignedChannel (assignedPreset.getChannelVT (1), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
         ZoneProperties assignedZone (assignedChannel.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
-        check (assignedZone.getSample ().isNotEmpty () && folder.getChildFile (assignedZone.getSample ()).existsAsFile (),
-               "Assignment maps generated audio into the explicitly selected channel and zone");
+        check (assignedZone.getSample () == approvedFilename && folder.getChildFile (assignedZone.getSample ()).existsAsFile (),
+               "Asynchronous assignment uses exactly the name and identifier previewed when confirmation opened");
         Settings savedDesign;
         check (fromJson (juce::JSON::parse (recipe.loadFileAsString ()), savedDesign).wasOk () && savedDesign.phaseDegrees == 79.0 &&
                juce::JSON::toString (toJson (savedDesign)) == recipeBeforeContext,
                "Saved assignment recipe represents the complete approved design snapshot");
         const auto successfulPreset { live.createCopy () };
         const auto successfulFiles { folder.findChildFiles (juce::File::findFiles, false).size () };
+        const auto retryFilename { plannedFilename () };
         click (workspace, "Generate & Assign...");
         answer (true);
         ++revision; // Change after worker dispatch but before the UI commit.
         waitForAssignment ();
         check (applications == 1 && live.isEquivalentTo (successfulPreset) && folder.findChildFiles (juce::File::findFiles, false).size () == successfulFiles,
                "Post-render stale assignment cleans up only its new files and retains the live preset and prior generation");
+        check (plannedFilename () == retryFilename && ! workspace.hasPendingFileOperation (),
+               "Failed live apply retains the unused reserved filename for retry and releases the guard");
 
         control<juce::ComboBox> (workspace, "design-mode").setSelectedId (3, juce::sendNotificationSync);
         check (! target.isItemEnabled (3) && target.isItemEnabled (1), "A seven-voice bank disables starting channels without room for all voices");
@@ -1367,13 +1915,17 @@ struct WaveformWorkspaceTestAccess
 
 void testWaveformWorkspace ()
 {
+    WaveformWorkspaceTestAccess::namePreviewWorkflow ();
     WaveformWorkspaceTestAccess::testOutputEntry ();
     WaveformWorkspaceTestAccess::presetSaveStatus ();
     WaveformWorkspaceTestAccess::run ();
     WaveformWorkspaceTestAccess::auditionAndExpandedPreview ();
     WaveformWorkspaceTestAccess::rangePauseWorkflow ();
     WaveformWorkspaceTestAccess::layerSpreadWorkflow ();
+    WaveformWorkspaceTestAccess::layerConversionWorkflow ();
     WaveformWorkspaceTestAccess::hardwareTransposeRangeWorkflow ();
     WaveformWorkspaceTestAccess::assignmentWorkflow ();
     WaveformWorkspaceTestAccess::recallWorkflow ();
+    WaveformWorkspaceTestAccess::rawImportWorkflow ();
+    WaveformWorkspaceTestAccess::signalWarningWorkflow ();
 }

@@ -23,12 +23,32 @@ such as Visual Studio. Tests are disabled by default; normal application builds
 are unchanged. The probes were verified on macOS; other platforms have not been
 verified. They do not open an application window or audio device.
 
-CTest registers thirty-six tests, with 60- or 90-second timeouts. Use `ctest --test-dir
+CTest registers 50 tests, with 60-, 90- or 120-second timeouts. Use `ctest --test-dir
 cmake_build -C Debug -V` for detailed output or add `-R ParserCvRegression` /
 `-R StereoSplitRegression` to select one test. Failed checks return a nonzero exit
 code, including in Release builds.
 
 Both test executables use the same required C++20 dialect as the application.
+**AuditionSignalCheckRegression** exercises high-confidence DC/subaudio
+heuristics and normal-audio false-positive cases, channel/range/pitch handling,
+invalid data, and bounded/inconclusive analysis. **AuditionWarningRoutingRegression**
+checks the central Samples transport gate, warning approval reuse, stale/STOP
+rejection and silent waiting. Designer and WaveformAudition probes also check
+the protected monitor signal, preflight confirmation and live-edit interception.
+No test establishes physical speaker safety.
+
+**RawCycleImportRegression** covers bounded PCM/float WAV decoding, stereo
+choices, imported shaping, periodic resampling, DC removal and level retention,
+embedded recipe round-trips, malformed-input rejection and CV/test safeguards.
+**AutoLoopUiRegression** covers external-file import into the current preset,
+stale chooser rejection, default-off and deferred sample-only audition, STOP,
+stereo readiness and CV guards. **WaveformWorkspaceRegression** also exercises
+raw import confirmation, cancellation, stale-context/source rejection and recall.
+It also checks explicit Audio Cycle → Layer Bank conversion: all source shaping
+and imported frames survive, the original cycle and canceled bank are retained,
+audition stops, destination channels refresh, stale/destroyed callbacks are inert,
+and the converted imported bank exports and recalls as seven separate voices.
+
 **HardwareTestOutputRegression** checks the actual isolated test-package exporter:
 built-in audio/CV samples and reference timing, PCM24 readback, purpose tags,
 parsed preset routing and Mix Off, preserved current designs, input rejection and
@@ -43,6 +63,13 @@ EditorRefinementRegression checks the fixed header layout from the minimum
 800-pixel window width through wide layouts, including non-overlapping Audio
 Settings, UI size, Quick help, live output status, appearance and workspace controls. StereoChannelUiRegression
 and EditorRefinementRegression also verify the scope-specific tool-button labels.
+
+**PresetBankExportRegression** covers flat saved-preset collection, explicit
+destination slots, sample and MIDI collisions, generated recipe recall and CV
+safety, cancellation, non-overwriting publication and unchanged source folders.
+**BankExportUiRegression** covers the bank dialog's slot validation, explicit
+folder collection, original-preservation/open-after-export options and lifecycle.
+The global header layout also checks the bank button at compact and wide sizes.
 
 **AppearanceRegression** checks Dark/Light switching, saved-preference migration
 and XML round-trip, text/marker contrast, live label and compact-combo palettes,
@@ -131,17 +158,17 @@ ratios, so this appears to be sensitivity of that measurement to random phase.
 The simulation work retains this assertion and the existing ordinary-audition path.
 
 **SampleLoopSimulationRegression** renders the real AudioPlayer offline. Exact
-stereo frame checks cover loops inside the sample, overlapping Sample End and
-beyond Sample End (including every frame in the intervening gap). It verifies
+stereo frame checks cover loops entirely inside the sample, shared boundaries,
+and implicit full-sample loops. Out-of-sample loops are rejected. It verifies
 sample-to-loop phase changes against the audible cursor rather than resampler
 read-ahead, repeated wraps, output subregions, STOP, and returning to ordinary
-audition. Additional cases cover overlapping Sample Start, equal boundaries,
-unreachable/invalid loops, source-rate conversion, 0.0625x–4x audition,
+audition. Additional cases cover equal boundaries, invalid/undersized loops,
+source-rate conversion, 0.0625x–4x audition,
 Keep pitch, zone transposition, live marker/rate edits, CV blocking and source
 changes. Phase/selection notifications must stay off the audio thread.
 
 **SimulationUiRegression** drives actual ZoneEditor controls and their
-ChannelEditor/waveform wiring. It checks SAMPLE/ONCE STOP during the gap,
+ChannelEditor/waveform wiring. It checks SAMPLE/ONCE STOP during the intro,
 LOOP/LOOP STOP after entry, both stop buttons, the queued-phase handoff race,
 immediate retrigger state, source isolation, CV/stereo/missing-audio guards,
 expanded waveform continuity and unchanged preset data. Deferred display
@@ -187,13 +214,36 @@ selection callbacks, Option/Alt movement inside regions and on handles, overlap
 selection, outside-region rejection, zoom reset/jumps, right-click versus drag,
 expanded zone switching, inactive-area dimming, disabled editing and collision-free
 label placement in compact/expanded sizes. Menu checks include exact separator
-placement. Loop-extension checks cover the always-visible bridge in No Loop,
-Loop and Loop/Release, fractional ends, the pre-loop bridge, diagonal band pixels,
-uniform off-region dimming, zoom clipping, zone/source changes and audition-selection
-independence. Optional artifacts are `waveform-compact.png`, `waveform-expanded.png`
-and `waveform-loop-extension.png`, plus `waveform-bridge-compact.png` and
-`waveform-bridge-expanded.png` for the bridge with No Loop saved. It does not launch the user's
+placement. Post-loop tail checks cover Loop and Loop/Release, the absence of
+stripes in No Loop, fractional ends, diagonal band pixels, uniform off-region
+dimming, zoom clipping, zone/source changes and active sample-to-loop simulation.
+Optional artifacts show the regular and expanded waveform views. It does not launch the user's
 application or change their presets/preferences.
+
+**ZoneSampleRangesRegression** exercises automatic loops, explicit loop pushing
+in both Length/End modes, four-frame minima, fractional lengths, all editing
+directions, and shared model/UI constraints. **PresetLoopRangeRegression** tests
+hardware-facing automatic-loop values, editor save/reload defaults, external
+marker edits taking precedence over editor comments, and the real preset-load
+path preserving external loops and enabling their channel override, versus
+resetting physically invalid/sub-four-frame loops, with a notice and dirty
+baseline, never an automatic disk write. The channel option persists in an
+editor-only YAML comment and defaults off. Copy/Continue full-file fit and 100% vertical zoom are covered by the
+stereo-channel UI tests.
+
+Advanced-loop checks cover independent marker motion, direct LOOP audition,
+four-frame limits, stripe suppression and the distinction from static forward
+simulation (external CV is not emulated). Name previews cover the six-character
+Select window and the Channels display's first 10 characters plus `...` and
+last two for long names, without `.wav`, as well as typing/recall and compact UI
+layouts. Preset-folder tests cover new `Pnn` names and saving existing `PRnn` or
+`A8 Preset nn` folders in place without renaming or nesting them.
+
+Manual hardware loading check: if opening a `P02 - ...` folder initially shows
+`001 ~empty~`, select `002` to load its `prst002.yml`. A missing preset 001 is
+not an export failure and does not require renumbering or re-exporting; the
+automated export tests verify the requested preset number, not the module's
+initial slot selection.
 
 **EditorRefinementRegression** checks quieter-side and exact-zero nudges,
 exclusive end markers, bounds and stereo-side selection. Boundary-matching checks

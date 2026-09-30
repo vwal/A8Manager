@@ -11,6 +11,17 @@ void AudioPlayerProperties::initValueTree ()
     setAuditionRate (1.0, false);
     setPreservePitch (true, false);
     setOutputDeviceName ({}, false);
+    setAutoLoopEnabled (false, false);
+}
+
+void AudioPlayerProperties::setAutoLoopEnabled (bool enabled, bool includeSelfCallback)
+{
+    setValue (enabled, AutoLoopEnabledPropertyId, includeSelfCallback);
+}
+
+bool AudioPlayerProperties::getAutoLoopEnabled ()
+{
+    return data.hasProperty (AutoLoopEnabledPropertyId) && getValue<bool> (AutoLoopEnabledPropertyId);
 }
 
 void AudioPlayerProperties::setOutputDeviceName (const juce::String& name, bool includeSelfCallback)
@@ -107,7 +118,12 @@ void AudioPlayerProperties::valueTreePropertyChanged (juce::ValueTree& treeWhose
 {
     if (treeWhosePropertyHasChanged == data)
     {
-        if (property == OutputDeviceNamePropertyId)
+        if (property == AutoLoopEnabledPropertyId)
+        {
+            if (onAutoLoopEnabledChange != nullptr)
+                onAutoLoopEnabledChange (getAutoLoopEnabled ());
+        }
+        else if (property == OutputDeviceNamePropertyId)
         {
             if (onOutputDeviceNameChange != nullptr)
                 onOutputDeviceNameChange (getOutputDeviceName ());

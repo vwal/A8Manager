@@ -47,6 +47,7 @@ struct WaveformAuditionRoutingTestAccess
         player.sampleRateRatio = 1.0;
         player.sampleStart = 0;
         player.sampleLength = 4096;
+        player.selectedSourceLength = 4096.0;
         player.sampleBuffer = std::make_unique<juce::AudioBuffer<float>> (2, 4096);
         for (int frame { 0 }; frame < 4096; ++frame)
         {

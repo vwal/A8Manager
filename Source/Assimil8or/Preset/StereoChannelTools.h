@@ -6,6 +6,21 @@
 
 namespace StereoChannelTools
 {
+    // Settings-only operations retain the destination's zone ranges, so retain
+    // the editor permission that makes those ranges editable as well. Patch a
+    // detached source first: restoring the flag afterward would briefly notify
+    // observers that still-existing external loops had become disallowed.
+    inline bool copySettingsPreservingLoopPermission (juce::ValueTree channelTree, juce::ValueTree source)
+    {
+        if (! ChannelProperties::isChannelPropertiesVT (channelTree) || ! ChannelProperties::isChannelPropertiesVT (source)) return false;
+        ChannelProperties channel (channelTree, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        const auto settings { source.createCopy () };
+        ChannelProperties (settings, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no)
+            .setAllowLoopOutsideSample (channel.getAllowLoopOutsideSample (), false);
+        channel.copyFrom (settings);
+        return true;
+    }
+
     // Resolve in either direction, but never treat channel 1 in Stereo Right
     // mode, or two consecutive Stereo Right channels, as a valid pair.
     inline juce::ValueTree partner (juce::ValueTree channelTree)
@@ -29,23 +44,22 @@ namespace StereoChannelTools
         ChannelProperties channel (channelTree, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
         if (partnerTree.isValid ())
         {
-            ChannelProperties pairedChannel (partnerTree, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
             // Default deliberately unlinks the pair, resetting both channels to
             // Master. copyFrom copies only channel settings, never IDs or zones.
             // Reset the right side first so callbacks never see an orphaned R.
             if (channel.getChannelMode () == ChannelProperties::ChannelMode::stereoRight)
             {
-                channel.copyFrom (defaults);
-                pairedChannel.copyFrom (defaults);
+                copySettingsPreservingLoopPermission (channelTree, defaults);
+                copySettingsPreservingLoopPermission (partnerTree, defaults);
             }
             else
             {
-                pairedChannel.copyFrom (defaults);
-                channel.copyFrom (defaults);
+                copySettingsPreservingLoopPermission (partnerTree, defaults);
+                copySettingsPreservingLoopPermission (channelTree, defaults);
             }
         }
         else
-            channel.copyFrom (defaults);
+            copySettingsPreservingLoopPermission (channelTree, defaults);
         return true;
     }
 

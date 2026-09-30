@@ -21,13 +21,21 @@ void testStereoAssignment ();
 void testStereoCollapse ();
 void testSampleRename ();
 void testSampleRenameUi ();
+void testZoneSampleRanges ();
+void testPresetLoopRanges ();
 void testStereoCollapseUi ();
 void testStereoChannelUi ();
 void testPairedZoneEdits ();
 void testWaveformDesign ();
+void testRawCycleImport ();
+void testAutoLoopUi ();
+void testAuditionSignalCheck ();
+void testAuditionWarningRouting ();
 void testWaveformDesignExport ();
 void testWaveformDesignAssignment ();
 void testPresetFolderCopy ();
+void testPresetBankExport ();
+void testBankExportUi ();
 void testSharedPresetSession ();
 void testChannelCvSafety ();
 void testGeneratedSidecarValidator ();
@@ -155,12 +163,16 @@ int main (int argc, char* argv[])
         if (argc == 2 && juce::String (argv[1]) == "--stereo-collapse") { testStereoCollapse (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--sample-rename") { testSampleRename (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--sample-rename-ui") { testSampleRenameUi (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--zone-sample-ranges") { testZoneSampleRanges (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--preset-loop-ranges") { testPresetLoopRanges (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--stereo-collapse-ui") { testStereoCollapseUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--generated-sidecar-validator") { testGeneratedSidecarValidator (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--waveform-design-recall") { testWaveformDesignRecall (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--shared-preset-session") { testSharedPresetSession (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--waveform-design-assignment") { testWaveformDesignAssignment (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--preset-folder-copy") { testPresetFolderCopy (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--preset-bank-export") { testPresetBankExport (); return 0; }
+        if (argc == 2 && juce::String (argv[1]) == "--bank-export-ui") { testBankExportUi (); return 0; }
         if (argc == 2 && juce::String (argv[1]) == "--channel-cv-safety") { testChannelCvSafety (); return 0; }
         if (argc == 2 && juce::String (argv [1]) == "--stereo-channel-ui")
         {
@@ -188,6 +200,10 @@ int main (int argc, char* argv[])
             return 0;
         }
         if (argc == 2 && juce::String (argv [1]) == "--waveform-design") { testWaveformDesign (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--raw-cycle-import") { testRawCycleImport (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--auto-loop-ui") { testAutoLoopUi (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--audition-signal-check") { testAuditionSignalCheck (); return 0; }
+        if (argc == 2 && juce::String (argv [1]) == "--audition-warning-routing") { testAuditionWarningRouting (); return 0; }
         if (argc == 2 && juce::String (argv [1]) == "--waveform-design-export") { testWaveformDesignExport (); return 0; }
         if (argc == 2 && juce::String (argv [1]) == "--waveform-workspace") { testWaveformWorkspace (); return 0; }
         if (argc == 2 && juce::String (argv [1]) == "--waveform-duration") { testWaveformDuration (); return 0; }

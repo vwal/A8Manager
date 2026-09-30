@@ -18,7 +18,7 @@ namespace
             const auto layout { WorkspaceHeaderLayout::forWidth (width) };
             const juce::Rectangle<int> header { 0, 0, width, layout.height };
             const juce::Rectangle<int> title { 16, 5, 250, 40 };
-            const std::array<juce::Rectangle<int>, 9> controls { layout.samples, layout.designer, layout.scaleLabel,
+            const std::array<juce::Rectangle<int>, 10> controls { layout.samples, layout.designer, layout.bankExport, layout.scaleLabel,
                 layout.scaleSelector, layout.audioSettings, layout.help, layout.outputDevice, layout.appearanceLabel, layout.appearanceSelector };
             for (size_t i { 0 }; i < controls.size (); ++i)
             {
@@ -31,8 +31,10 @@ namespace
                    "Audio Settings stays between UI size and Quick help");
             check (layout.audioSettings.getWidth () >= 132 && layout.audioSettings.getHeight () >= 32,
                    "Audio Settings retains a readable, clickable size");
-            check (layout.height == 92 && layout.outputDevice.getWidth () >= 280,
-                   "Output device and appearance remain readable on a second fixed header row at minimum width");
+            check (layout.height == (width < 1000 ? 132 : 92) && layout.outputDevice.getWidth () >= 280,
+                   "Output device uses an extra row on compact screens rather than being crowded by bank export");
+            check (layout.bankExport.getWidth () >= 158 && layout.bankExport.getHeight () >= 32,
+                   "Save/Export Bank remains readable and outside the scrolling workspace");
         }
     }
     void testRename ()
@@ -351,6 +353,18 @@ struct ZoneEditorTestAccess
         check (editor.sampleDurationLabel.getText () == "SAMPLE 0:00.125" && editor.loopDurationLabel.getText () == "LOOP 0:00.025", "Zone panel lengths include channel pitch as well as zone pitch offset");
         editor.parentChannelProperties.setPitch (0.0, false);
         editor.updateDurations ();
+        editor.parentChannelProperties.setAllowLoopOutsideSample (true, false);
+        editor.loopStartUiChanged (40000);
+        check (editor.zoneProperties.getLoopStart () == 40000 && editor.zoneProperties.getLoopLength () == 4800.0 &&
+               editor.loopDurationLabel.getText () == "LOOP 0:00.050" && ! editor.canStartSampleIntoLoop (),
+               "Independent numeric loop editing and preview duration allow external loops while forward simulation remains unavailable");
+        editor.sampleEndUiChanged (10000);
+        check (editor.zoneProperties.getSampleEnd () == 10000 && editor.zoneProperties.getLoopStart () == 40000,
+               "Independent numeric SAMPLE edits leave explicit loop markers alone");
+        editor.zoneProperties.setSampleEnd (28800, false);
+        editor.zoneProperties.setLoopStart (9600, false);
+        editor.parentChannelProperties.setAllowLoopOutsideSample (false, false);
+        editor.updateSamplePositionInfo ();
         using Selector = AudioPlayerProperties::SamplePointsSelector;
         editor.audioPlayerProperties.setSamplePointsSelector (Selector::LoopPoints, false); // another zone's last choice
         // This detached fixture bypasses init() and its sample-status callback.
@@ -370,6 +384,35 @@ struct ZoneEditorTestAccess
         check (editor.audioPlayerProperties.getSamplePointsSelector () == Selector::LoopPoints, "Looping restores this zone's LOOP choice");
         editor.loopPlayButton.onClick ();
         editor.setSize (182, 520);
+        const juce::String longFilename { "abcdefghijklmnopqr-st-02.wav" };
+        editor.sampleDataChanged (longFilename);
+        auto& filename { editor.sampleNameSelectLabel.textEditor () };
+        check (filename.isReadOnly () && ! filename.isMultiLine () && ! filename.isPopupMenuEnabled () && filename.getText () == longFilename,
+               "FILE keeps the complete filename in a selectable read-only single-line field with no competing edit popup");
+        check (filename.getJustificationType () == juce::Justification::centredLeft &&
+               editor.sampleNameSelectLabel.getY () == editor.sampleNameLabel.getY () &&
+               editor.sampleNameSelectLabel.getHeight () == editor.sampleNameLabel.getHeight (),
+               "Scrollable filename text is vertically centered alongside FILE instead of pinned to the field's top");
+        check (editor.sampleNameSelectLabel.getFont ().getHeight () < editor.sampleNameLabel.getFont ().getHeight () &&
+               editor.a8SelectNameLabel.getText () == "A8 Select: abcdef" &&
+               editor.a8ChannelNameLabel.getText () == "A8 Channels: abcdefghij...02",
+               "Smaller FILE text and both hardware-name previews update immediately without changing the filename");
+        filename.keyPressed (juce::KeyPress (juce::KeyPress::endKey));
+        check (filename.getCaretPosition () == longFilename.length (), "End navigates to the complete filename suffix instead of a clipped label");
+        filename.keyPressed (juce::KeyPress (juce::KeyPress::homeKey));
+        check (filename.getCaretPosition () == 0, "Home navigates back to the filename prefix");
+        filename.keyPressed (juce::KeyPress (juce::KeyPress::rightKey));
+        check (filename.getCaretPosition () == 1, "Arrow navigation remains available in the read-only filename");
+        filename.setHighlightedRegion ({ 0, longFilename.length () });
+        check (filename.getHighlightedText () == longFilename, "The complete filename can be selected for copy");
+        filename.keyPressed (juce::KeyPress ('x'));
+        check (filename.getText () == longFilename && editor.sampleNameSelectLabel.onFilesSelected && editor.sampleNameSelectLabel.onPopupMenuCallback,
+               "Typing never renames the read-only sample; chooser and rename context actions remain connected");
+        filename.setHighlightedRegion ({ 0, 0 });
+        filename.setCaretPosition (0);
+        check (editor.a8ChannelNameLabel.getBottom () < editor.sampleStartLabel.getY () &&
+               ! editor.sampleNameSelectLabel.getBounds ().intersects (editor.a8SelectNameLabel.getBounds ()),
+               "Hardware-name hints have dedicated rows above the numeric markers");
         check (editor.sampleStartTextEditor.getFont ().getTypefaceName () == juce::Font::getDefaultMonospacedFontName () &&
                editor.sampleEndTextEditor.getFont ().getTypefaceName () == juce::Font::getDefaultMonospacedFontName () &&
                editor.loopStartTextEditor.getFont ().getTypefaceName () == juce::Font::getDefaultMonospacedFontName () &&
@@ -402,6 +445,9 @@ struct ZoneEditorTestAccess
                 out->truncate ();
             };
             save (panel, "zone-refinements.png");
+            filename.keyPressed (juce::KeyPress (juce::KeyPress::endKey));
+            save (panel, "zone-filename-scrolled-end.png");
+            filename.keyPressed (juce::KeyPress (juce::KeyPress::homeKey));
             save (envelope, "envelope-refinements.png");
             Theme::setAppearance (true);
             Theme::refreshComponentTree (panel);

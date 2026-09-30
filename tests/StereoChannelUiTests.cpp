@@ -1,5 +1,6 @@
 #include "GUI/Assimil8or/Editor/Assimil8orEditorComponent.h"
 #include "Assimil8or/Preset/StereoChannelTools.h"
+#include "Assimil8or/Preset/PairedZoneEdits.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/PresetManagerProperties.h"
 #include "Assimil8or/Audio/WaveformDesignAssignment.h"
@@ -36,12 +37,62 @@ namespace
         for (int zone { 0 }; zone < actual.getNumChildren (); ++zone)
             check (actual.getChild (zone).isEquivalentTo (before.getChild (zone)), "Channel reset never changes sample/zone data or IDs");
     }
+
+    void checkSettingsOnlyLoopPermission ()
+    {
+        const auto defaults { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ()
+            .getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType) };
+        auto tree { defaults.createCopy () };
+        ChannelProperties left (tree.getChild (0), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
+        ChannelProperties right (tree.getChild (1), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
+        left.setAllowLoopOutsideSample (true, false);
+        right.setAllowLoopOutsideSample (true, false);
+        for (int index { 0 }; index < 2; ++index)
+        {
+            ZoneProperties zone (tree.getChild (index).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            zone.setSample ("external-loop.wav", false);
+            zone.setSampleStart (8, false); zone.setSampleEnd (24, false);
+            zone.setLoopStart (40, false); zone.setLoopLength (8.5, false);
+        }
+        int permissionChanges { 0 };
+        left.onAllowLoopOutsideSampleChange = [&] (bool) { ++permissionChanges; };
+        right.onAllowLoopOutsideSampleChange = [&] (bool) { ++permissionChanges; };
+        const auto untouched { tree.createCopy () };
+        check (StereoChannelTools::copySettingsPreservingLoopPermission (left.getValueTree (), defaults.getChild (0)), "Copy settings-only fixture");
+        check (left.getAllowLoopOutsideSample () && permissionChanges == 0,
+               "Settings-only copies retain external-loop permission without a transient false notification");
+        checkZonesUnchanged (left.getValueTree (), untouched.getChild (0));
+        for (const int origin : { 0, 1 })
+        {
+            right.setChannelMode (ChannelProperties::stereoRight, false);
+            check (StereoChannelTools::resetSettings (tree.getChild (origin), defaults.getChild (0)), "Reset pair settings from either side");
+            check (left.getAllowLoopOutsideSample () && right.getAllowLoopOutsideSample () && permissionChanges == 0,
+                   "Pair Default retains each side's permission for retained external loop zones");
+            for (int index { 0 }; index < 2; ++index) checkZonesUnchanged (tree.getChild (index), untouched.getChild (index));
+        }
+        right.setChannelMode (ChannelProperties::stereoRight, false);
+        const auto restore { tree.createCopy () };
+        check (StereoChannelTools::purge (left.getValueTree (), defaults.getChild (0)), "Full pair purge fixture");
+        check (! left.getAllowLoopOutsideSample () && ! right.getAllowLoopOutsideSample ()
+               && ZoneProperties (left.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no).getSample ().isEmpty (),
+               "Full-content purge resets permission along with the removed zone content");
+        PresetProperties::copyTreeProperties (restore, tree);
+        check (left.getAllowLoopOutsideSample () && right.getAllowLoopOutsideSample (),
+               "Full-preset restore transfers the saved permission along with its zone content");
+        for (int index { 0 }; index < 2; ++index) checkZonesUnchanged (tree.getChild (index), restore.getChild (index));
+        // An enabled source must not enable an unrelated destination when its
+        // zones are not copied (the inverse settings-only direction).
+        ChannelProperties independent (tree.getChild (2), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        check (StereoChannelTools::copySettingsPreservingLoopPermission (independent.getValueTree (), left.getValueTree ())
+               && ! independent.getAllowLoopOutsideSample (), "Settings-only copies do not inherit another channel's editing permission");
+    }
 }
 
 struct StereoChannelUiTestAccess
 {
     static void run ()
     {
+        checkSettingsOnlyLoopPermission ();
         // Use the real, fully initialized parent and all 64 zone editors, but
         // in-memory properties/audio plus owned recall files: no device,
         // scanner or persisted user preferences.
@@ -117,6 +168,78 @@ struct StereoChannelUiTestAccess
         checkTools (*editor, "presetTools", "Preset tools", 100);
         checkTools (left, "channelTools", "Channel tools", 108);
 
+        check (! left.allowLoopOutsideSampleButton.getToggleState () && ! right.allowLoopOutsideSampleButton.isEnabled () &&
+               left.allowLoopOutsideSampleButton.getY () > left.xfadeGroupComboBox.getBottom (),
+               "Independent-loop checkbox defaults off below XFADE and remains read-only on the stereo right");
+        const auto beforeIndependent { tree.createCopy () };
+        const auto originalConfirmation { left.confirmOutsideLoopReset };
+        left.allowLoopOutsideSampleUiChanged (true);
+        check (leftProperties.getAllowLoopOutsideSample () && rightProperties.getAllowLoopOutsideSample () &&
+               left.allowLoopOutsideSampleButton.getToggleState () && right.allowLoopOutsideSampleButton.getToggleState (),
+               "Enabling independent loops synchronizes both stereo flags and checkbox displays");
+        right.allowLoopOutsideSampleUiChanged (false);
+        check (rightProperties.getAllowLoopOutsideSample (), "Read-only stereo right cannot disable the shared option independently");
+        for (const auto channelIndex : { 0, 1 })
+        {
+            ZoneProperties outside (tree.getChild (channelIndex).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            outside.setLoopStart (950, false);
+            outside.setLoopLength (40.5, false);
+        }
+        std::function<void (bool)> outsideAnswer;
+        int outsidePrompts { 0 };
+        left.confirmOutsideLoopReset = [&] (juce::String message, std::function<void (bool)> answer)
+        {
+            ++outsidePrompts;
+            check (message.contains ("2 zone(s)") && message.contains ("stereo"), "Confirmation identifies external loops on both stereo sides");
+            outsideAnswer = std::move (answer);
+        };
+        const auto externalBefore { tree.createCopy () };
+        if (const auto path { juce::SystemStats::getEnvironmentVariable ("A8MANAGER_TEST_ARTIFACTS", {}) }; path.isNotEmpty ())
+        {
+            juce::File directory { path };
+            check (directory.createDirectory ().wasOk (), "Create independent-loop UI artifact directory");
+            auto stream { directory.getChildFile ("channel-independent-loop.png").createOutputStream () };
+            check (stream != nullptr && stream->setPosition (0) &&
+                   juce::PNGImageFormat ().writeImageToStream (left.createComponentSnapshot (left.getLocalBounds (), true, 1.5f), *stream) &&
+                   stream->truncate ().wasOk (), "Render checkbox placement and unstriped external loop in the actual channel editor");
+        }
+        left.allowLoopOutsideSampleUiChanged (false);
+        check (outsidePrompts == 1 && tree.isEquivalentTo (externalBefore) && left.allowLoopOutsideSampleButton.getToggleState (),
+               "Turning independent loops off waits for approval while displaying the still-enabled option");
+        outsideAnswer (false);
+        check (tree.isEquivalentTo (externalBefore), "Cancel preserves both independent-loop flags and exact boundaries");
+        left.allowLoopOutsideSampleUiChanged (false);
+        outsideAnswer (true);
+        check (! leftProperties.getAllowLoopOutsideSample () && ! rightProperties.getAllowLoopOutsideSample (),
+               "Approval turns off independent editing for both stereo companions");
+        for (const auto channelIndex : { 0, 1 })
+        {
+            ZoneProperties reset (tree.getChild (channelIndex).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            check (! reset.getLoopStart () && ! reset.getLoopLength () && reset.getSampleStart () == 100 && reset.getSampleEnd () == 900,
+                   "Approved reset removes only the external loop overrides and retains the selected SAMPLE");
+        }
+        left.confirmOutsideLoopReset = originalConfirmation;
+        PresetProperties::copyTreeProperties (beforeIndependent, tree);
+        for (const auto permissionSide : { 0, 1 })
+        {
+            right.channelModeUiChanged (ChannelProperties::ChannelMode::master);
+            leftProperties.setAllowLoopOutsideSample (false, true);
+            rightProperties.setAllowLoopOutsideSample (false, true);
+            editor->channelProperties[permissionSide].setAllowLoopOutsideSample (true, true);
+            right.channelModeUiChanged (ChannelProperties::ChannelMode::stereoRight);
+            check (leftProperties.getAllowLoopOutsideSample () && rightProperties.getAllowLoopOutsideSample (),
+                   "Manually forming a stereo pair union-enables independent looping from either existing channel");
+            right.channelModeUiChanged (ChannelProperties::ChannelMode::master);
+            check (leftProperties.getAllowLoopOutsideSample () && rightProperties.getAllowLoopOutsideSample (),
+                   "Unpairing retains each channel's loop permission");
+        }
+        left.channelModeUiChanged (ChannelProperties::ChannelMode::stereoRight);
+        leftProperties.setAllowLoopOutsideSample (false, true);
+        right.channelModeUiChanged (ChannelProperties::ChannelMode::stereoRight);
+        check (! leftProperties.getAllowLoopOutsideSample () && rightProperties.getAllowLoopOutsideSample (),
+               "Invalid consecutive stereo-right channels do not propagate loop permission");
+        PresetProperties::copyTreeProperties (beforeIndependent, tree);
+
         editor->channelTabs.setCurrentTabIndex (0);
         check (std::abs (editor->getSelectedDuration (0).value_or (-1.0) - 1024.0 / 48000.0) < 1.0e-9,
                "Designer gets the loaded file duration through the real editor");
@@ -137,6 +260,117 @@ struct StereoChannelUiTestAccess
         check (editor->isChannelActive (0) && editor->channelTabs.getTabNames ()[0] == "CH 1-L",
                "A channel with an empty first zone retains its active stereo label when later zones have content");
         firstZone.setSample ("stereo-ui-fixture.wav", false);
+
+        // Copy/Continue select the new zone without retaining the old slice's
+        // zoom. Keep the expanded viewer itself open across either operation.
+        const auto beforeCopyNext { tree.createCopy () };
+        for (const auto continueSlice : { false, true })
+        {
+            PresetProperties::copyTreeProperties (beforeCopyNext, tree);
+            left.zoneTabs.setCurrentTabIndex (0);
+            ZoneProperties source (leftProperties.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            source.setSampleEnd (400, false);
+            source.setLoopLength (100.5, false);
+            for (auto channelIndex : { 0, 1 })
+                ZoneProperties (tree.getChild (channelIndex).getChild (1), ZoneProperties::WrapperType::client,
+                                ZoneProperties::EnableCallbacks::no).setSample ("", false);
+            if (! left.waveformExpanded) left.sampleWaveformDisplay.onExpandRequested ();
+            left.sampleWaveformDisplay.waveform.setVisibleRange (150, 80);
+            left.sampleWaveformDisplay.waveform.setVerticalZoom (4.0f);
+            left.copyToNextZone (0, continueSlice);
+            auto& waveform { left.sampleWaveformDisplay.waveform };
+            check (left.getSelectedZoneIndex () == 1 && right.getSelectedZoneIndex () == 1 && left.waveformExpanded,
+                   "Copy and Continue select both stereo companions while preserving the expanded viewer");
+            check (waveform.getVerticalZoom () == 1.0f && std::abs (waveform.xToSample (0)) < 0.01 &&
+                   std::abs (waveform.getSamplesPerPixel () * waveform.getWidth () - audio.getNumSamples ()) < 0.01,
+                   "Copy and Continue both reset the new zone to full-file Fit and 100 percent vertical zoom");
+        }
+        PresetProperties::copyTreeProperties (beforeCopyNext, tree);
+        if (left.waveformExpanded) left.sampleWaveformDisplay.onExpandRequested ();
+        left.zoneTabs.setCurrentTabIndex (0);
+
+        {
+            const auto beforePaste { tree.createCopy () };
+            const auto oldFolder { preferences.getMostRecentFolder () };
+            const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-zone-paste-ranges", "", false) };
+            check (folder.createDirectory ().wasOk (), "Create owned clipboard range fixture");
+            struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+            juce::AudioBuffer<float> shortAudio (2, 800);
+            shortAudio.clear ();
+            check (WaveformDesign::ExportSupport::writeWave (folder.getChildFile ("stereo-ui-fixture.wav"), audio, 48000.0, false).wasOk () &&
+                   WaveformDesign::ExportSupport::writeWave (folder.getChildFile ("short-right.wav"), shortAudio, 48000.0, false).wasOk () &&
+                   WaveformDesign::ExportSupport::writeWave (folder.getChildFile ("cv-paste.wav"), audio, 48000.0, true).wasOk (),
+                   "Write genuine audio and tagged CV files for clipboard validation");
+            preferences.setMostRecentFolder (folder.getFullPathName ());
+            ZoneProperties rightTarget (rightProperties.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            rightTarget.setSample ("short-right.wav", false);
+            SampleProperties rightLoaded (samples.getSamplePropertiesVT (1, 0), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+            rightLoaded.setLengthInSamples (800, false);
+            auto longSource { firstZone.getValueTree ().createCopy () };
+            ZoneProperties copied (longSource, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            copied.setSampleStart (500, false);
+            copied.setSampleEnd (2000, false);
+            copied.setLoopStart (800, false);
+            copied.setLoopLength (600, false);
+            auto clipboard { ZoneProperties::create (1) };
+            PairedZoneEdits::capture (clipboard, longSource, longSource, true);
+            juce::ValueTree prepared;
+            juce::StringArray repaired;
+            const auto liveBefore { tree.createCopy () };
+            const auto playBefore { audition.getValueTree ().createCopy () };
+            check (left.prepareZonePaste (0, clipboard, prepared, repaired).wasOk () && repaired.size () == 2,
+                   "Settings-only paste identifies repairs independently for both stereo target WAV lengths");
+            for (const auto side : { 0, 1 })
+            {
+                ZoneProperties staged (prepared.getChild (side).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                const auto range { ZoneSampleRanges::resolve (ZoneSampleRanges::read (staged), side == 0 ? 1024 : 800) };
+                check (range.loopValid && range.implicitLoop && range.sampleStart == 500 && range.sampleEnd == (side == 0 ? 1024 : 800),
+                       "Pasted invalid loops reset to the repaired SAMPLE on each side instead of retaining out-of-file markers");
+            }
+            check (tree.isEquivalentTo (liveBefore) && audition.getValueTree ().isEquivalentTo (playBefore),
+                   "Staged clipboard repair does not mutate either live stereo channel or playback");
+            copied.setSample ("missing-paste.wav", false);
+            copied.setSampleStart (64, false);
+            copied.setSampleEnd (128, false);
+            copied.setLoopStart (200, false);
+            copied.setLoopLength (24.25, false);
+            PairedZoneEdits::capture (clipboard, longSource, longSource, false);
+            check (left.prepareZonePaste (0, clipboard, prepared, repaired).failed () && repaired.isEmpty () &&
+                   tree.isEquivalentTo (liveBefore) && audition.getValueTree ().isEquivalentTo (playBefore),
+                   "Unavailable WAV rejects paste without guessing EOF, resetting loop markers, or mutating playback/data");
+            for (const auto side : { 0, 1 })
+            {
+                ZoneProperties staged (prepared.getChild (side).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                check (staged.getSampleStart () == 64 && staged.getSampleEnd () == 128 && staged.getLoopStart () == 200 && staged.getLoopLength () == 24.25,
+                       "Missing WAV staging preserves external-loop coordinates; Sample End is not treated as file EOF");
+            }
+            copied.setSample ("cv-paste.wav", false);
+            copied.setSampleStart (500, false);
+            copied.setSampleEnd (2000, false);
+            copied.setLoopStart (800, false);
+            copied.setLoopLength (600, false);
+            PairedZoneEdits::capture (clipboard, longSource, longSource, false);
+            check (left.prepareZonePaste (0, clipboard, prepared, repaired).failed () && tree.isEquivalentTo (liveBefore) &&
+                   audition.getValueTree ().isEquivalentTo (playBefore),
+                   "A rejected CV-to-audio paste leaves data and playback unchanged even when range repair was needed");
+            copied.setSampleStart (200, false);
+            copied.setSampleEnd (700, false);
+            copied.setLoopStart (300, false);
+            copied.setLoopLength (100.5, false);
+            PairedZoneEdits::capture (clipboard, longSource, longSource, true);
+            left.copyBufferZoneProperties.getValueTree ().copyPropertiesAndChildrenFrom (clipboard, nullptr);
+            left.pasteZone (0);
+            for (const auto side : { 0, 1 })
+            {
+                ZoneProperties pasted (tree.getChild (side).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                check (pasted.getSampleStart () == 200 && pasted.getSampleEnd () == 700 && pasted.getLoopLength () == 100.5,
+                       "Validated settings-only paste applies the staged ranges to both stereo sides");
+            }
+            check (rightTarget.getSample () == "short-right.wav", "Settings-only paste retains each target sample assignment");
+            PresetProperties::copyTreeProperties (beforePaste, tree);
+            rightLoaded.setLengthInSamples (1024, false);
+            preferences.setMostRecentFolder (oldFolder);
+        }
 
         std::function<void ()> disposedRecall;
         {
@@ -353,11 +587,14 @@ struct StereoChannelUiTestAccess
             rightProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, true);
             leftProperties.setPitch (7.5, true);
             rightProperties.setPan (-0.8, true);
+            leftProperties.setAllowLoopOutsideSample (true, true);
+            rightProperties.setAllowLoopOutsideSample (true, true);
             const auto before { tree.createCopy () };
             menuAction (editor->createChannelToolsMenu (origin), "Default (both channels)") ();
             check (leftProperties.getChannelMode () == ChannelProperties::ChannelMode::master && rightProperties.getChannelMode () == ChannelProperties::ChannelMode::master,
                    "Default from either stereo side resets both modes without orphaning R");
             check (leftProperties.getPitch () == editor->defaultChannelProperties.getPitch () && rightProperties.getPan () == editor->defaultChannelProperties.getPan (), "Default resets both channel parameter sets");
+            check (leftProperties.getAllowLoopOutsideSample () && rightProperties.getAllowLoopOutsideSample (), "Actual pair Default retains the zone-associated loop permission");
             for (int c { 0 }; c < 2; ++c) checkZonesUnchanged (tree.getChild (c), before.getChild (c));
             for (int c { 2 }; c < 8; ++c) check (tree.getChild (c).isEquivalentTo (before.getChild (c)), "Pair Default does not change unrelated channels");
         }
@@ -370,9 +607,11 @@ struct StereoChannelUiTestAccess
         auto& independent { editor->channelProperties[2] };
         independent.setPan (0.9, true);
         independent.setPitch (-7.0, true);
+        independent.setAllowLoopOutsideSample (true, true);
         const auto beforeRevert { independent.getValueTree ().createCopy () };
         menuAction (editor->createChannelToolsMenu (2), "Revert") ();
         check (independent.getPan () == savedChannel.getPan () && independent.getPitch () == savedChannel.getPitch (), "Channel Revert reads the matching saved CHANNEL, not the whole preset");
+        check (independent.getAllowLoopOutsideSample (), "Actual settings-only Revert preserves current zone-associated loop permission");
         checkZonesUnchanged (independent.getValueTree (), beforeRevert);
 
         auto& cvEditor { editor->channelEditors[2] };

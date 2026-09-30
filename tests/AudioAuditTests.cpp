@@ -135,6 +135,8 @@ struct AudioAuditTestAccess
         editor.sampleProperties.setLengthInSamples (10000, false);
         editor.sampleProperties.setSampleRate (48000, false);
         editor.sampleProperties.setStatus (SampleStatus::exists, false);
+        editor.zoneProperties.setSampleStart (-1, false);
+        editor.zoneProperties.setSampleEnd (-1, false);
         editor.zoneProperties.setLoopStart (1000, false);
         editor.zoneProperties.setLoopLength (500, false);
         editor.setLoopLengthIsEnd (true);
@@ -199,10 +201,18 @@ struct AudioAuditTestAccess
         };
         check (nudge (Marker::sampleStart, true) && editor.zoneProperties.getSampleStart () == 4,
                "Field start nudge selects quieter crossing frame");
+        // Test end crossings from an independent full-file selection: the
+        // preceding start nudge now also contracts the contained explicit loop,
+        // so retaining it would correctly forbid a one-frame sample ending at 5.
+        editor.zoneProperties.setSampleStart (0, false);
+        editor.zoneProperties.setLoopStart (-1, false);
+        editor.zoneProperties.setLoopLength (-1, false);
         check (nudge (Marker::sampleEnd, false) && editor.zoneProperties.getSampleEnd () == 5,
                "Field end nudge preserves quieter frame before exclusive boundary");
         check (nudge (Marker::sampleEnd, true) && ! editor.zoneProperties.getSampleEnd (),
                "Field end can nudge to final exact zero at EOF");
+        editor.zoneProperties.setLoopStart (0, false);
+        editor.zoneProperties.setLoopLength (12.0, false);
         check (nudge (Marker::loopStart, true) && editor.zoneProperties.getLoopStart () == 4 &&
                editor.zoneProperties.getLoopLength () == 8.0 && editor.isLoopSelected (), "End-mode start nudge keeps loop end fixed and selects LOOP");
         editor.setLoopLengthIsEnd (false);

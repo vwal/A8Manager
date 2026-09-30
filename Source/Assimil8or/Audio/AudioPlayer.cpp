@@ -1,6 +1,7 @@
 #include "AudioPlayer.h"
 #include "PlaybackPitch.h"
 #include "SampleLoopSimulation.h"
+#include "AuditionSignalCheck.h"
 #include <cmath>
 #include <limits>
 #include "../../Assimil8or/PresetManagerProperties.h"
@@ -22,8 +23,17 @@
 #define LogAudioPlayback(text) ;
 #endif
 
+AudioPlayer::~AudioPlayer ()
+{
+    // Confirmation callbacks run on the message thread, and may outlive the
+    // owning component or an explicit audio shutdown.
+    signalLifetime->owner = nullptr;
+    stopTimer ();
+}
+
 void AudioPlayer::init (juce::ValueTree rootPropertiesVT)
 {
+    signalCheckEnabled = true;
     PersistentRootProperties persistentRootProperties (rootPropertiesVT, PersistentRootProperties::WrapperType::client, PersistentRootProperties::EnableCallbacks::no);
     RuntimeRootProperties runtimeRootProperties (rootPropertiesVT, RuntimeRootProperties::WrapperType::client, RuntimeRootProperties::EnableCallbacks::no);
 
@@ -32,6 +42,11 @@ void AudioPlayer::init (juce::ValueTree rootPropertiesVT)
     sampleManagerProperties.wrap (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
 
     appProperties.wrap (persistentRootProperties.getValueTree (), AppProperties::WrapperType::owner, AppProperties::EnableCallbacks::yes);
+    appProperties.onMostRecentFolderChange = [this] (juce::String)
+    {
+        handlePlayState (AudioPlayerProperties::PlayState::stop);
+        playbackFinished.store (true);
+    };
 
     audioSettingsProperties.wrap (persistentRootProperties.getValueTree (), AudioSettingsProperties::WrapperType::owner, AudioSettingsProperties::EnableCallbacks::yes);
     audioSettingsProperties.onConfigChange = [this] (juce::String config)
@@ -71,6 +86,7 @@ void AudioPlayer::init (juce::ValueTree rootPropertiesVT)
 void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
 {
     juce::ScopedLock sourceLock (dataCS);
+    invalidateSignalCheck ();
     if (playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
     {
         handlePlayState (AudioPlayerProperties::PlayState::stop);
@@ -90,6 +106,7 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
     channelProperties.wrap (presetProperties.getChannelVT (channelIndex), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::yes);
     zoneProperties.wrap (channelProperties.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::yes);
     channelProperties.onPitchChange = [this] (double semitones) { handleChannelPitch (semitones); };
+    channelProperties.onAllowLoopOutsideSampleChange = [this] (bool) { initSamplePoints (); };
     zoneProperties.onPitchOffsetChange = [this] (double semitones) { handleZonePitch (semitones); };
     handleChannelPitch (channelProperties.getPitch ());
     handleZonePitch (zoneProperties.getPitchOffset ());
@@ -161,16 +178,15 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
         if (isStereoPair ()) prepareSampleForPlayback ();
     };
 
-    // Only the selected pair may change the audition range.
+    // SAMPLE bounds constrain LOOP unless the channel permits external loops.
+    // Implicit loop defaults still follow SAMPLE in either editing mode.
     zoneProperties.onSampleStartChange = [this] (std::optional<juce::int64>)
     {
-        if (audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop ||
-            audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::SamplePoints) initSamplePoints ();
+        initSamplePoints ();
     };
     zoneProperties.onSampleEndChange = [this] (std::optional<juce::int64>)
     {
-        if (audioPlayerProperties.getPlayState () == AudioPlayerProperties::PlayState::sampleIntoLoop ||
-            audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::SamplePoints) initSamplePoints ();
+        initSamplePoints ();
     };
     zoneProperties.onLoopStartChange = [this] (std::optional<juce::int64>)
     {
@@ -231,6 +247,7 @@ void AudioPlayer::initFromZone (std::tuple<int, int> channelAndZoneIndecies)
 void AudioPlayer::initSamplePoints ()
 {
     juce::ScopedLock sl (dataCS);
+    invalidateSignalCheck ();
     if (playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
     {
         if (! initSimulationPoints ())
@@ -243,18 +260,22 @@ void AudioPlayer::initSamplePoints ()
         return;
     }
     simulationRangeActive = false;
+    selectedSourceLength = 0.0;
     if (! std::isfinite (sampleRateRatio) || sampleRateRatio <= 0.0 || ! zoneProperties.isValid ())
     {
         sampleStart = sampleLength = 0;
         return;
     }
     const auto loop { audioPlayerProperties.getSamplePointsSelector () == AudioPlayerProperties::SamplePointsSelector::LoopPoints };
-    const auto start { static_cast<double> (loop ? zoneProperties.getLoopStart ().value_or (0) : zoneProperties.getSampleStart ().value_or (0)) };
-    const auto fileLength { static_cast<double> (sampleProperties.getLengthInSamples ()) };
-    const auto end { loop ? start + zoneProperties.getLoopLength ().value_or (fileLength - start)
-                          : static_cast<double> (zoneProperties.getSampleEnd ().value_or (sampleProperties.getLengthInSamples ())) };
+    const auto range { ZoneSampleRanges::resolve (ZoneSampleRanges::read (zoneProperties), sampleProperties.getLengthInSamples (),
+                                                 channelProperties.getAllowLoopOutsideSample ()) };
+    const auto start { static_cast<double> (loop ? range.loopStart : range.sampleStart) };
+    const auto end { loop ? range.loopEnd () : static_cast<double> (range.sampleEnd) };
     const auto limit { sampleBuffer != nullptr ? static_cast<double> (sampleBuffer->getNumSamples ()) : 0.0 };
-    if (! std::isfinite (start) || ! std::isfinite (end) || end <= start)
+    // Tiny 1-3-frame files can still be auditioned as SAMPLE, but cannot define
+    // a valid hardware loop (the shared editing minimum is four source frames).
+    if (! std::isfinite (start) || ! std::isfinite (end) || start < 0 || end <= start
+        || end > range.fileLength || (loop && ! range.loopValid))
     {
         sampleStart = sampleLength = 0;
         return;
@@ -262,6 +283,7 @@ void AudioPlayer::initSamplePoints ()
     sampleStart = static_cast<int> (std::clamp (start * sampleRateRatio, 0.0, limit));
     const auto endFrame { static_cast<int> (std::clamp (end * sampleRateRatio, static_cast<double> (sampleStart), limit)) };
     sampleLength = endFrame - sampleStart;
+    selectedSourceLength = end - start;
     if (curSampleOffset < sampleStart || curSampleOffset >= sampleStart + sampleLength)
         curSampleOffset = sampleStart;
 }
@@ -320,6 +342,8 @@ bool AudioPlayer::selectedSampleIsCv ()
 void AudioPlayer::prepareSampleForPlayback ()
 {
     juce::ScopedLock sl (dataCS);
+    ++sampleBufferRevision;
+    invalidateSignalCheck ();
     // A replacement file, stereo route, or device must not inherit a running
     // simulation from a different source. Marker edits never enter this path.
     if (playState == AudioPlayerProperties::PlayState::sampleIntoLoop)
@@ -443,6 +467,7 @@ void AudioPlayer::shutdownAudio ()
         waveformSelected = false;
         waveformAudition.stopImmediately ();
         playState = AudioPlayerProperties::PlayState::stop;
+        invalidateSignalCheck ();
         simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         playbackFinished.store (false);
     }
@@ -472,6 +497,7 @@ juce::Result AudioPlayer::startWaveformAudition ()
             return result;
         waveformSelected = true;
         playState = AudioPlayerProperties::PlayState::stop;
+        invalidateSignalCheck ();
         simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         resetAuditionResampler = true;
         playbackFinished.store (false);
@@ -552,9 +578,149 @@ void AudioPlayer::publishOutputDevice ()
         audioPlayerProperties.setOutputDeviceName (name, false);
 }
 
+void AudioPlayer::invalidateSignalCheck ()
+{
+    // Callers hold dataCS. Device/source callbacks only invalidate; the message
+    // timer performs the bounded analysis after their prepared buffer is ready.
+    ++signalRequestGeneration;
+    signalApproved = false;
+    signalCheckNeeded = signalCheckEnabled && playState != AudioPlayerProperties::PlayState::stop;
+    wakeSignalCheck ();
+}
+
+void AudioPlayer::wakeSignalCheck ()
+{
+    // Coalesce UI drags until their current message finishes. This callback runs
+    // after all nested source/range locks unwind, without a fixed timer delay.
+    // Device-thread mutations use the existing message timer instead.
+    if (! signalCheckNeeded || signalCheckQueued || ! juce::MessageManager::existsAndIsCurrentThread ()) return;
+    signalCheckQueued = true;
+    if (! deferSignalCheck ([lifetime = signalLifetime]
+        {
+            if (auto* owner { lifetime->owner })
+            {
+                { juce::ScopedLock sl (owner->dataCS); owner->signalCheckQueued = false; }
+                owner->processSignalCheck ();
+            }
+        })) signalCheckQueued = false;
+}
+
+AudioPlayer::SignalCheckKey AudioPlayer::signalCheckKey ()
+{
+    return { sampleBufferRevision, deviceRevision, sampleStart, sampleLength, simulationLoopStart, playState,
+             sampleRate, effectivePitchSemitones (), auditionRate, preservePitch,
+             appProperties.isValid () ? appProperties.getMostRecentFolder () : juce::String {} };
+}
+
+void AudioPlayer::finishSignalCheck (std::uint64_t generation, const SignalCheckKey& key, bool approved)
+{
+    {
+        juce::ScopedLock sl (dataCS);
+        if (generation != signalRequestGeneration || key != signalCheckKey () || waveformSelected || sampleAuditionBlocked)
+            return;
+        signalApproved = approved;
+        if (approved)
+        {
+            approvedSignal = key;
+            return;
+        }
+        playState = AudioPlayerProperties::PlayState::stop;
+        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
+        playbackPosition.store (-1.0);
+        playbackFinished.store (false);
+        invalidateSignalCheck ();
+    }
+    if (audioPlayerProperties.isValid ())
+    {
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
+        audioPlayerProperties.setSimulationPhase (AudioPlayerProperties::SimulationPhase::inactive, false);
+        audioPlayerProperties.setPlaybackPosition (-1.0, false);
+    }
+}
+
+void AudioPlayer::processSignalCheck ()
+{
+    std::shared_ptr<const juce::AudioBuffer<float>> buffer;
+    SignalCheckKey key;
+    std::uint64_t generation {};
+    {
+        juce::ScopedLock sl (dataCS);
+        if (! signalCheckEnabled || ! signalCheckNeeded || signalDialogOpen || waveformSelected || sampleAuditionBlocked ||
+            playState == AudioPlayerProperties::PlayState::stop) return;
+        signalCheckNeeded = false;
+        key = signalCheckKey ();
+        generation = signalRequestGeneration;
+        if (approvedSignal && *approvedSignal == key)
+        {
+            signalApproved = true;
+            return;
+        }
+        buffer = sampleBuffer;
+    }
+
+    // sampleBuffer was already converted to device-rate stereo. Retaining its
+    // immutable allocation avoids copying large WAVs or holding the audio lock
+    // during measurement. Keep pitch removes the audition-speed transposition.
+    const auto rate { key.rate * std::exp2 (key.pitch / 12.0) * (key.keepPitch ? 1.0 : key.speed) };
+    const auto simulation { key.mode == AudioPlayerProperties::PlayState::sampleIntoLoop };
+    AuditionSignalCheck::Report report;
+    if (buffer != nullptr)
+    {
+        report = AuditionSignalCheck::analyse (*buffer, { key.start, key.length, 0, buffer->getNumChannels (), rate,
+            key.mode == AudioPlayerProperties::PlayState::loop });
+        if (simulation && ! report.isBlocked ())
+        {
+            const auto loopReport { AuditionSignalCheck::analyse (*buffer,
+                { key.loopStart, key.start + key.length - key.loopStart, 0, buffer->getNumChannels (), rate, true }) };
+            if (loopReport.isBlocked () || loopReport.needsConfirmation ()) report = loopReport;
+        }
+    }
+    {
+        juce::ScopedLock sl (dataCS);
+        if (generation != signalRequestGeneration || key != signalCheckKey () || waveformSelected || sampleAuditionBlocked)
+            return;
+    }
+    if (report.isBlocked ())
+    {
+        finishSignalCheck (generation, key, false);
+        const auto explanation { report.explanation () + "\n\nAudition was stopped because this PCM signal is not valid for playback." };
+        if (notifySignalBlocked) notifySignalBlocked (explanation);
+        else juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot audition this signal", explanation);
+        return;
+    }
+    if (! report.needsConfirmation ())
+    {
+        // Unavailable means inconclusive, not a claim that the signal is safe.
+        // Only high-confidence findings interrupt normal audition.
+        finishSignalCheck (generation, key, true);
+        return;
+    }
+    const auto message { report.explanation () + "\n\nThis may be CV or sub-audio material. Turn down your speakers or monitor level before continuing. "
+        "This check is not a guarantee of safe listening, and it does not lower the playback level. Continue auditioning?" };
+    auto complete = [lifetime = signalLifetime, generation, key] (bool proceed)
+    {
+        if (auto* owner { lifetime->owner })
+        {
+            owner->signalDialogOpen = false;
+            owner->finishSignalCheck (generation, key, proceed);
+            { juce::ScopedLock sl (owner->dataCS); owner->wakeSignalCheck (); }
+        }
+    };
+    signalDialogOpen = true;
+    if (confirmSignalWarning)
+        confirmSignalWarning (message, std::move (complete));
+    else
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions {}.withIconType (juce::AlertWindow::WarningIcon)
+            .withTitle ("Check this signal before auditioning").withMessage (message).withButton ("Continue")
+            .withButton ("Stop"), [complete = std::move (complete)] (int result) { complete (result == 1); });
+}
+
 void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState)
 {
     juce::ScopedLock sl (dataCS);
+    ++signalRequestGeneration; // STOP and every newer request cancel older confirmations.
+    signalApproved = false;
+    signalCheckNeeded = false;
     const auto wasSimulation { simulationRangeActive };
     simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
     if (newPlayState != AudioPlayerProperties::PlayState::stop && sampleAuditionBlocked)
@@ -597,6 +763,13 @@ void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState
     }
     else if (newPlayState == AudioPlayerProperties::PlayState::loop)
     {
+        if (selectedSourceLength < ZoneSampleRanges::minimumLoopLength)
+        {
+            playState = AudioPlayerProperties::PlayState::stop;
+            playbackPosition.store (-1.0);
+            playbackFinished.store (true);
+            return;
+        }
         LogAudioPlayer ("AudioPlayer::handlePlayState: loop");
         curSampleOffset = sampleStart;
     }
@@ -606,6 +779,8 @@ void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState
         curSampleOffset = sampleStart;
     }
     playState = newPlayState;
+    signalCheckNeeded = signalCheckEnabled && newPlayState != AudioPlayerProperties::PlayState::stop;
+    wakeSignalCheck ();
     playbackFinished.store (false);
     playbackPosition.store (newPlayState == AudioPlayerProperties::PlayState::stop || sampleRateRatio <= 0.0
                                 ? -1.0 : curSampleOffset / sampleRateRatio);
@@ -625,6 +800,8 @@ void AudioPlayer::showConfigDialog ()
 void AudioPlayer::prepareToPlay (int samplesPerBlockExpected, double newSampleRate)
 {
     juce::ScopedLock sl (dataCS);
+    ++deviceRevision;
+    invalidateSignalCheck ();
     waveformAudition.prepareToPlay (newSampleRate);
     waveformSelected = false;
     audioDeviceReady = std::isfinite (newSampleRate) && newSampleRate > 0.0 && samplesPerBlockExpected > 0;
@@ -638,6 +815,8 @@ void AudioPlayer::prepareToPlay (int samplesPerBlockExpected, double newSampleRa
 void AudioPlayer::releaseResources ()
 {
     juce::ScopedLock sl (dataCS);
+    ++deviceRevision;
+    invalidateSignalCheck ();
     audioDeviceReady = false;
     waveformSelected = false;
     waveformAudition.stopImmediately ();
@@ -654,8 +833,11 @@ void AudioPlayer::releaseResources ()
 void AudioPlayer::handleAuditionRate (double rate)
 {
     juce::ScopedLock sl (dataCS);
-    auditionRate = std::isfinite (rate) ? juce::jlimit (AudioPlayerProperties::minAuditionRate,
-                                                     AudioPlayerProperties::maxAuditionRate, rate) : 1.0;
+    const auto normalized { std::isfinite (rate) ? juce::jlimit (AudioPlayerProperties::minAuditionRate,
+        AudioPlayerProperties::maxAuditionRate, rate) : 1.0 };
+    if (normalized == auditionRate) return;
+    invalidateSignalCheck ();
+    auditionRate = normalized;
     auditionResampler.setResamplingRatio (effectiveAuditionRate ());
     // Re-align spectral look-ahead to the audible position at the new rate.
     // Varispeed can change ratio in place without resetting its phase.
@@ -665,6 +847,8 @@ void AudioPlayer::handleAuditionRate (double rate)
 void AudioPlayer::handlePreservePitch (bool preserve)
 {
     juce::ScopedLock sl (dataCS);
+    if (preserve == preservePitch) return;
+    invalidateSignalCheck ();
     preservePitch = preserve;
     auditionResampler.setResamplingRatio (effectiveAuditionRate ());
     resetAuditionResampler = true;
@@ -673,7 +857,10 @@ void AudioPlayer::handlePreservePitch (bool preserve)
 void AudioPlayer::handleChannelPitch (double semitones)
 {
     juce::ScopedLock sl (dataCS);
-    channelPitch = PlaybackPitch::parameterSemitones (semitones);
+    const auto normalized { PlaybackPitch::parameterSemitones (semitones) };
+    if (normalized == channelPitch) return;
+    invalidateSignalCheck ();
+    channelPitch = normalized;
     auditionResampler.setResamplingRatio (effectiveAuditionRate ());
     if (preservePitch && std::abs (auditionRate - 1.0) > 1.0e-9) resetAuditionResampler = true;
 }
@@ -681,7 +868,10 @@ void AudioPlayer::handleChannelPitch (double semitones)
 void AudioPlayer::handleZonePitch (double semitones)
 {
     juce::ScopedLock sl (dataCS);
-    zonePitchOffset = PlaybackPitch::parameterSemitones (semitones);
+    const auto normalized { PlaybackPitch::parameterSemitones (semitones) };
+    if (normalized == zonePitchOffset) return;
+    invalidateSignalCheck ();
+    zonePitchOffset = normalized;
     auditionResampler.setResamplingRatio (effectiveAuditionRate ());
     if (preservePitch && std::abs (auditionRate - 1.0) > 1.0e-9) resetAuditionResampler = true;
 }
@@ -744,6 +934,8 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
     }
     if (playState == AudioPlayerProperties::PlayState::stop)
         return;
+    if (signalCheckEnabled && ! signalApproved)
+        return; // Never analyse, allocate, or show a dialog from the audio callback.
 
     auto finishPlayback = [this] ()
     {
@@ -753,7 +945,8 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
         playbackFinished.store (true);
     };
     if (sampleBuffer == nullptr || sampleBuffer->getNumChannels () < 2 || sampleStart < 0 || sampleLength <= 0 ||
-        sampleStart >= sampleBuffer->getNumSamples () || sampleRateRatio <= 0.0)
+        sampleStart >= sampleBuffer->getNumSamples () || sampleRateRatio <= 0.0 ||
+        (playState == AudioPlayerProperties::PlayState::loop && selectedSourceLength < ZoneSampleRanges::minimumLoopLength))
     {
         finishPlayback ();
         return;
@@ -839,6 +1032,7 @@ void AudioPlayer::renderAuditionInput (const juce::AudioSourceChannelInfo& buffe
 
 void AudioPlayer::timerCallback ()
 {
+    processSignalCheck ();
     // All ValueTree/UI notifications stay on the message thread. The audio
     // callback only publishes atomics, including natural one-shot completion.
     if (playbackFinished.exchange (false))

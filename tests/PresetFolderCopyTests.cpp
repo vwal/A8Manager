@@ -64,7 +64,7 @@ void testPresetFolderCopy ()
     using namespace WaveformDesign;
     for (int slot { 1 }; slot <= 199; ++slot)
     {
-        const auto prefix { "PR" + juce::String (slot).paddedLeft ('0', 2) + " - " };
+        const auto prefix { "P" + juce::String (slot).paddedLeft ('0', 2) + " - " };
         require (PresetFolderCopy::folderName (slot, "koe-01") == prefix + "koe-01", "Folder slots have at least two digits, not a hard-coded three digits");
         const auto longName { PresetFolderCopy::folderName (slot, "A very long preset with /slashes: emoji and punctuation") };
         require (longName.startsWith (prefix) && longName.length () <= 31 && ! longName.containsAnyOf ("/\\:"), "Folder name is truncated/sanitized within A8's 31-character limit");
@@ -74,15 +74,18 @@ void testPresetFolderCopy ()
         numbered.setProperty (PresetProperties::IdPropertyId, slot, nullptr);
         const auto base { juce::File::getSpecialLocation (juce::File::tempDirectory) };
         require (PresetFolderCopy::isNamedPresetFolder (base.getChildFile (prefix + "First Wave"), numbered), "Recognize every short-prefix preset slot");
+        require (PresetFolderCopy::isNamedPresetFolder (base.getChildFile ("PR" + juce::String (slot).paddedLeft ('0', 2) + " - First Wave"), numbered),
+                 "Recognize every previous PR-prefix preset slot without renaming folders");
         require (PresetFolderCopy::isNamedPresetFolder (base.getChildFile ("A8 Preset " + juce::String (slot).paddedLeft ('0', 2) + " - First Wave"), numbered),
                  "Recognize every legacy-prefix preset slot without renaming folders");
     }
-    require (PresetFolderCopy::folderName (1, "First Wave") == "PR01 - First Wave", "User-facing short preset folder example");
+    require (PresetFolderCopy::folderName (1, "First Wave") == "P01 - First Wave", "User-facing short preset folder example");
     require (PresetFolderCopy::folderName (0, "invalid").isEmpty () && PresetFolderCopy::folderName (200, "invalid").isEmpty (), "Reject invalid preset numbers");
-    require (PresetFolderCopy::folderName (1, juce::String::fromUTF8 ("\xe6\xb3\xa2\xe5\xbd\xa2")) == "PR01 - Untitled", "Non-ASCII-only names have a safe nonempty folder fallback");
+    require (PresetFolderCopy::folderName (1, juce::String::fromUTF8 ("\xe6\xb3\xa2\xe5\xbd\xa2")) == "P01 - Untitled", "Non-ASCII-only names have a safe nonempty folder fallback");
     auto firstSlot { defaults () };
     firstSlot.setProperty (PresetProperties::IdPropertyId, 1, nullptr);
-    for (const auto* invalidName : { "PR1 - Name", "PR001 - Name", "PR00 - Name", "PR200 - Name", "PR01 Name", "PR02 - Other", "A8 Preset 1 - Name", "A8 Preset 02 - Other" })
+    for (const auto* invalidName : { "P1 - Name", "P001 - Name", "P00 - Name", "P200 - Name", "P01 Name", "P02 - Other",
+                                  "PR1 - Name", "PR001 - Name", "PR00 - Name", "PR200 - Name", "PR01 Name", "PR02 - Other", "A8 Preset 1 - Name", "A8 Preset 02 - Other" })
         require (! PresetFolderCopy::isNamedPresetFolder (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (invalidName), firstSlot),
                  "Malformed or different-slot folder names are not treated as the current named preset");
 
@@ -123,7 +126,7 @@ void testPresetFolderCopy ()
 
     juce::File output;
     succeeded (PresetFolderCopy::createOrUpdate (source, tree, output));
-    require (output == source.getChildFile ("PR09 - koe-01"), "Publish short named child folder");
+    require (output == source.getChildFile ("P09 - koe-01"), "Publish short named child folder");
     require (originals == fingerprints (source), "All original/source files remain byte-identical");
     require (! output.getChildFile ("unrelated.txt").exists () && ! output.getChildFile (assigned.waves[1].getFileName ()).exists (), "Copy only dependencies, not unrelated or unreferenced bank voices");
     require (output.getChildFile (assigned.recipe.getFileName ()).existsAsFile () && output.getChildFile (assignedCv.recipe.getFileName ()).existsAsFile (), "Copy matching assignment recipes for audio and CV");
@@ -211,7 +214,7 @@ void testPresetFolderCopy ()
     const auto firstSlotFiles { fingerprints (packageCopy) };
     juce::File sibling;
     succeeded (PresetFolderCopy::createOrUpdate (packageCopy, secondSlot, sibling));
-    require (sibling == packageCopy.getSiblingFile ("PR02 - Second") && fingerprints (packageCopy) == firstSlotFiles,
+    require (sibling == packageCopy.getSiblingFile ("P02 - Second") && fingerprints (packageCopy) == firstSlotFiles,
              "Saving another slot while inside a named preset creates a sibling, not an invisible nested folder");
     succeeded (PresetFileOperations::read (sibling.getChildFile ("prst002.yml"), loaded));
     require (static_cast<int> (loaded.getProperty (PresetProperties::IdPropertyId)) == 2, "New sibling slot uses its own preset filename and ID");
@@ -226,8 +229,22 @@ void testPresetFolderCopy ()
         "Already-open legacy folders remain in-place saves without nesting or renaming");
     juce::File legacySibling;
     succeeded (PresetFolderCopy::createOrUpdate (legacyCopy, secondSlot, legacySibling));
-    require (legacySibling == legacyCopy.getSiblingFile ("PR02 - Second") && fingerprints (legacyCopy) == legacyFiles,
+    require (legacySibling == legacyCopy.getSiblingFile ("P02 - Second") && fingerprints (legacyCopy) == legacyFiles,
              "Other slots opened inside a legacy folder create short-prefix siblings and preserve legacy files");
+
+    const auto previousCopy { root.getChildFile ("PR01 - Previous") };
+    require (packageCopy.copyDirectoryTo (previousCopy), "Create previous PR-named folder fixture");
+    const auto previousFiles { fingerprints (previousCopy) };
+    require (PresetFolderCopy::isNamedPresetFolder (previousCopy, packageTree)
+        && PresetFolderCopy::createOrUpdate (previousCopy, packageTree, invalidOutput).failed (),
+        "Already-open PR folders remain in-place saves without nesting or renaming");
+    auto thirdSlot { packageTree.createCopy () };
+    thirdSlot.setProperty (PresetProperties::IdPropertyId, 3, nullptr);
+    thirdSlot.setProperty (PresetProperties::NamePropertyId, "Third", nullptr);
+    juce::File previousSibling;
+    succeeded (PresetFolderCopy::createOrUpdate (previousCopy, thirdSlot, previousSibling));
+    require (previousSibling == previousCopy.getSiblingFile ("P03 - Third") && fingerprints (previousCopy) == previousFiles,
+             "Other slots opened inside PR folders create P-prefix siblings without changing old files");
 
 #if ! JUCE_WINDOWS
     const auto link { packageSource.getChildFile ("linked.wav") };

@@ -201,8 +201,9 @@ namespace PairedZoneEdits
                 zone.copyFrom (from, false);
                 zone.setSampleStart (start, true);
                 zone.setSampleEnd (end, true);
-                zone.setLoopStart (start, true);
-                zone.setLoopLength (static_cast<double> (end - start), true);
+                // A newly sliced zone has no independently edited loop yet.
+                zone.setLoopStart (-1, true);
+                zone.setLoopLength (-1.0, true);
             };
             setSlice (channel.getZoneVT (index + offset), source);
             if (rightSource.isValid ()) setSlice (rightZone (tree, index + offset), rightSource);

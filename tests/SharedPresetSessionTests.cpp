@@ -1,4 +1,5 @@
 #include "GUI/PresetEditSession.h"
+#include "GUI/DesignerPresetSaveStatus.h"
 #include "Assimil8or/PresetFileOperations.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/Audio/WaveformDesignAssignment.h"
@@ -136,22 +137,50 @@ void testSharedPresetSession ()
     session.init (root);
     auto source { session.snapshot () };
     check (source && ! session.isDirty () && source->preset != edit, "Snapshot is detached and binds the shared selected slot");
+    DesignerPresetSaveStatus copyStatus;
+    const auto copiedFolder { folder.getChildFile ("P47 - Copy") };
+    check (copiedFolder.createDirectory ().wasOk (), "Create owned copy-status destination");
+    check (! copyStatus.copyWasRefreshed (source)
+           && DesignerPresetSaveStatus::text (false, false, true, true, false) == "Saved (remember to refresh copy)",
+           "A clean working preset alone must not claim its portable copy was refreshed");
+    copyStatus.recordSuccess (source, copiedFolder);
+    check (copyStatus.copyWasRefreshed (source)
+           && DesignerPresetSaveStatus::text (false, false, true, true, true) == "Saved / refreshed copy",
+           "Confirmed copy and original-save completion permits a truthful refreshed-copy status");
+    check (DesignerPresetSaveStatus::text (false, false, true, false, false) == "Saved / unchanged"
+           && DesignerPresetSaveStatus::text (false, true, true, true, true) == "SAVE IS PENDING"
+           && DesignerPresetSaveStatus::text (true, false, true, true, true) == "Saving A8 folder..."
+           && DesignerPresetSaveStatus::text (false, false, false, false, true) == "Select a preset slot",
+           "Named folders, dirty edits, active saves and unbound slots do not misreport copy completion");
+    const juce::Font saveStateFont { juce::FontOptions (14.0f, juce::Font::bold) };
+    for (const bool refreshed : { false, true })
+        check (juce::GlyphArrangement::getStringWidth (saveStateFont, DesignerPresetSaveStatus::text (false, false, true, true, refreshed)) <= 284.0f,
+               "Both saved-copy messages fit a compact 300-pixel header area including its 16-pixel border inset");
     const auto originalRevision { session.getRevision () };
     check (session.matches (*source) && session.getRevision () == originalRevision && ! session.isDirty (),
            "An unchanged snapshot approves completion without editing the preset, baseline or revision");
     auto wrongRevision { *source };
     ++wrongRevision.revision;
     check (! session.matches (wrongRevision), "Copy completion requires the captured document revision");
+    check (! copyStatus.copyWasRefreshed (wrongRevision), "Copy freshness belongs to the exact saved session revision");
     auto wrongFolder { *source };
     wrongFolder.folder = folder.getChildFile ("different-destination");
     check (! session.matches (wrongFolder), "Copy completion cannot save an equivalent preset in another working folder");
+    check (! copyStatus.copyWasRefreshed (wrongFolder), "A refreshed copy in another working folder cannot satisfy the current one");
     auto wrongContent { *source };
     wrongContent.preset = source->preset.createCopy ();
     wrongContent.preset.setProperty (PresetProperties::NamePropertyId, "Different", nullptr);
     check (! session.matches (wrongContent) && session.matches (*source),
            "Copy completion checks captured contents as well as revision without mutating the original snapshot");
+    check (! copyStatus.copyWasRefreshed (wrongContent), "Changed preset contents invalidate the refreshed-copy indication");
+    copyStatus.reset ();
+    check (! copyStatus.copyWasRefreshed (source), "Starting another copy drops the old success claim until the operation succeeds");
+    copyStatus.recordSuccess (source, folder.getChildFile ("missing-copy"));
+    check (! copyStatus.copyWasRefreshed (source), "Missing copy destinations cannot claim a completed refresh");
+    copyStatus.recordSuccess (source, copiedFolder);
     current.setName ("Edited", false);
     check (session.isDirty () && source->preset.getProperty (PresetProperties::NamePropertyId) != "Edited", "Unsaved edits and snapshots stay separate");
+    check (! copyStatus.copyWasRefreshed (session.snapshot ()), "Editing the working preset invalidates its previous copy confirmation");
     check (! session.matches (*source), "Edits made while copying cannot be saved by the stale completion");
     check (session.apply (*source, source->preset).failed (), "Reject stale generation after name edit");
     source = session.snapshot ();
@@ -170,6 +199,7 @@ void testSharedPresetSession ()
     check (session.matches (*source) && session.isDirty (), "A dirty but unchanged document remains eligible for copy-then-save completion");
     check (PresetFileOperations::save (folder.getChildFile ("prst047.yml"), edit, baseline).wasOk (), "Shared Save writes selected slot");
     check (! session.isDirty () && ! folder.getChildFile ("prst001.yml").exists (), "Save never falls back to preset001");
+    check (! copyStatus.copyWasRefreshed (session.snapshot ()), "Saving only the working preset cannot silently mark its separate copy refreshed");
     check (! session.matches (*source) && session.matches (*session.snapshot ()),
            "A completed Save changes the baseline revision so an earlier copy cannot save again");
     juce::ValueTree readBack;

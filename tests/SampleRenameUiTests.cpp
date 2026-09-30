@@ -1,6 +1,9 @@
 #include "GUI/Assimil8or/Editor/Assimil8orEditorComponent.h"
 #include "GUI/Assimil8or/Editor/SampleManager/SampleManager.h"
 #include "Assimil8or/Audio/SampleRename.h"
+#include "Assimil8or/Audio/WaveformDesignAssignment.h"
+#include "Assimil8or/Audio/WaveformDesignExport.h"
+#include "Assimil8or/Audio/WaveformDesignRecall.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "Assimil8or/PresetFileOperations.h"
 #include "Assimil8or/PresetManagerProperties.h"
@@ -61,6 +64,108 @@ namespace
 
 struct SampleRenameUiTestAccess
 {
+    static void rawCycleMenus ()
+    {
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-raw-cycle-menus", "", false) };
+        check (folder.createDirectory ().wasOk (), "Create raw-cycle Samples menu fixtures");
+        struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+        auto writeWave = [&] (const juce::String& name, int frames, bool cv)
+        {
+            juce::AudioBuffer<float> data (1, frames);
+            for (int frame { 0 }; frame < frames; ++frame)
+                data.setSample (0, frame, 0.25f * std::sin (juce::MathConstants<double>::twoPi * frame / frames));
+            check (WaveformDesign::ExportSupport::writeWave (folder.getChildFile (name), data, 48000, cv).wasOk (), "Write raw menu WAV fixture");
+        };
+        writeWave ("ordinary.wav", 128, false);
+        writeWave ("other.wav", 128, false);
+        writeWave ("cv-short.wav", 128, true);
+        writeWave ("long.wav", 8193, false);
+        check (folder.getChildFile ("invalid.wav").replaceWithText ("Not a WAV"), "Create invalid raw menu fixture");
+        juce::ValueTree root { "Root" };
+        PersistentRootProperties persistent (root, PersistentRootProperties::WrapperType::owner, PersistentRootProperties::EnableCallbacks::no);
+        RuntimeRootProperties runtime (root, RuntimeRootProperties::WrapperType::owner, RuntimeRootProperties::EnableCallbacks::no);
+        AppProperties preferences;
+        preferences.wrap (persistent.getValueTree (), AppProperties::WrapperType::owner, AppProperties::EnableCallbacks::no);
+        preferences.setMostRecentFolder (folder.getFullPathName ());
+        preferences.addRecentlyUsedFile (folder.getChildFile ("prst001.yml").getFullPathName ());
+        AudioPlayerProperties audition (runtime.getValueTree (), AudioPlayerProperties::WrapperType::owner, AudioPlayerProperties::EnableCallbacks::no);
+        GuiControlProperties gui (runtime.getValueTree (), GuiControlProperties::WrapperType::owner, GuiControlProperties::EnableCallbacks::no);
+        DirectoryDataProperties directory (runtime.getValueTree (), DirectoryDataProperties::WrapperType::owner, DirectoryDataProperties::EnableCallbacks::no);
+        PresetManagerProperties presets (runtime.getValueTree (), PresetManagerProperties::WrapperType::owner, PresetManagerProperties::EnableCallbacks::no);
+        const auto defaults { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType) };
+        presets.addPreset ("edit", defaults.createCopy ()); presets.addPreset ("unedited", defaults.createCopy ());
+        const auto tree { presets.getPreset ("edit") };
+        AudioManager audio;
+        SystemServices services (runtime.getValueTree (), SystemServices::WrapperType::owner, SystemServices::EnableCallbacks::no);
+        services.setAudioManager (&audio); services.setAudioPlayer (nullptr);
+        SampleManager samples; samples.init (root);
+        EditManager edits; services.setEditManager (&edits); edits.init (root, tree);
+        ZoneProperties first (tree.getChild (0).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        ZoneProperties second (tree.getChild (2).getChild (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        first.setSample ("ordinary.wav", false); second.setSample ("other.wav", false);
+        ModernLookAndFeel look;
+        auto editor { std::make_unique<Assimil8orEditorComponent> () };
+        editor->setLookAndFeel (&look); editor->init (root); editor->setSize (1140, 720);
+        int requests { 0 }, recalledChannel { -1 }, recalledZone { -1 };
+        editor->onRecallWaveform = [&] (int channel, int zone) { ++requests; recalledChannel = channel; recalledZone = zone; };
+        auto fileMenu = [&] { return editor->channelEditors[0].zoneEditors[0].createSampleFileMenu (); };
+        auto rawFile = [&] { return findAction (fileMenu (), "Import WAV as cycle in designer..."); };
+        auto rawPreset = [&] { return findAction (editor->createPresetToolsMenu (), "Import selected WAV as cycle..."); };
+        const auto original { tree.createCopy () };
+        const auto fromFile { rawFile () }, fromPreset { rawPreset () };
+        check (fromFile.present && fromFile.enabled && fromFile.invoke && fromPreset.present && fromPreset.enabled && fromPreset.invoke,
+               "Ordinary short WAVs expose raw import through the actual FILE context and Preset tools menus");
+        check (! findAction (editor->createPresetToolsMenu (), "Edit selected waveform in designer...").enabled
+               && ! editor->canRecallSelectedWaveform () && editor->canImportSelectedCycle (),
+               "Raw samples do not falsely acquire generated-recipe Edit availability");
+        fromFile.invoke ();
+        check (requests == 1 && recalledChannel == 0 && recalledZone == 0, "FILE raw import routes its exact channel and zone to designer recall/import");
+        fromPreset.invoke ();
+        check (requests == 2 && recalledChannel == 0 && recalledZone == 0 && tree.isEquivalentTo (original),
+               "Preset tools raw import routes selection without directly mutating the preset");
+        const auto staleFile { rawFile () }, stalePreset { rawPreset () };
+        first.setSample ("other.wav", false);
+        staleFile.invoke (); stalePreset.invoke ();
+        check (requests == 2, "Changing the preset invalidates both pending FILE and Preset-tools raw-import actions");
+        first.setSample ("ordinary.wav", false);
+        const auto changedSelection { rawPreset () };
+        editor->channelTabs.setCurrentTabIndex (2);
+        changedSelection.invoke ();
+        check (requests == 2, "A menu opened for another selected channel cannot import the new selection instead");
+        editor->channelTabs.setCurrentTabIndex (0);
+
+        for (const auto* name : { "cv-short.wav", "invalid.wav", "long.wav", "missing.wav" })
+        {
+            first.setSample (name, false);
+            const auto fileAction { rawFile () }, presetAction { rawPreset () };
+            check (fileAction.present && ! fileAction.enabled && presetAction.present && ! presetAction.enabled
+                   && ! editor->canImportSelectedCycle (), "CV, malformed, long and missing WAVs do not offer raw-cycle import");
+            if (fileAction.invoke) fileAction.invoke ();
+            if (presetAction.invoke) presetAction.invoke ();
+            check (requests == 2, "Disabled menu callbacks revalidate rather than importing ineligible data");
+        }
+        first.setSample ("ordinary.wav", false);
+        ChannelProperties firstChannel (tree.getChild (0), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        firstChannel.setMixLevel (0, false);
+        auto settings { WaveformDesign::startingPoint (WaveformDesign::Mode::oscillator, WaveformDesign::Shape::sine) };
+        settings.cycleFrames = 128;
+        WaveformDesign::AssignmentResult generated;
+        check (WaveformDesign::prepareAssignment (settings, folder, "generated", tree, 0, 0, generated).wasOk (), "Create verified generated waveform menu fixture");
+        first.setSample (generated.waves[0].getFileName (), false);
+        const auto generatedEdit { findAction (editor->createPresetToolsMenu (), "Edit selected waveform in designer...") };
+        check (generatedEdit.present && generatedEdit.enabled && generatedEdit.invoke && editor->canRecallSelectedWaveform ()
+               && ! rawFile ().enabled && ! rawPreset ().enabled,
+               "Verified generated waves retain Edit recipe but cannot bypass provenance through raw import");
+        generatedEdit.invoke ();
+        check (requests == 3 && recalledChannel == 0 && recalledZone == 0, "Generated Edit continues routing through the established recipe recall callback");
+        first.setSample ("ordinary.wav", false);
+        const auto disposedFile { rawFile () }, disposedPreset { rawPreset () };
+        editor->setLookAndFeel (nullptr); editor.reset ();
+        disposedFile.invoke (); disposedPreset.invoke ();
+        check (requests == 3, "Late raw-import callbacks cannot act after the Samples editor is destroyed");
+        std::cout << "PASS: Samples raw-cycle import menus (eligibility, FILE/Preset routes, generated recall, stale selection/document and lifetime guards)\n";
+    }
+
     static void promptControls ()
     {
         // JUCE's native AlertWindow requires a display even before it is shown.
@@ -69,10 +174,21 @@ struct SampleRenameUiTestAccess
         check (juce::Desktop::getInstance ().getDisplays ().getPrimaryDisplay () != nullptr,
                "Rename dialog UI tests require a desktop display; use desktop access or Xvfb on headless CI");
         ModernLookAndFeel look;
-        const juce::String friendly { "Warm saw" }, suffix { "-abcdef012345-07" };
+        const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-rename-prompt", "", false) };
+        check (folder.createDirectory ().wasOk (), "Create owned generated-rename prompt fixture");
+        struct Cleanup { juce::File folder; ~Cleanup () { folder.deleteRecursively (); } } cleanup { folder };
+        const juce::String friendly { "Warm-saw" }, suffix { "-abcdef012345-01" };
         const auto stem { friendly + suffix };
+        auto settings { WaveformDesign::startingPoint (WaveformDesign::Mode::oscillator, WaveformDesign::Shape::sine) };
+        settings.cycleFrames = 128;
+        const auto defaults { ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ()
+            .getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType).createCopy () };
+        WaveformDesign::AssignmentResult generated;
+        check (WaveformDesign::prepareAssignment (settings, folder, friendly, defaults, 0, 0, generated, juce::String ("abcdef012345")).wasOk ()
+               && Assimil8orEditorComponent::verifiedSampleRenameSuffix (generated.waves[0]) == suffix,
+               "Suffix protection requires an actual generated WAV and a matching verified recipe");
         auto prompt { Assimil8orEditorComponent::createSampleRenamePrompt ("Rename sample copy",
-            "Create a copy with a new name. All matching references in the current preset will follow the copy; the original WAV and other saved presets stay unchanged.", stem) };
+            "Create a copy with a new name. All matching references in the current preset will follow the copy; the original WAV and other saved presets stay unchanged.", friendly, suffix) };
         prompt->removeFromDesktop ();
         prompt->setLookAndFeel (&look);
         auto* input { prompt->getTextEditor ("sample-rename-name") };
@@ -81,41 +197,71 @@ struct SampleRenameUiTestAccess
                "The actual rename dialog can be inspected offscreen without a native peer or modal event loop");
         check (prompt->getName () == "Rename sample copy" && feedback->getName ().isEmpty (),
                "Internal test component IDs do not replace the dialog title or become visible custom-component captions");
-        check (input->getText () == stem && input->getHighlightedRegion () == juce::Range<int> (0, friendly.length ()),
-               "Generated filenames retain the complete stem while preselecting only the friendly beginning, not the generated suffix");
+        check (input->getText () == friendly && input->getHighlightedRegion () == juce::Range<int> (0, friendly.length ()),
+               "Verified generated filenames expose only the friendly prefix for editing, not their automatic suffix");
         check (feedback->getText ().contains (juce::String (stem.length () + 4) + " / 47")
-               && feedback->getText ().contains ("Valid WAV filename") && input->getText () == stem
+               && feedback->getText ().contains ("Valid WAV filename") && input->getText () == friendly
                && prompt->getButton ("CREATE COPY")->isEnabled (),
                "Valid filename and character count retain the complete generated stem and count its .wav extension");
+        check (feedback->getText ().contains ("A8 Select: Warm-s") && feedback->getText ().contains ("A8 Channels: Warm-saw...01")
+               && feedback->getText ().contains ("first 6-10 characters") && feedback->getTooltip ().contains ("not editable")
+               && feedback->getTooltip ().contains ("voice number") && feedback->getTooltip ().contains ("user-controlled name portion")
+               && feedback->getTooltip ().contains ("hardware display can reveal"), "Generated rename previews the friendly name portion and explains the protected suffix omitted from it");
         snapshot (*prompt, "sample-rename-dialog-generated-prefix");
         input->insertTextAtCaret ("Bright saw");
-        check (input->getText () == "Bright saw" + suffix, "Typing replaces only the selected friendly prefix and preserves the suffix");
+        input->onTextChange ();
+        check (input->getText () == "Bright saw" && feedback->getText ().contains ("A8 Channels: Bright saw...01"),
+               "Typing replaces the friendly prefix while the name preview retains its automatic voice number");
         input->setHighlightedRegion ({ input->getText ().length () - 2, input->getText ().length () });
         input->insertTextAtCaret ("03");
-        check (input->getText () == "Bright saw-abcdef012345-03", "The generated-looking suffix remains editable instead of being locked");
-        input->setText (juce::String::repeatedString ("A", 43), false);
+        input->onTextChange ();
+        check (input->getText () == "Bright s03" && feedback->getText ().contains ("...01"),
+               "Editing the field's final characters cannot change the separately protected voice number");
+        input->setText ("test", false); input->onTextChange ();
+        check (feedback->getText ().contains ("A8 Select: test    A8 Channels: test...01"),
+               "Short generated rename previews have no automatic separator or identifier characters");
+        input->setText ("test-", false); input->onTextChange ();
+        check (feedback->getText ().contains ("A8 Select: test-    A8 Channels: test-...01"),
+               "Generated rename retains a hyphen that is part of the user-controlled prefix");
+        input->setText (juce::String::repeatedString ("A", 27), false);
         input->onTextChange ();
         check (feedback->getText ().contains ("47 / 47") && prompt->getButton ("CREATE COPY")->isEnabled (),
                "The name input accepts the complete 47-character WAV filename limit");
-        input->setText (juce::String::repeatedString ("A", 44), false);
+        input->setText (juce::String::repeatedString ("A", 28), false);
         input->onTextChange ();
         check (feedback->getText ().contains ("48 / 47") && ! prompt->getButton ("CREATE COPY")->isEnabled (),
                "The dialog visibly rejects one character beyond the limit instead of truncating the name");
         snapshot (*prompt, "sample-rename-dialog-too-long");
+        input->setText ({}, false); input->onTextChange ();
+        check (feedback->getText ().contains ("A8 Select: --    A8 Channels: --") && ! prompt->getButton ("CREATE COPY")->isEnabled (),
+               "An empty friendly name shows -- for both hardware previews and cannot generate a suffix-only filename");
         prompt->setLookAndFeel (nullptr);
-        for (const auto& ordinary : { juce::String ("Bass sequence"), juce::String ("Warm saw-abcdef012345-09"), juce::String ("Warm saw-nothex012345-01") })
+        for (const auto& ordinary : { juce::String ("Bass sequence"), juce::String ("Lookalike-abcdef012345-01"), juce::String ("Warm saw-abcdef012345-09"), juce::String ("Warm saw-nothex012345-01") })
         {
+            const auto ordinaryFile { folder.getChildFile (ordinary + ".wav") };
+            check (generated.waves[0].copyFileTo (ordinaryFile) && Assimil8orEditorComponent::verifiedSampleRenameSuffix (ordinaryFile).isEmpty (),
+                   "A real WAV with a generated-looking name but no matching recipe does not gain suffix protection");
             auto ordinaryPrompt { Assimil8orEditorComponent::createSampleRenamePrompt ("Rename sample copy", "Create a copy; originals remain unchanged.", ordinary) };
             ordinaryPrompt->removeFromDesktop ();
             auto* ordinaryInput { ordinaryPrompt->getTextEditor ("sample-rename-name") };
             check (ordinaryInput != nullptr && ordinaryInput->getText () == ordinary
                    && ordinaryInput->getHighlightedRegion () == juce::Range<int> (0, ordinary.length ()),
                    "Ordinary names and nonmatching suffix patterns select the complete stem for replacement");
+            check (! ordinaryInput->getTooltip ().contains ("not editable") && ordinaryInput->getTooltip ().contains ("remain editable"),
+                   "Ordinary names make no false claim about automatic or protected trailing characters");
+            auto* ordinaryFeedback { dynamic_cast<juce::Label*> (findNamed (*ordinaryPrompt, "sample-rename-character-count")) };
+            ordinaryInput->setText ("test-a", false); ordinaryInput->onTextChange ();
+            check (ordinaryFeedback && ordinaryFeedback->getText ().contains ("A8 Select: test-a    A8 Channels: test-a"),
+                   "Ordinary rename still previews the exact basename, including its user-entered hyphen and no automatic voice suffix");
+            ordinaryInput->setText ({}, false); ordinaryInput->onTextChange ();
+            check (ordinaryFeedback && ordinaryFeedback->getText ().contains ("A8 Select: --    A8 Channels: --"),
+                   "An empty ordinary filename also keeps both -- placeholders");
         }
     }
 
     static void run ()
     {
+        rawCycleMenus ();
         promptControls ();
         const auto folder { juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("a8-sample-rename-ui", "", false) };
         check (folder.createDirectory ().wasOk (), "Create owned sample-rename UI fixture");
@@ -174,7 +320,7 @@ struct SampleRenameUiTestAccess
         std::atomic<bool> failPreparation { false };
         int prompts { 0 }, notices { 0 };
         bool noticeError { false };
-        juce::String promptMessage, initialName, lastNotice;
+        juce::String promptMessage, initialName, protectedSuffix, lastNotice;
         std::function<void (std::optional<juce::String>)> answer;
         std::function<void (bool)> collapseAnswer;
         ModernLookAndFeel look;
@@ -188,10 +334,10 @@ struct SampleRenameUiTestAccess
         auto configure = [&]
         {
             editor->setLookAndFeel (&look); editor->init (root); editor->setSize (1140, 720);
-            editor->promptSampleRename = [&] (const juce::String&, const juce::String& message, const juce::String& name,
+            editor->promptSampleRename = [&] (const juce::String&, const juce::String& message, const juce::String& name, const juce::String& suffix,
                                               std::function<void (std::optional<juce::String>)> callback)
             {
-                ++prompts; promptMessage = message; initialName = name; answer = std::move (callback);
+                ++prompts; promptMessage = message; initialName = name; protectedSuffix = suffix; answer = std::move (callback);
             };
             editor->notifySampleRename = [&] (bool error, const juce::String&, const juce::String& message)
             { ++notices; noticeError = error; lastNotice = message; };
@@ -391,6 +537,35 @@ struct SampleRenameUiTestAccess
                && fileNames (folder) == filesBeforeUppercaseNoOp && editor->channelActionSession.isDirty ()
                && editor->savePendingLabel.isVisible (),
                "Accepting an unchanged uppercase WAV stem preserves extension case, creates no files and retains existing pending edits");
+        unchangedFiles ();
+
+        auto design { WaveformDesign::startingPoint (WaveformDesign::Mode::oscillator, WaveformDesign::Shape::sine) };
+        design.cycleFrames = 128;
+        WaveformDesign::AssignmentResult generated;
+        check (WaveformDesign::prepareAssignment (design, folder, "Generated", defaults.createCopy (), 0, 0, generated, juce::String ("fedcba987654")).wasOk (),
+               "Create an actual generated WAV and recipe for the real FILE-menu rename path");
+        ZoneProperties generatedZone (tree.getChild (5).getChild (2), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        generatedZone.setSample (generated.waves[0].getFileName (), false);
+        action (5, 2) ();
+        check (initialName == "Generated" && protectedSuffix == "-fedcba987654-01",
+               "FILE rename separates a verified generated prefix from its immutable ID and voice suffix");
+        answer (juce::String ("Renamed wave")); nextCompletion () ();
+        const auto renamedGenerated { folder.getChildFile ("Renamed wave-fedcba987654-01.wav") };
+        WaveformDesignRecall::RecalledDesign recalled;
+        check (! noticeError && generatedZone.getSample () == renamedGenerated.getFileName () && renamedGenerated.existsAsFile ()
+               && generated.waves[0].existsAsFile () && WaveformDesignRecall::recallWave (renamedGenerated, recalled).wasOk (),
+               "The rename worker receives the reconstructed full name, retains the original, and preserves the copied recipe");
+        action (5, 2) ();
+        check (initialName == "Renamed wave" && protectedSuffix == "-fedcba987654-01",
+               "A renamed generated copy still protects the same verified automatic suffix");
+        answer ({});
+        const auto lookalike { folder.getChildFile ("Ordinary-fedcba987654-01.wav") };
+        check (source.copyFileTo (lookalike), "Create an ordinary source whose filename resembles a generated assignment");
+        generatedZone.setSample (lookalike.getFileName (), false);
+        action (5, 2) ();
+        check (initialName == "Ordinary-fedcba987654-01" && protectedSuffix.isEmpty (),
+               "The real FILE menu leaves a lookalike ordinary filename completely editable");
+        answer ({});
         unchangedFiles ();
 
         action () ();

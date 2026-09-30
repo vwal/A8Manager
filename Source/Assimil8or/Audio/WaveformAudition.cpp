@@ -200,6 +200,42 @@ struct WaveformAudition::State
 WaveformAudition::WaveformAudition () : state (std::make_unique<State> ()) {}
 WaveformAudition::~WaveformAudition () = default;
 
+AuditionSignalCheck::Report WaveformAudition::inspectSignal (PayloadPtr payload, double transpose)
+{
+    const auto blocked = [] (const juce::String& reason)
+    {
+        AuditionSignalCheck::Report result;
+        result.status = AuditionSignalCheck::Status::blocked;
+        result.reasons.add (reason);
+        return result;
+    };
+    try
+    {
+        WaveformAudition monitor;
+        monitor.prepareToPlay (48000.0);
+        monitor.setPayload (std::move (payload));
+        monitor.setMonitorGain (1.0);
+        if (const auto transposed { monitor.setTransposeSemitones (transpose) }; transposed.failed ())
+            return blocked (transposed.getErrorMessage ());
+        if (const auto started { monitor.start () }; started.failed ())
+            return blocked (started.getErrorMessage ());
+
+        // Reuse one bounded two-channel buffer. Do not analyse startup ramps or
+        // the DC blocker's initial condition as a characteristic of the source.
+        juce::AudioBuffer<float> output (2, 48000);
+        output.clear ();
+        if (! monitor.process ({ &output, 0, 4800 }) || ! monitor.process ({ &output, 0, output.getNumSamples () }))
+            return blocked ("The protected waveform monitor could not render this design for inspection.");
+        // This is an already-rendered continuous monitor interval, not a new
+        // loop made by joining arbitrary ends of the one-second observation.
+        return AuditionSignalCheck::analyse (output, { 0, output.getNumSamples (), 0, 2, 48000.0, false });
+    }
+    catch (const std::bad_alloc&)
+    {
+        return blocked ("There is not enough memory to inspect waveform audition.");
+    }
+}
+
 double WaveformAudition::maximumTransposeSemitones (const WaveformDesign::Settings& settings) noexcept
 {
     const auto ceiling { settings.sampleRate == 48000.0 ? 72.0 : settings.sampleRate == 96000.0 ? 60.0

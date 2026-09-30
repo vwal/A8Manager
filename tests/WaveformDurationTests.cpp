@@ -27,10 +27,25 @@ void testWaveformDuration ()
     expect (2, 10.0);
     zone.setSampleStart (48000, false);
     zone.setSampleEnd (144000, false);
-    zone.setLoopStart (240000, false);
+    expect (2, 2.0); // Both unset loop bounds follow the selected sample.
+    zone.setLoopStart (72000, false);
+    expect (2, 1.5); // An unset length ends at Sample End, not EOF.
     zone.setLoopLength (48000.5, false);
     expect (1, 2.0);
-    expect (2, 48000.5 / 48000.0); // Loop need not be inside sample selection.
+    expect (2, 48000.5 / 48000.0);
+    zone.setLoopStart (240000, false);
+    check (! WaveformDuration::selected (zone, sample, 2), "A detached loop cannot supply a playable duration");
+    const auto external { WaveformDuration::selected (zone, sample, 2, 0.0, true) };
+    check (external && std::abs (*external - 48000.5 / 48000.0) < 1.0e-9, "Advanced channels can match the independent loop duration");
+    zone.setLoopStart (40000, false);
+    check (! WaveformDuration::selected (zone, sample, 2), "Loop Start before Sample Start cannot supply a duration");
+    zone.setLoopStart (72000, false);
+    zone.setLoopLength (3.99, false);
+    check (! WaveformDuration::selected (zone, sample, 2), "A sub-four-frame loop cannot supply a playable duration");
+    check (! WaveformDuration::selected (zone, sample, 2, 0.0, true), "Advanced duration matching still requires four loop frames");
+    zone.setLoopLength (4.5, false);
+    expect (2, 4.5 / 48000.0);
+    zone.setLoopLength (48000.5, false);
     zone.setPitchOffset (12.0, false);
     expect (0, 5.0);
     expect (1, 1.0);
@@ -68,5 +83,15 @@ void testWaveformDuration ()
     zone.setSample ("", false);
     check (! WaveformDuration::selected (zone, sample, 0), "Purged zone cannot use a stale cache");
     check (! WaveformDuration::selected (zone, sample, 3), "Unknown duration selector must be rejected");
-    std::cout << "PASS: combined channel/zone pitch and hardware-capped file/sample/loop matching, fractional loop, independent regions and invalid data\n";
+    zone.setSample ("tiny.wav", false);
+    zone.setSampleStart (-1, false); zone.setSampleEnd (-1, false);
+    zone.setLoopStart (-1, false); zone.setLoopLength (-1, false);
+    zone.setPitchOffset (0.0, false);
+    sample.setLengthInSamples (3, false);
+    expect (0, 3.0 / 48000.0); expect (1, 3.0 / 48000.0);
+    check (! WaveformDuration::selected (zone, sample, 2), "Tiny files retain SAMPLE duration without inventing a four-frame loop");
+    sample.setLengthInSamples (300, false);
+    zone.setSampleStart (100, false); zone.setSampleEnd (200, false);
+    expect (2, 100.0 / 48000.0);
+    std::cout << "PASS: combined pitch and hardware-capped file/sample/loop matching, fractional contained loops, implicit sample bounds, tiny samples and invalid data\n";
 }

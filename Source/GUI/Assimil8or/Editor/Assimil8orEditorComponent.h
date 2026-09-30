@@ -42,6 +42,9 @@ public:
     juce::Result savePreset ();
     void recallSelectedWaveform ();
     bool canRecallSelectedWaveform ();
+    bool canImportSelectedCycle ();
+    void importSelectedCycle ();
+    bool hasPendingFileOperation () const { return channelFileOperationBusy (); }
     std::function<void (int channel, int zone)> onRecallWaveform;
 
 private:
@@ -76,7 +79,7 @@ private:
     std::thread stereoCollapseThread;
     unsigned stereoCollapseConfirmation { 0 };
     bool stereoCollapseConfirming { false };
-    std::function<void (const juce::String&, const juce::String&, const juce::String&, std::function<void (std::optional<juce::String>)>)> promptSampleRename;
+    std::function<void (const juce::String&, const juce::String&, const juce::String&, const juce::String&, std::function<void (std::optional<juce::String>)>)> promptSampleRename;
     std::function<void (bool, const juce::String&, const juce::String&)> notifySampleRename;
     std::function<bool (std::function<void ()>)> dispatchSampleRename;
     std::function<juce::Result (const juce::File&, const juce::ValueTree&, const juce::String&, const juce::String&, SampleRename::Result&)> prepareSampleRename;
@@ -135,8 +138,9 @@ private:
     void finishStereoCollapse (std::shared_ptr<StereoCollapseJob> job);
     void stopStereoCollapseAudition ();
     juce::PopupMenu createSampleFileMenu (int channelIndex, int zoneIndex);
+    static juce::String verifiedSampleRenameSuffix (const juce::File& source);
     static std::unique_ptr<juce::AlertWindow> createSampleRenamePrompt (const juce::String& title, const juce::String& message,
-                                                                     const juce::String& initialName);
+                                                                     const juce::String& initialName, const juce::String& protectedSuffix = {});
     void requestSampleRename (const PresetEditSession::Snapshot& source, const juce::String& filename,
                               const juce::String& proposedName, const juce::String& error = {});
     void startSampleRename (const PresetEditSession::Snapshot& source, const juce::String& filename, const juce::String& requestedName);

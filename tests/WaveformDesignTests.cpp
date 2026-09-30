@@ -353,6 +353,8 @@ void testWaveformDesign ()
     recipe.measuredFullScaleVolts = 5.2;
     Settings loaded;
     const auto encoded { juce::JSON::toString (toJson (recipe)) };
+    check (static_cast<int> (toJson (recipe).getProperty ("version", 0)) == 1,
+           "Ordinary generated shapes retain the original version-1 recipe schema");
     check (fromJson (juce::JSON::parse (encoded), loaded).wasOk () && juce::JSON::toString (toJson (loaded)) == encoded, "JSON recipe round-trips every setting, including inactive voices and unsigned seed");
     check (sameAudio (generated (recipe), generated (loaded)), "Recipe reload reproduces generated audio exactly");
     const auto loadedBefore { juce::JSON::toString (toJson (loaded)) };
@@ -362,6 +364,9 @@ void testWaveformDesign ()
     };
     auto json { toJson (recipe) };
     json.getDynamicObject ()->setProperty ("version", 2);
+    rejected (json); // Version 2 requires its self-contained imported-cycle payload.
+    json = toJson (recipe);
+    json.getDynamicObject ()->setProperty ("version", 3);
     rejected (json);
     json = toJson (recipe);
     json.getProperty ("settings", {}).getDynamicObject ()->setProperty ("cycleFrames", 100.0);

@@ -2,6 +2,9 @@
 #include "../../../Assimil8or/Preset/ZoneContinuation.h"
 #include "../../../Assimil8or/Preset/ZonePurge.h"
 #include "../../../Assimil8or/Preset/PairedZoneEdits.h"
+#include "../../../Assimil8or/Preset/StereoChannelTools.h"
+#include "../../../Assimil8or/Preset/ZoneSampleRanges.h"
+#include "../../../Assimil8or/Audio/AudioManager.h"
 #include "../../ModernTheme.h"
 #include "FormatHelpers.h"
 #include "ParameterToolTipData.h"
@@ -302,7 +305,7 @@ void ChannelEditor::copyToNextZone (int zoneIndex, bool continueSlice)
         updateAllZoneTabNames ();
         ensureProperZoneIsSelected ();
         zoneTabs.setCurrentTabIndex (zoneIndex + 1);
-        sampleWaveformDisplay.focusZone ();
+        sampleWaveformDisplay.resetZoom ();
     };
     const auto rightTarget { PairedZoneEdits::rightZone (channelProperties.getValueTree (), zoneIndex + 1) };
     const auto rightOccupied { rightTarget.isValid () && ZoneProperties (rightTarget, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no).getSample ().isNotEmpty () };
@@ -350,6 +353,117 @@ void ChannelEditor::duplicateZone (int zoneIndex)
         juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot insert zone", "Both sides of a stereo pair need an empty final slot. No existing zone was discarded.");
 }
 
+void ChannelEditor::allowLoopOutsideSampleUiChanged (bool allow)
+{
+    const auto tree { channelProperties.getValueTree () };
+    allowLoopOutsideSampleButton.setToggleState (channelProperties.getAllowLoopOutsideSample (), juce::dontSendNotification);
+    if (! PairedZoneEdits::editable (tree)) return;
+    const auto before { tree.createCopy () };
+    const auto right { ZonePurge::linkedRightChannel (tree) };
+    const auto rightBefore { right.createCopy () };
+    std::vector<juce::ValueTree> resets;
+    if (! allow)
+        for (const auto channelTree : { tree, right })
+        {
+            if (! channelTree.isValid ()) continue;
+            ChannelProperties channel (channelTree, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+            for (auto index { 0 }; index < 8; ++index)
+            {
+                ZoneProperties zone (channel.getZoneVT (index), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+                if (zone.getSample ().isEmpty ()) continue;
+                const auto stored { ZoneSampleRanges::read (zone) };
+                if (! stored.loopStart && ! stored.loopLength) continue;
+                SampleProperties sample (sampleManagerProperties.getSamplePropertiesVT (channel.getId () - 1, index),
+                    SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+                const auto frames { sample.getStatus () == SampleStatus::exists ? sample.getLengthInSamples () : stored.sampleEnd.value_or (0) };
+                // With unknown file extent an explicit loop cannot safely be
+                // certified contained; confirmation resets it to automatic.
+                if (frames > 0 && ZoneSampleRanges::resolve (stored, frames).loopValid) continue;
+                resets.push_back (zone.getValueTree ());
+            }
+        }
+    auto apply = [safe = juce::Component::SafePointer<ChannelEditor> (this), tree, before, right, rightBefore, resets, allow] (bool approved)
+    {
+        if (! approved || safe == nullptr || safe->channelProperties.getValueTree () != tree || ! tree.isEquivalentTo (before) ||
+            ZonePurge::linkedRightChannel (tree) != right || (right.isValid () && ! right.isEquivalentTo (rightBefore))) return;
+        if (! resets.empty ()) safe->audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+        for (const auto& reset : resets)
+        {
+            ZoneProperties zone (reset, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            zone.setLoopStart (-1, true);
+            zone.setLoopLength (-1.0, true);
+        }
+        safe->channelProperties.setAllowLoopOutsideSample (allow, true);
+        if (right.isValid ()) ChannelProperties (right, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no)
+            .setAllowLoopOutsideSample (allow, true);
+    };
+    if (resets.empty ()) apply (true);
+    else confirmOutsideLoopReset (juce::String (static_cast<int> (resets.size ())) +
+        " zone(s), including the stereo companion where applicable, have loops outside their selected samples. "
+        "Reset those loops to follow their sample areas and turn off independent loop editing? Sample boundaries remain unchanged. "
+        "Cancel keeps the option enabled and all markers unchanged.", std::move (apply));
+}
+
+juce::Result ChannelEditor::prepareZonePaste (int zoneIndex, juce::ValueTree clipboard,
+                                            juce::ValueTree& prepared, juce::StringArray& repaired)
+{
+    prepared = channelProperties.getValueTree ().getParent ().createCopy ();
+    repaired.clear ();
+    if (! PairedZoneEdits::pasteContent (prepared.getChild (channelIndex), zoneIndex, clipboard))
+        return juce::Result::fail ("The copied stereo pair is incomplete. Assign its right-channel sample and copy again.");
+
+    const auto targetChannel { prepared.getChild (channelIndex) };
+    const auto right { PairedZoneEdits::rightZone (targetChannel, zoneIndex) };
+    AudioManager readerManager;
+    for (const auto target : { targetChannel.getChild (zoneIndex), right })
+    {
+        if (! target.isValid ()) continue;
+        ZoneProperties zone (target, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        if (zone.getSample ().isEmpty ()) continue;
+        ChannelProperties owner (target.getParent (), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        const auto ownerIndex { owner.getId () - 1 };
+        juce::int64 frames { 0 };
+        // Settings-only paste retains the target WAV, which need not have the
+        // source WAV's length (nor its stereo companion's length).
+        ZoneProperties current (channelProperties.getValueTree ().getParent ().getChild (ownerIndex).getChild (zoneIndex),
+                                ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        SampleProperties loaded (sampleManagerProperties.getSamplePropertiesVT (ownerIndex, zoneIndex),
+                                 SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        if (current.getSample () == zone.getSample () && loaded.getStatus () == SampleStatus::exists)
+            frames = loaded.getLengthInSamples ();
+        else if (! zone.getSample ().containsAnyOf ("/\\") && ! juce::File::isAbsolutePath (zone.getSample ()))
+            if (const auto reader { readerManager.getReaderFor (juce::File (appProperties.getMostRecentFolder ()).getChildFile (zone.getSample ())) })
+                frames = reader->lengthInSamples;
+
+        const auto before { ZoneSampleRanges::read (zone) };
+        const auto extent { frames };
+        // SAMPLE END is not the physical WAV extent. Unknown audio must not
+        // cause a legal external loop to be reset on this detached proposal;
+        // the content validator below rejects unavailable WAVs before commit.
+        if (extent <= 0) continue;
+        if (frames > 0 && (before.loopStart || before.loopLength) &&
+            ! ZoneSampleRanges::resolve (before, frames).loopValid && ZoneSampleRanges::resolve (before, frames, true).loopValid)
+        {
+            ChannelProperties (targetChannel, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no)
+                .setAllowLoopOutsideSample (true, false);
+            if (right.isValid ()) ChannelProperties (right.getParent (), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no)
+                .setAllowLoopOutsideSample (true, false);
+        }
+        const auto allow { owner.getAllowLoopOutsideSample () };
+        const auto range { ZoneSampleRanges::resolve (before, extent, allow) };
+        if (range.loopValid) continue;
+        const auto after { ZoneSampleRanges::repair (before, extent, owner.getLoopLengthIsEnd ()
+            ? ZoneSampleRanges::Mode::end : ZoneSampleRanges::Mode::length, allow) };
+        ZoneSampleRanges::apply (zone, after, extent, false, allow);
+        if (before.sampleStart != after.sampleStart || before.sampleEnd != after.sampleEnd ||
+            before.loopStart != after.loopStart || before.loopLength != after.loopLength)
+            repaired.add ("CH " + juce::String (owner.getId ()) + ", zone " + juce::String (zoneIndex + 1));
+    }
+    // Validate the complete proposed preset before stopping playback or
+    // mutating either live stereo side, even for a settings-only paste.
+    return editManager->validateContentChange (prepared);
+}
+
 // TODO - move this to the EditManger
 void ChannelEditor::pasteZone (int zoneIndex)
 {
@@ -357,22 +471,23 @@ void ChannelEditor::pasteZone (int zoneIndex)
     const auto clipboard { copyBufferZoneProperties.getValueTree ().createCopy () };
     auto apply = [this, zoneIndex, clipboard] ()
     {
-        if (clipboard.getProperty (ZoneProperties::SamplePropertyId).toString ().isNotEmpty ())
+        juce::ValueTree prepared;
+        juce::StringArray repaired;
+        if (const auto result { prepareZonePaste (zoneIndex, clipboard, prepared, repaired) }; result.failed ())
         {
-            const auto prepared { channelProperties.getValueTree ().getParent ().createCopy () };
-            if (! PairedZoneEdits::pasteContent (prepared.getChild (channelIndex), zoneIndex, clipboard)) return;
-            if (const auto allowed { editManager->validateContentChange (prepared) }; allowed.failed ())
-            {
-                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot paste zone", allowed.getErrorMessage ());
-                return;
-            }
-        }
-        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
-        if (! PairedZoneEdits::pasteContent (channelProperties.getValueTree (), zoneIndex, clipboard))
-        {
-            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot paste zone", "The copied stereo pair is incomplete. Assign its right-channel sample and copy again.");
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot paste zone", result.getErrorMessage ());
             return;
         }
+        audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+        channelProperties.setAllowLoopOutsideSample (ChannelProperties (prepared.getChild (channelIndex), ChannelProperties::WrapperType::client,
+            ChannelProperties::EnableCallbacks::no).getAllowLoopOutsideSample (), true);
+        if (const auto right { PairedZoneEdits::rightZone (channelProperties.getValueTree (), zoneIndex) }; right.isValid ())
+            ChannelProperties (right.getParent (), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no)
+                .setAllowLoopOutsideSample (channelProperties.getAllowLoopOutsideSample (), true);
+        zoneProperties[zoneIndex].copyFrom (prepared.getChild (channelIndex).getChild (zoneIndex), false);
+        if (const auto right { PairedZoneEdits::rightZone (channelProperties.getValueTree (), zoneIndex) }; right.isValid ())
+            ZoneProperties (right, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no)
+                .copyFrom (PairedZoneEdits::rightZone (prepared.getChild (channelIndex), zoneIndex), false);
         // if this is not on the end
         if (zoneIndex < editManager->getNumUsedZones (channelIndex) - 1)
         {
@@ -402,6 +517,11 @@ void ChannelEditor::pasteZone (int zoneIndex)
         updateAllZoneTabNames ();
         ensureProperZoneIsSelected ();
         updateWaveformDisplay ();
+        if (! repaired.isEmpty ())
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Pasted boundaries adjusted",
+                "The copied boundaries did not fit the target sample in " + repaired.joinIntoString ("; ") +
+                ". Invalid loop boundaries were ignored; these loops now follow their selected sample areas. "
+                "Sample boundaries were constrained to the target WAV where needed. Save the preset to keep these changes.");
     };
     const auto right { PairedZoneEdits::rightZone (channelProperties.getValueTree (), zoneIndex) };
     if (copyBufferZoneProperties.getSample ().isNotEmpty () && (zoneProperties[zoneIndex].getSample ().isNotEmpty () ||
@@ -2170,6 +2290,18 @@ void ChannelEditor::setupChannelComponents ()
         editMenu.showMenuAsync ({}, [this] (int) {});
     };
     setupComboBox (xfadeGroupComboBox, "XfadeGroup", [this] () { xfadeGroupUiChanged (xfadeGroupComboBox.getText ()); });
+    allowLoopOutsideSampleButton.setButtonText ("Allow loop outside sample");
+    allowLoopOutsideSampleButton.setComponentID ("allowLoopOutsideSample");
+    allowLoopOutsideSampleButton.setTooltip ("Advanced editing: allow independent loop boundaries anywhere in the WAV. No striped regions are shown. "
+        "LOOP audition remains available; Sample > Loop simulation still requires a contained loop and does not simulate external CV. "
+        "This is an editor-only setting, not an Assimil8or parameter.");
+    allowLoopOutsideSampleButton.onClick = [this] { allowLoopOutsideSampleUiChanged (allowLoopOutsideSampleButton.getToggleState ()); };
+    addAndMakeVisible (allowLoopOutsideSampleButton);
+    confirmOutsideLoopReset = [] (juce::String message, std::function<void (bool)> completion)
+    {
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Constrain loops to samples?", message,
+            "Reset loops", "Cancel", nullptr, juce::ModalCallbackFunction::create ([completion] (int choice) { completion (choice != 0); }));
+    };
 
     /////////////////////////////////////////
     // column five above the Zones tab component
@@ -2480,6 +2612,7 @@ void ChannelEditor::init (juce::ValueTree channelPropertiesVT, juce::ValueTree u
     PresetHelpers::setCvInputAndAmount (channelProperties.getSampleEndMod (), [this] (juce::String cvInput, double value) { sampleEndModDataChanged (cvInput, value); });
     spliceSmoothingDataChanged (channelProperties.getSpliceSmoothing ());
     xfadeGroupDataChanged (channelProperties.getXfadeGroup ());
+    allowLoopOutsideSampleButton.setToggleState (channelProperties.getAllowLoopOutsideSample (), juce::dontSendNotification);
     zonesCVDataChanged (channelProperties.getZonesCV ());
     zonesRTDataChanged (channelProperties.getZonesRT ());
 
@@ -2519,6 +2652,7 @@ void ChannelEditor::setupChannelPropertiesCallbacks ()
     channelProperties.onLinAMisExtEnvChange = [this] (bool linAMisExtEnv) { linAMisExtEnvDataChanged (linAMisExtEnv);  };
     channelProperties.onLinFMChange = [this] (CvInputAndAmount amountAndCvInput) { const auto& [cvInput, value] { amountAndCvInput }; linFMDataChanged (cvInput, value); };
     channelProperties.onLoopLengthIsEndChange = [this] (bool loopLengthIsEnd) { loopLengthIsEndDataChanged (loopLengthIsEnd); };
+    channelProperties.onAllowLoopOutsideSampleChange = [this] (bool allow) { allowLoopOutsideSampleButton.setToggleState (allow, juce::dontSendNotification); };
     channelProperties.onLoopLengthModChange = [this] (CvInputAndAmount amountAndCvInput) { const auto& [cvInput, value] { amountAndCvInput }; loopLengthModDataChanged (cvInput, value); };
     channelProperties.onLoopModeChange = [this] (int loopMode) { loopModeDataChanged (loopMode);  };
     channelProperties.onLoopStartModChange = [this] (CvInputAndAmount amountAndCvInput) { const auto& [cvInput, value] { amountAndCvInput }; loopStartModDataChanged (cvInput, value); };
@@ -2603,6 +2737,7 @@ void ChannelEditor::checkStereoRightOverlay ()
     sampleStartModTextEditor.setEnabled (! isStereoRightMode);
     spliceSmoothingButton.setEnabled (! isStereoRightMode);
     xfadeGroupComboBox.setEnabled (! isStereoRightMode);
+    allowLoopOutsideSampleButton.setEnabled (! isStereoRightMode);
     zonesCVComboBox.setEnabled (! isStereoRightMode);
     zonesRTComboBox.setEnabled (! isStereoRightMode);
     arEnvelopeComponent.setEnabled (! isStereoRightMode);
@@ -2871,6 +3006,7 @@ void ChannelEditor::positionColumnFour (int xOffset, int width)
     // XFADE GRP
     xfadeGroupLabel.setBounds (xOffset, curYOffset + 2, scaleWidth (0.50f), kMediumLabelIntSize);
     xfadeGroupComboBox.setBounds (xfadeGroupLabel.getRight () + 3, curYOffset, scaleWidth (0.50f), kParameterLineHeight);
+    allowLoopOutsideSampleButton.setBounds (xOffset, xfadeGroupComboBox.getBottom () + 3, width + 3, 34);
 }
 
 void ChannelEditor::resized ()
@@ -2913,7 +3049,7 @@ void ChannelEditor::resized ()
     // TODO - improve size calculation
     // Waveform Display
     const auto waveformTop { std::max ({ expAMTextEditor.getBottom (), arEnvelopeComponent.getBottom (),
-                                        mixModTextEditor.getBottom (), xfadeGroupComboBox.getBottom () }) + 12 };
+                                        mixModTextEditor.getBottom (), allowLoopOutsideSampleButton.getBottom () }) + 12 };
     const auto waveformY { waveformExpanded ? 3 : waveformTop };
     sampleWaveformDisplay.setBounds (15, waveformY, juce::jmax (0, zoneTabs.getX () - 30),
                                     juce::jmax (0, getHeight () - waveformY - 35));
@@ -3067,6 +3203,7 @@ void ChannelEditor::channelModeDataChanged (int channelMode)
 {
     LogDataAndUiChanges ("channelModeDataChanged");
     channelModeComboBox.setSelectedItemIndex (channelMode, juce::NotificationType::dontSendNotification);
+    syncPairedLoopPermission ();
     checkStereoRightOverlay ();
 }
 
@@ -3074,7 +3211,18 @@ void ChannelEditor::channelModeUiChanged (int channelMode)
 {
     LogDataAndUiChanges ("channelModeUiChanged");
     channelProperties.setChannelMode (channelMode, false);
+    syncPairedLoopPermission ();
     checkStereoRightOverlay ();
+}
+
+void ChannelEditor::syncPairedLoopPermission ()
+{
+    const auto partner { StereoChannelTools::partner (channelProperties.getValueTree ()) };
+    if (! partner.isValid ()) return;
+    ChannelProperties paired (partner, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+    const auto allow { channelProperties.getAllowLoopOutsideSample () || paired.getAllowLoopOutsideSample () };
+    channelProperties.setAllowLoopOutsideSample (allow, true);
+    paired.setAllowLoopOutsideSample (allow, true);
 }
 
 void ChannelEditor::expAMDataChanged (juce::String cvInput, double expAM)

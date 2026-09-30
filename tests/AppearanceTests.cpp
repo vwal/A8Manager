@@ -53,6 +53,18 @@ void testAppearance ()
         for (size_t marker { 0 }; marker < 4; ++marker)
             check (contrast (WaveformPresentation::markerColours[marker], Theme::field) >= 4.5,
                    "All four marker colours remain readable on the waveform surface");
+        check (WaveformPresentation::markerColours[0] == juce::Colour (light ? 0xff056338 : 0xff35aa7c) &&
+               WaveformPresentation::markerColours[1] == juce::Colour (light ? 0xffb0283a : 0xffe35a62),
+               "Lightening loop markers leaves the familiar Sample Start/End colours unchanged");
+        check (luminance (WaveformPresentation::markerColours[2]) > luminance (juce::Colour (light ? 0xff36803f : 0xff88ef9b)) * 1.05 &&
+               luminance (WaveformPresentation::markerColours[3]) > luminance (juce::Colour (light ? 0xffb83b76 : 0xfff39db5)) * 1.05,
+               "Loop green and pink are modestly lighter than the previous palette in both appearances");
+        check (WaveformPresentation::markerColours[0].getGreen () > WaveformPresentation::markerColours[0].getRed () &&
+               WaveformPresentation::markerColours[1].getRed () > WaveformPresentation::markerColours[1].getGreen () &&
+               luminance (WaveformPresentation::markerColours[2]) > luminance (WaveformPresentation::markerColours[0]) * 1.5 &&
+               luminance (WaveformPresentation::markerColours[3]) > luminance (WaveformPresentation::markerColours[1]) * 1.5 &&
+               WaveformPresentation::markerColours[3].getBlue () > WaveformPresentation::markerColours[3].getGreen (),
+               "Sample Start/End use deep green/red; Loop Start/End use distinctly lighter green/pink in both palettes");
         endpoint.applyColourToAllText (juce::Colours::red, true);
         check (endpoint.findColour (juce::TextEditor::textColourId) == Theme::error, "Range validation remains visible in either palette");
         endpoint.applyColourToAllText (juce::Colours::white, true);

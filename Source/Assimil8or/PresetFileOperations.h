@@ -60,7 +60,10 @@ namespace PresetFileOperations
         for (const auto& line : lines)
         {
             const auto trimmed { line.trim () };
-            if (trimmed.isEmpty () || trimmed.startsWithChar ('#')) continue;
+            if (trimmed.isEmpty ()) continue;
+            // Preserve editor-only default-intent comments for the parser;
+            // they are not preset headers or hardware parameters.
+            if (trimmed.startsWithChar ('#')) { content.add (line); continue; }
             const auto key { trimmed.upToFirstOccurrenceOf (":", false, false).trim () };
             const auto type { key.upToFirstOccurrenceOf (" ", false, false) };
             if (type == "Preset" || type == "Channel" || type == "Zone")
@@ -107,9 +110,9 @@ namespace PresetFileOperations
         const auto newFrom { staging.getChildFile (FileTypeHelpers::getPresetFileName (from) + ".yml") };
         const auto newTo { staging.getChildFile (FileTypeHelpers::getPresetFileName (to) + ".yml") };
         Assimil8orPreset writer;
-        if (auto result { writer.write (newTo, fromTree) }; result.failed ()) return abandon (result.getErrorMessage ());
+        if (auto result { writer.write (newTo, fromTree, folder) }; result.failed ()) return abandon (result.getErrorMessage ());
         if (destinationExists)
-            if (auto result { writer.write (newFrom, toTree) }; result.failed ()) return abandon (result.getErrorMessage ());
+            if (auto result { writer.write (newFrom, toTree, folder) }; result.failed ()) return abandon (result.getErrorMessage ());
         if (! install) install = [] (juce::File source, juce::File target) { return source.replaceFileIn (target); };
         if (! install (newTo, toFile) || (destinationExists ? ! install (newFrom, fromFile) : ! fromFile.deleteFile ()))
         {

@@ -25,6 +25,9 @@ public:
     static constexpr double maxAuditionRate { 4.0 };
     void setAuditionRate (double rate, bool includeSelfCallback);
     void setPreservePitch (bool preserve, bool includeSelfCallback);
+    // Session-only preference for explicit Samples workspace loads, not a preset setting.
+    void setAutoLoopEnabled (bool enabled, bool includeSelfCallback);
+    bool getAutoLoopEnabled ();
     void showConfigDialog (bool includeSelfCallback);
     // Actual active computer output, not the last saved device configuration.
     void setOutputDeviceName (const juce::String& name, bool includeSelfCallback);
@@ -47,6 +50,7 @@ public:
     std::function<void (SimulationPhase)> onSimulationPhaseChange;
     std::function<void (double)> onAuditionRateChange;
     std::function<void (bool)> onPreservePitchChange;
+    std::function<void (bool)> onAutoLoopEnabledChange;
 
     static inline const juce::Identifier AudioConfigTypeId { "AudioPlayer" };
     static inline const juce::Identifier PlayStatePropertyId            { "playState" };
@@ -58,6 +62,7 @@ public:
     static inline const juce::Identifier AuditionRatePropertyId         { "auditionRate" };
     static inline const juce::Identifier PreservePitchPropertyId        { "preservePitch" };
     static inline const juce::Identifier OutputDeviceNamePropertyId     { "outputDeviceName" };
+    static inline const juce::Identifier AutoLoopEnabledPropertyId       { "autoLoopEnabled" };
 
     void initValueTree ();
     void processValueTree () {}

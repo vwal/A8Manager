@@ -4,6 +4,7 @@
 #include "../Assimil8or/Audio/WaveformDesign.h"
 #include "../Assimil8or/Audio/WaveformAudition.h"
 #include "../Assimil8or/Audio/WaveformDesignAssignment.h"
+#include "../Assimil8or/Audio/AuditionSignalCheck.h"
 #include "PresetEditSession.h"
 
 // A separate design surface. Its host supplies audition through the existing
@@ -18,8 +19,10 @@ public:
     void setInitialFolder (juce::File folder);
     using AssignmentContext = PresetEditSession::Snapshot;
     void refreshAssignmentContext ();
+    bool hasPendingFileOperation () const;
     void showPresetSaveStatus (const juce::String& message, bool error = false);
     void recallAssigned (int channel, int zone); // Zero-based selected preset coordinates.
+    void importSingleCycle (juce::File file); // Explicit raw-audio import; never changes the source WAV.
     WaveformDesign::Settings getSettings () const;
     std::function<std::optional<AssignmentContext> ()> onGetAssignmentContext;
     std::function<juce::Result (const AssignmentContext&, const WaveformDesign::AssignmentResult&)> onApplyAssignment;
@@ -36,6 +39,11 @@ private:
     friend struct WaveformWorkspaceTestAccess;
     std::function<void (const juce::String&, std::function<void (bool)>)> confirmAssignment;
     std::function<void (const juce::String&, std::function<void (bool)>)> confirmRecall;
+    std::function<void (const juce::String&, std::function<void (bool)>)> confirmRawImport;
+    std::function<void (const juce::String&, std::function<void (bool)>)> confirmLayerConversion;
+    std::function<void (const juce::String&, std::function<void (int)>)> chooseRawChannel;
+    std::function<AuditionSignalCheck::Report (WaveformAudition::PayloadPtr, double)> inspectAuditionSignal;
+    std::function<void (const juce::String&, std::function<void (bool)>)> confirmAuditionWarning;
     std::function<void (const WaveformDesign::Settings&, juce::File, const juce::String&, int)> launchTestOutput;
     struct Impl;
     std::unique_ptr<Impl> impl;

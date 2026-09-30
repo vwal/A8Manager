@@ -9,14 +9,15 @@ class LoopPointsView : public juce::Component, public juce::SettableTooltipClien
 public:
     LoopPointsView ();
     void setAudioBuffer (juce::AudioBuffer<float>* theAudioBuffer);
-    void setLoopPoints (juce::int64 theSampleOffset, juce::int64 theNumSamples, int theSide);
+    void setLoopPoints (juce::int64 theSampleOffset, double theNumSamples, int theSide, bool theLoopSelected = false);
     std::function<void (bool start)> onContextMenu;
 
 private:
     juce::AudioBuffer<float>* audioBuffer { nullptr };
     juce::int64 sampleOffset { 0 };
-    juce::int64 numSamples { 0 };
+    double numSamples { 0.0 };
     int side { 0 };
+    bool loopSelected { false };
 
     void paint (juce::Graphics& g);
     void mouseDown (const juce::MouseEvent& event) override;

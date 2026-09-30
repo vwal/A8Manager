@@ -1,8 +1,10 @@
 #include "MainComponent.h"
 #include "ModernTheme.h"
+#include "BankExportComponent.h"
 #include "../SystemServices.h"
 #include "../Assimil8or/Audio/AudioPlayer.h"
 #include "../Assimil8or/PresetFolderCopy.h"
+#include "../Assimil8or/PresetBankExport.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
 
@@ -147,7 +149,7 @@ void MainComponent::saveDesignerPreset ()
     if (designerSaveBusy) return;
     const auto source { presetSession.snapshot () };
     if (! source) return;
-    if (PresetFolderCopy::isNamedPresetFolder (source->folder, source->preset))
+    if (PresetFolderCopy::isNamedPresetFolder (source->folder, source->preset) || PresetBankExport::isBankFolder (source->folder))
     {
         const auto result { assimil8orEditorComponent.savePreset () };
         waveformWorkspace.showPresetSaveStatus (result.wasOk () ? "Saved preset in " + source->folder.getFullPathName ()
@@ -157,6 +159,7 @@ void MainComponent::saveDesignerPreset ()
     }
 
     if (designerSaveThread.joinable ()) designerSaveThread.join ();
+    designerCopyStatus.reset ();
     designerSaveBusy = true;
     updateSharedPresetHeader ();
     waveformWorkspace.showPresetSaveStatus ("Saving a self-contained A8 preset folder... Original files stay in place.");
@@ -204,6 +207,10 @@ void MainComponent::completeDesignerPresetSave (const PresetEditSession::Snapsho
         // Only a successful copy of the still-current snapshot may mark the
         // source document saved. A failed original save keeps its dirty baseline.
         const auto sourceResult { assimil8orEditorComponent.savePreset () };
+        const auto savedSource { presetSession.snapshot () };
+        if (sourceResult.wasOk () && savedSource && ! presetSession.isDirty () && savedSource->folder == source.folder
+            && savedSource->preset.isEquivalentTo (source.preset))
+            designerCopyStatus.recordSuccess (savedSource, savedFolder);
         waveformWorkspace.showPresetSaveStatus (sourceResult.wasOk ()
             ? "Saved A8 preset folder: " + savedFolder.getFullPathName () + ". Original samples and working folder preserved."
             : "Created " + savedFolder.getFullPathName () + ", but saving the original preset failed: " + sourceResult.getErrorMessage (), sourceResult.failed ());
@@ -243,29 +250,83 @@ void MainComponent::showWaveformWorkspace (bool show)
         onWorkspaceChanged (show);
 }
 
+void MainComponent::showBankExport ()
+{
+    if (designerSaveBusy || waveformWorkspace.hasPendingFileOperation () || assimil8orEditorComponent.hasPendingFileOperation ())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Save/Export Bank",
+            "Please wait for the current save or waveform file operation to finish, then export the bank.");
+        return;
+    }
+    auto safe = juce::Component::SafePointer<MainComponent> (this);
+    if (presetSession.isDirty ())
+    {
+        const auto source { presetSession.snapshot () };
+        if (! source)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Save/Export Bank",
+                "Choose a working preset folder and save your current edits before exporting a bank.");
+            return;
+        }
+        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::QuestionIcon, "Save current preset first?",
+            "Bank export collects saved presets. Save your current preset to its working folder before continuing? "
+            "The bank itself will be a new copy; existing folders will not be moved or replaced.",
+            "Save and continue", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([safe, source = *source] (int choice)
+            {
+                if (safe == nullptr || choice != 1) return;
+                // An assignment or a change of folder must not save a different
+                // document from the one the user just approved.
+                if (! safe->presetSession.matches (source))
+                {
+                    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Preset changed",
+                        "The current preset changed while this question was open. Please choose Save/Export Bank again.");
+                    return;
+                }
+                if (safe->assimil8orEditorComponent.savePreset ().wasOk ())
+                {
+                    safe->updateSharedPresetHeader ();
+                    safe->showBankExport ();
+                }
+            }));
+        return;
+    }
+    BankExportComponent::show (juce::File (appProperties.getMostRecentFolder ()), [safe] (juce::File folder)
+    {
+        if (safe == nullptr) return;
+        // Reuse the normal folder-change protection; opening an exported copy
+        // must never silently discard edits made since export started.
+        safe->showWaveformWorkspace (false);
+        safe->currentFolderComponent.requestRootFolder (folder);
+    });
+}
+
 void MainComponent::updateSharedPresetHeader ()
 {
     PresetProperties preset (presetSession.getEdit (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
     if (! preset.isValid ()) return;
     const auto source { presetSession.snapshot () };
     const auto bound { source.has_value () };
-    const auto needsPortableCopy { source && ! PresetFolderCopy::isNamedPresetFolder (source->folder, source->preset) };
+    const auto needsPortableCopy { source && ! PresetFolderCopy::isNamedPresetFolder (source->folder, source->preset)
+        && ! PresetBankExport::isBankFolder (source->folder) };
+    const auto copyRefreshed { designerCopyStatus.copyWasRefreshed (source) };
     const auto dirty { presetSession.isDirty () };
     designerPresetLabel.setText ("Preset " + juce::String (preset.getId ()), juce::dontSendNotification);
     if (designerPresetName.getText () != preset.getName ()) designerPresetName.setText (preset.getName (), false);
     designerPresetName.setEnabled (bound);
     designerSave.setEnabled (bound && ! designerSaveBusy && (dirty || needsPortableCopy));
     designerSave.setTooltip (needsPortableCopy
-        ? "Save the preset and create or refresh its self-contained PRnn - name folder for the SD card, even when there are no unsaved edits. Original samples and the working folder are preserved."
-        : "Save changes in this already-open named preset folder. No additional nested folder is created.");
-    designerSaveState.setText (designerSaveBusy ? (dirty ? "SAVE IS PENDING (saving...)" : "Saving A8 folder...")
-        : dirty ? "SAVE IS PENDING" : ! bound ? "Select a preset slot"
-        : needsPortableCopy ? "Saved / refresh copy" : "Saved / unchanged", juce::dontSendNotification);
+        ? "Save the preset and create or refresh its self-contained Pnn - name folder for the SD card, even when there are no unsaved edits. Original samples and the working folder are preserved."
+        : "Save changes in this already-open preset or bank folder. No additional nested folder is created.");
+    designerSaveState.setText (DesignerPresetSaveStatus::text (designerSaveBusy, dirty, bound, needsPortableCopy, copyRefreshed), juce::dontSendNotification);
     designerSaveState.setTooltip (dirty
         ? (designerSaveBusy ? "The A8 preset folder is being saved. Preset edits remain unsaved until the copy and original preset save both succeed."
                            : "This preset has changes that have not been saved. Click SAVE to preserve them; generating or assigning a waveform alone does not save the preset.")
         : (designerSaveBusy ? "Refreshing the self-contained A8 preset folder. The working preset has no unsaved changes."
-                           : "The working preset has no unsaved changes."));
+            : needsPortableCopy ? (copyRefreshed
+                ? "The working preset was saved and its self-contained copy was refreshed for this session. Changes to files outside the app may still require another Save."
+                : "The working preset has no unsaved changes, but a current self-contained copy has not been confirmed in this session. Click SAVE to create or refresh it before copying it to the SD card.")
+            : "The working preset has no unsaved changes. This preset or bank folder is saved directly; no separate copy needs refreshing."));
     Theme::bindColour (designerSaveState, juce::Label::textColourId, [dirty]
         { return dirty ? (Theme::isLight () ? juce::Colours::white : Theme::field) : Theme::muted; });
     Theme::bindColour (designerSaveState, juce::Label::backgroundColourId, [dirty]

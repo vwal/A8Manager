@@ -25,7 +25,7 @@ folder without stepping through intermediate locations.
    channel, including its other zones. Appending a zone divides the former last
    zone's CV-selection range. Other sample content remains unchanged.
 5. Click the designer's **SAVE**. It creates or refreshes a self-contained
-   `PRNN - <preset name>` folder, then saves the working `prstNNN.yml`.
+   `PNN - <preset name>` folder, then saves the working `prstNNN.yml`.
    Assignment itself does not save the preset or discard your previous unsaved
    edits. Wait for the save result before ejecting the card or copying the folder.
 
@@ -33,6 +33,12 @@ folder without stepping through intermediate locations.
 from its last saved state, in both Samples and the designer. A failed save leaves
 the reminder on. Changing a waveform design alone does not change the preset:
 use **Generate & Assign...** to apply it, then **SAVE**.
+
+After the designer saves both the working preset and its portable folder, the
+status reads **Saved / refreshed copy**. **Saved (remember to refresh copy)**
+means the working preset is clean but a current portable copy has not been
+confirmed in this session. Click the designer's **SAVE** before transfer. This
+status does not continuously check files changed outside the app.
 
 Generated mono 24-bit WAVs and a uniquely named `.design.json` recipe are placed
 directly in the current folder. Their names start with your design name, without
@@ -42,6 +48,19 @@ when regenerating a design. If the preset/folder changes during generation,
 assignment is canceled and its unused generated files are cleaned up. Successful
 assignment keeps its files even if you later discard the preset edits; those
 files may be useful independently and are not automatically deleted.
+
+Put identifying information in the first **6–10 characters** of **Design name**:
+A8 Select shows the first **six**, while **A8 Channels** shows the first **10**
+characters of long names, `...`, and the final **two**. Both previews omit `.wav`.
+The Designer preview focuses on the name you control: it hides the automatic
+separator and random identifier, and an empty field shows `--`. For example,
+`test` previews as Select `test` and Channels `test...01`. On the actual A8,
+some of the automatic suffix can be visible after a short name. The app adds a
+unique identifier and a two-digit voice number (`01`–`08`). These are not edited
+through Design name; the displayed final digits are the automatic voice number,
+not the last two characters you typed.
+These hints describe Generate & Assign naming; standalone packages use
+`voice-01.wav`, `voice-02.wav`, etc. The existing filename limits are unchanged.
 
 ### Getting a shared preset onto Assimil8or
 
@@ -56,7 +75,7 @@ Design name. For preset 1 named `koe-01`, it creates:
 
 ```text
 SD card/
-└── PR01 - koe-01/
+└── P01 - koe-01/
     ├── prst001.yml
     ├── audiowave-01-...-01.wav
     ├── audiowave-02-...-01.wav
@@ -80,21 +99,36 @@ create a differently named copy; previous copies are retained, not deleted.
 
 Your working folder and its shared files stay in place, and the preset list
 does not switch folders. Repeated saves refresh the generated copy. If you
-open a named `PRNN - ...` folder for that same slot, Save works in place
+open a named `PNN - ...` folder for that same slot, Save works in place
 instead of wrapping it in another nested folder. Saving a different slot from
 there creates a sibling preset folder, not a nested one. Ordinary **Samples** saves
 remain in-place saves; use the designer's **SAVE** to refresh the hardware copy.
 
-Older `A8 Preset NN - ...` folders remain recognized for in-place saving; existing
+Older `PRNN - ...` and `A8 Preset NN - ...` folders remain recognized for in-place saving; existing
 folders and files are not renamed automatically.
 
-If you work on your computer, copy the complete generated `PRNN - ...`
+For multiple presets available together on A8, use **Save/Export Bank** in the
+top toolbar. It collects saved presets from the current folder and any other
+folders you explicitly add. Choose unique destination slots, a new bank name
+and its parent folder. The result contains all selected `prstNNN.yml` files,
+their referenced WAVs, available recipes and required MIDI setups at the same
+level. Original folders are never moved or removed. **Open bank after export**
+is optional (off by default); when open, both workspaces save any preset slot
+directly in that bank, without creating per-preset folders. See the
+[bank workflow](USER-GUIDE.md#savingexporting-a-preset-bank).
+
+If you work on your computer, copy the complete generated `PNN - ...`
 folder directly onto the SD-card root. If it was created elsewhere on the card,
 copy it to the root before using it on A8: the app cannot assume every working
 directory is a card root. Do not copy loose files or put another folder around
 the complete package. **SAVE after the final assignment**, safely eject the
 card, then load that folder and preset on A8. There is no need to export each
 channel as a separate package: that creates independent presets instead.
+
+If loading the folder initially shows **001 ~empty~** on A8, select the preset
+number actually saved in it. For example, `P02 - ...` containing `prst002.yml`
+loads by selecting **002**. An empty 001 slot does not mean the export failed;
+there is no need to rename the file, renumber the preset, or export it again.
 
 **CV and audio must use separate channels**, though they may coexist on different
 channels of one preset. This includes every zone, not just the selected zone.
@@ -216,7 +250,7 @@ See the [test-output workflow and essential measurements](HARDWARE-TEST-CHECKLIS
   waveform in designer...**.
 - In the designer, choose an occupied **Target channel / Target zone** and click
   **Recall assigned...**.
-- Or use **Load recipe / WAV...** to select a package's `design.json`, an assigned
+- Or use **Load recipe / cycle WAV...** to select a package's `design.json`, an assigned
   design's uniquely named `.design.json`, or its generated WAV directly.
 
 The Samples **Preset tools** command is greyed out unless the selected zone contains a
@@ -242,14 +276,53 @@ copy, preserving recall, including the complete settings for a layer bank.
 Keep the new `.design.json` beside that WAV. Renaming files outside the app does
 not update this association; load the recipe explicitly in that case, or when
 an older WAV has no generator tag. A WAV alone cannot reconstruct the generator knobs
-or bank settings; missing/unrecognized recipes are reported without replacing
-your current design. Assignment and export both save the recipe; unwritten
+or bank settings. A raw single-cycle audio WAV can instead become a new imported
+shape, as described below. Broken recognized recipes are reported rather than
+bypassed as raw audio. Assignment and export both save the recipe; unwritten
 design changes are held only for the current application session.
 Each Workspace mode remembers its current design while the app remains open,
 so switching between Audio Cycle, CV and Layer Bank preserves those edits.
 Choosing a fresh Starting point replaces the current mode's design with preset
 defaults; export first if you want to retain it. Changing the Shape selector
 keeps the other shaping and output controls.
+
+## Importing a raw single-cycle WAV
+
+**Load recipe / cycle WAV...** also accepts a raw audio WAV without a recipe.
+In Samples, right-click **FILE → Import WAV as cycle in designer...**, or choose
+**Preset tools → Import selected WAV as cycle...**. In the Designer, **Recall
+assigned...** offers the same import for a raw WAV assigned to the target zone.
+
+The whole file is treated as **one cycle**, not a long recording to analyse for
+pitch or slice automatically. Import accepts mono or stereo PCM/float WAVs of
+**4–8192 frames**. Stereo requires a choice of left, right, or their average;
+opposite-polarity channels can cancel when averaged. Import asks before replacing
+your design, does not start audition, and never changes the source or preset.
+Known CV and diagnostic files cannot be imported as audio. An untagged external
+file cannot reliably be identified as CV: import only cycles intended for audio.
+
+The resulting **Imported** shape supports harmonics, brightness, phase, skew,
+drive, fold and amplitude. This is shaping the imported cycle, not recovering
+the oscillator knobs that originally produced it. Source frames are retained in
+the recipe; rendering periodically resamples to the next power-of-two cycle
+length, from 64 to 8192 frames. Output is 48 kHz, or 96 kHz for a 96 kHz source.
+Changing cycle length changes the base playback pitch. DC is removed and
+harmonics are filtered (maximum 1024); original level is not peak-normalized.
+Amplitude acts as gain. The import confirmation reports these conversions.
+
+Import while in **Layer Bank** to create seven related voices from the cycle.
+For an already imported Audio Cycle, use **Create layer bank...** below the
+preview to turn the current shaped cycle into seven voices. It asks before
+replacing an existing Layer Bank design. Simply switching modes restores that
+mode's previous design; an imported Audio Cycle seeds a previously unused bank.
+Adjust the voice count and spreads as usual. Import while in CV switches to Audio Cycle;
+it is not a way to convert CV into speaker-auditionable content.
+
+Use **Generate & Assign**, then **Save**, or export a package. Imported-source
+recipes embed the cycle (recipe version 2), so later recall needs the generated
+WAV and its recipe, not the original raw file. Ordinary generated designs still
+use version 1. Choosing a fresh starting-point preset replaces the imported
+shape, just as it replaces any other unsaved design.
 
 ## Visual preview and live audition
 
@@ -263,6 +336,14 @@ application's selected audio output. **Stop audition** stops it. Changes to the
 design become audible after the background render finishes. In Layer Bank, each
 voice plays with its own detune and pan, so you can hear beating and stereo
 spread rather than just an untransposed individual WAV.
+
+Audition checks the protected monitor signal for high-confidence sustained DC
+or strongly sub-audible content. Normal sharp-edged shapes and loud signals do
+not generate warnings just because they have steep gradients. The monitor's
+existing DC removal and audible-frequency limits still apply. Warnings hold
+playback until you approve; canceling or changing the design invalidates the
+old approval. Replaying an unchanged approved design does not ask repeatedly.
+This is not a hardware/speaker-safety certification; keep listening levels low.
 
 - **Monitor level** changes computer-listening volume only. Start low; use the
   design's amplitude and per-voice gain controls to change exported file levels.
@@ -458,6 +539,22 @@ See the [CV-generation discussion review](CV-GENERATION-REVIEW.md) for planned
 possibilities such as zone-linked companion CV, triggers and envelope following.
 
 ## Layer Bank / Supersaw
+
+To expand your current **Audio Cycle**, choose **Create layer bank...** below
+the waveform preview. This works with both built-in shapes and imported raw
+single-cycle WAVs, keeping all current shaping settings, cycle length, sample
+rate, playback setting and design name. It opens the Layer Bank controls with
+seven voices, ±24 cents detune, 0°–300° phase spread and ±0.8 pan spread.
+Per-voice levels start at 1/√7; you can then adjust the voice count (1–8), spreads
+and individual voices. CV Modulation is deliberately excluded.
+
+Audition stops during conversion; press **Start audition** to hear the new bank.
+The original Audio Cycle remains available in the **Workspace** menu for this
+session. If a Layer Bank already exists, replacement requires confirmation;
+cancel and assign/export it first if you want to keep it permanently. Conversion
+alone changes no preset or files. Use **Generate & Assign**, then **Save**, or
+**Export new package...** to produce the multi-channel version. Assignment needs
+enough consecutive non-stereo channels for the selected number of voices.
 
 Start with the supersaw preset, or another periodic shape. Choose 1–8 voices.
 The **Supersaw (7 voices)** button resets the design and displayed controls to

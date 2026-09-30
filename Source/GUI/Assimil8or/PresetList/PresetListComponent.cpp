@@ -4,6 +4,7 @@
 #include "../../../Assimil8or/FileTypeHelpers.h"
 #include "../../../Assimil8or/PresetManagerProperties.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
+#include "../../../Assimil8or/Preset/PresetLoopRanges.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
@@ -18,6 +19,10 @@
 
 PresetListComponent::PresetListComponent ()
 {
+    notifyLoopRepairs = [] (const juce::StringArray& zones)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Loop import settings", PresetLoopRanges::message (zones));
+    };
     showAllPresets.setToggleState (true, juce::NotificationType::dontSendNotification);
     showAllPresets.setButtonText ("Show All");
     showAllPresets.setTooltip ("Show all Presets, Show only existing presets");
@@ -259,9 +264,12 @@ bool PresetListComponent::loadPresetFile (juce::File presetFile, juce::ValueTree
 bool PresetListComponent::loadPreset (juce::File presetFile)
 {
     if (! loadPresetFile (presetFile, unEditedPresetProperties.getValueTree ())) return false;
+    auto corrected { unEditedPresetProperties.getValueTree ().createCopy () };
+    const auto repaired { PresetLoopRanges::repair (corrected, presetFile.getParentDirectory ()) };
     PresetProperties::copyTreeProperties (ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType),
                                           presetProperties.getValueTree ());
-    PresetProperties::copyTreeProperties (unEditedPresetProperties.getValueTree (), presetProperties.getValueTree ());
+    PresetProperties::copyTreeProperties (corrected, presetProperties.getValueTree ());
+    if (! repaired.isEmpty ()) notifyLoopRepairs (repaired);
     return true;
 }
 

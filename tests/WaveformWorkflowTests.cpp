@@ -345,10 +345,11 @@ struct WaveformTestAccess
                "Match Sample End selects SAMPLE and retains its start");
         audio.setSample (0, 300, 0.0f);
         audio.setSample (0, 318, -0.25f);
-        view.zoneProperties.setLoopLength (262.5, true);
+        audio.setSample (0, 560, -0.25f);
+        view.zoneProperties.setLoopLength (261.5, true);
         view.applyMenuAction (45, {});
-        check (selectedLoop && view.markerPosition (2) == 318 && view.markerPosition (3) == 562.5 &&
-               view.zoneProperties.getLoopLength () == 244.5 && ! channel.getLoopLengthIsEnd (),
+        check (selectedLoop && view.markerPosition (2) == 318 && view.markerPosition (3) == 561.5 &&
+               view.zoneProperties.getLoopLength () == 243.5 && ! channel.getLoopLengthIsEnd (),
                "Match Loop Start keeps the fractional end fixed even in Length mode, without changing mode");
         view.applyMenuAction (41, {});
         check (! selectedLoop && view.markerPosition (0) == 318 && view.markerPosition (1) == 562,
@@ -371,13 +372,13 @@ struct WaveformTestAccess
             {
                 for (const auto rightward : { false, true })
                 {
-                    view.zoneProperties.setSampleStart (300, true);
-                    view.zoneProperties.setSampleEnd (600, true);
+                    view.zoneProperties.setSampleStart (150, true);
+                    view.zoneProperties.setSampleEnd (850, true);
                     view.zoneProperties.setLoopStart (350, true);
                     view.zoneProperties.setLoopLength (300.5, true);
                     view.zoneProperties.setSide (marker % 2, true);
                     view.setLoopSelected (marker < 2);
-                    const std::array<double, 4> original { 300.0, 600.0, 350.0, 650.5 };
+                    const std::array<double, 4> original { 150.0, 850.0, 350.0, 650.5 };
                     const auto offset { marker % 2 };
                     const auto opposite { marker + (offset == 0 ? 1 : -1) };
                     const auto moving { original[static_cast<size_t> (marker)] };
@@ -415,15 +416,15 @@ struct WaveformTestAccess
         // Do not skip over it to a farther crossing which trims more material.
         for (const auto rightward : { false, true })
         {
-            view.zoneProperties.setSampleStart (300, true);
-            view.zoneProperties.setSampleEnd (600, true);
+            view.zoneProperties.setSampleStart (150, true);
+            view.zoneProperties.setSampleEnd (850, true);
             for (auto frame { 0 }; frame < audio.getNumSamples (); ++frame) audio.setSample (0, frame, 0.6f);
-            audio.setSample (0, 300, 0.0f);
-            audio.setSample (0, 599, 0.1f);
-            audio.setSample (0, 599 + (rightward ? 10 : -10), -0.5f);
-            audio.setSample (0, 599 + (rightward ? 30 : -30), 0.0f);
+            audio.setSample (0, 150, 0.0f);
+            audio.setSample (0, 849, 0.1f);
+            audio.setSample (0, 849 + (rightward ? 10 : -10), -0.5f);
+            audio.setSample (0, 849 + (rightward ? 30 : -30), 0.0f);
             view.applyMenuAction (rightward ? 43 : 42, {});
-            check (view.markerPosition (1) == 600 && view.durationInfo.getText ().contains ("unchanged"),
+            check (view.markerPosition (1) == 850 && view.durationInfo.getText ().contains ("unchanged"),
                    "An unhelpful nearest crossing does not cause a jump to a more distant perfect match");
         }
 
@@ -440,8 +441,8 @@ struct WaveformTestAccess
         };
         auto prepareMatch = [&] (int marker, bool rightward, int distance = 100)
         {
-            view.zoneProperties.setSampleStart (300, true);
-            view.zoneProperties.setSampleEnd (600, true);
+            view.zoneProperties.setSampleStart (150, true);
+            view.zoneProperties.setSampleEnd (850, true);
             view.zoneProperties.setLoopStart (350, true);
             view.zoneProperties.setLoopLength (300.5, true);
             view.zoneProperties.setSide (0, true);
@@ -497,7 +498,7 @@ struct WaveformTestAccess
             check (prompts == oldPrompts + (distance > 50 ? 1 : 0), "Only distances strictly above 50 ms require approval");
             if (distance > 50)
             {
-                check (view.markerPosition (1) == 600, "51 ms match waits for confirmation");
+                check (view.markerPosition (1) == 850, "51 ms match waits for confirmation");
                 answer (true);
             }
             check (view.markerPosition (1) == candidate, "Threshold-adjacent matches use the exact candidate");
@@ -506,14 +507,14 @@ struct WaveformTestAccess
         view.sampleProperties.setSampleRate (999.9, true);
         const auto beforeFractionalPrompt { prompts };
         view.applyMenuAction (42, {});
-        check (prompts == beforeFractionalPrompt + 1 && view.markerPosition (1) == 600,
+        check (prompts == beforeFractionalPrompt + 1 && view.markerPosition (1) == 850,
                "A fractional displacement just above 50 ms prompts even if display rounding is close to 50");
         answer (false);
 
         prepareMatch (1, false, 428);
         // Sample End cannot pass Sample Start: use a larger sample span for 428 ms.
         view.zoneProperties.setSampleStart (100, true);
-        audio.setSample (0, 300, 0.6f);
+        audio.setSample (0, 150, 0.6f);
         audio.setSample (0, 100, -0.25f);
         view.applyMenuAction (42, {});
         check (promptText.contains ("428.0 ms to the left"), "Confirmation shows the actual source-time displacement");
@@ -523,13 +524,13 @@ struct WaveformTestAccess
         {
             prepareMatch (1, true);
             view.applyMenuAction (43, {});
-            check (view.markerPosition (1) == 600, "Stale-approval fixture starts with an unapplied long match");
+            check (view.markerPosition (1) == 850, "Stale-approval fixture starts with an unapplied long match");
             change ();
             const auto changed { view.zoneProperties.getValueTree ().createCopy () };
             answer (true);
             check (view.zoneProperties.getValueTree ().isEquivalentTo (changed), "Stale approval never modifies changed editor state");
         };
-        checkStale ([&] { view.zoneProperties.setSampleEnd (610, true); view.zoneProperties.setSampleEnd (600, true); });
+        checkStale ([&] { view.zoneProperties.setSampleEnd (860, true); view.zoneProperties.setSampleEnd (850, true); });
         checkStale ([&] { view.zoneProperties.setLoopLength (290, true); });
         checkStale ([&] { view.zoneProperties.setSide (1, true); view.zoneProperties.setSide (0, true); });
         checkStale ([&] { view.setEnabled (false); view.setEnabled (true); });
@@ -543,7 +544,7 @@ struct WaveformTestAccess
         const auto firstAnswer { answer };
         view.applyMenuAction (43, {});
         firstAnswer (true);
-        check (view.markerPosition (1) == 600, "Starting another match invalidates earlier outstanding confirmations");
+        check (view.markerPosition (1) == 850, "Starting another match invalidates earlier outstanding confirmations");
         answer (false);
 
         prepareMatch (1, true);
@@ -557,14 +558,14 @@ struct WaveformTestAccess
             check (static_cast<bool> (destroyedAnswer), "Destruction fixture obtains a long-match confirmation");
         }
         destroyedAnswer (true);
-        check (view.markerPosition (1) == 600, "Closing a waveform view invalidates its pending approval safely");
+        check (view.markerPosition (1) == 850, "Closing a waveform view invalidates its pending approval safely");
 
         // Zero-crossing nudges use the same distance approval and stale-state
         // guards, but retain normal Loop Start / Length mode editing semantics.
         auto prepareNudge = [&] (int marker, bool rightward, int distance = 100)
         {
-            view.zoneProperties.setSampleStart (300, true);
-            view.zoneProperties.setSampleEnd (600, true);
+            view.zoneProperties.setSampleStart (150, true);
+            view.zoneProperties.setSampleEnd (850, true);
             view.zoneProperties.setLoopStart (350, true);
             view.zoneProperties.setLoopLength (300.5, true);
             view.zoneProperties.setSide (marker % 2, true);
@@ -627,7 +628,7 @@ struct WaveformTestAccess
             check (prompts == oldPrompts + (distance > 50 ? 1 : 0), "Zero crossings prompt only for source-time displacements strictly above 50 ms");
             if (distance > 50)
             {
-                check (view.markerPosition (1) == 600, "51 ms zero crossing does not move before approval");
+                check (view.markerPosition (1) == 850, "51 ms zero crossing does not move before approval");
                 answer (true);
             }
             check (view.markerPosition (1) == candidate, "Threshold-adjacent zero crossings apply the exact candidate");
@@ -636,7 +637,7 @@ struct WaveformTestAccess
         view.sampleProperties.setSampleRate (999.9, true);
         const auto fractionalZeroPrompts { prompts };
         view.applyMenuAction (22, {});
-        check (prompts == fractionalZeroPrompts + 1 && view.markerPosition (1) == 600,
+        check (prompts == fractionalZeroPrompts + 1 && view.markerPosition (1) == 850,
                "Zero crossing uses unrounded source-time distance above 50 ms");
         answer (false);
         prepareNudge (3, false, 50);
@@ -657,13 +658,13 @@ struct WaveformTestAccess
         {
             prepareNudge (1, true);
             view.applyMenuAction (23, {});
-            check (view.markerPosition (1) == 600, "Stale zero-crossing fixture starts with an unapplied move");
+            check (view.markerPosition (1) == 850, "Stale zero-crossing fixture starts with an unapplied move");
             change ();
             const auto changed { view.zoneProperties.getValueTree ().createCopy () };
             answer (true);
             check (view.zoneProperties.getValueTree ().isEquivalentTo (changed), "Stale zero-crossing approval cannot alter changed editor state");
         };
-        checkStaleNudge ([&] { view.zoneProperties.setSampleEnd (610, true); view.zoneProperties.setSampleEnd (600, true); });
+        checkStaleNudge ([&] { view.zoneProperties.setSampleEnd (860, true); view.zoneProperties.setSampleEnd (850, true); });
         checkStaleNudge ([&] { view.zoneProperties.setLoopLength (290, true); });
         checkStaleNudge ([&] { view.zoneProperties.setSide (0, true); view.zoneProperties.setSide (1, true); });
         checkStaleNudge ([&] { view.setEnabled (false); view.setEnabled (true); });
@@ -678,7 +679,7 @@ struct WaveformTestAccess
         const auto previousZeroAnswer { answer };
         view.applyMenuAction (23, {});
         previousZeroAnswer (true);
-        check (view.markerPosition (1) == 600, "A new zero-crossing request invalidates its previous outstanding approval");
+        check (view.markerPosition (1) == 850, "A new zero-crossing request invalidates its previous outstanding approval");
         answer (false);
         for (const auto matchFirst : { false, true })
         {
@@ -689,7 +690,7 @@ struct WaveformTestAccess
             view.applyMenuAction (matchFirst ? 23 : 43, {});
             check (prompts == beforeReplacement + 1, "Replacing match with nudge, or nudge with match, starts a new confirmation");
             supersededAnswer (true);
-            check (view.markerPosition (1) == 600, "Boundary matching and zero-crossing requests supersede one another's approvals");
+            check (view.markerPosition (1) == 850, "Boundary matching and zero-crossing requests supersede one another's approvals");
             answer (false);
         }
         prepareNudge (1, true);
@@ -703,7 +704,7 @@ struct WaveformTestAccess
             check (static_cast<bool> (destroyedZeroAnswer), "Destruction fixture obtains a zero-crossing confirmation");
         }
         destroyedZeroAnswer (true);
-        check (view.markerPosition (1) == 600, "Destroyed waveform views safely discard zero-crossing approvals");
+        check (view.markerPosition (1) == 850, "Destroyed waveform views safely discard zero-crossing approvals");
         view.setEnabled (false);
         const auto disabledNudge { view.zoneProperties.getValueTree ().createCopy () };
         const auto disabledPrompts { prompts };
@@ -714,42 +715,97 @@ struct WaveformTestAccess
         view.zoneProperties.setSide (0, true);
         view.sampleProperties.setSampleRate (1000, true);
 
+        auto prepareContained = [&] ()
+        {
+            view.markerOverlay.cancelDrag ();
+            view.zoneProperties.setSampleStart (200, true);
+            view.zoneProperties.setSampleEnd (800, true);
+            view.zoneProperties.setLoopStart (300, true);
+            view.zoneProperties.setLoopLength (200.5, true);
+        };
+        channel.setLoopLengthIsEnd (false, true);
+        prepareContained ();
+        view.applyMenuAction (30, 450.0);
+        check (view.markerPosition (0) == 450 && view.markerPosition (2) == 450 && view.markerPosition (3) == 650.5,
+               "Sample Start pushes an explicit loop right in Length mode without losing fractional length");
+        view.applyMenuAction (31, 500.0);
+        check (view.markerPosition (1) == 651 && view.zoneProperties.getLoopLength () == 200.5,
+               "Length mode prevents SAMPLE shrinking below the full loop length");
+        prepareContained ();
+        view.applyMenuAction (31, 450.0);
+        check (view.markerPosition (2) == 249 && view.markerPosition (3) == 449.5 && view.markerPosition (1) == 450,
+               "Sample End pushes an explicit loop left without rounding its fractional length");
+        view.applyMenuAction (32, -1000.0);
+        check (view.markerPosition (2) == 200 && view.zoneProperties.getLoopLength () == 200.5,
+               "Loop Start placement cannot escape Sample Start");
+        view.applyMenuAction (33, 1000.0);
+        check (view.markerPosition (3) == 450, "Loop End placement cannot escape Sample End");
+        prepareContained ();
+        channel.setLoopLengthIsEnd (true, true);
+        view.applyMenuAction (30, 450.0);
+        check (view.markerPosition (2) == 450 && view.markerPosition (3) == 500.5,
+               "End mode contracts only the corresponding loop edge when SAMPLE pushes it");
+        view.applyMenuAction (31, 451.0);
+        check (view.markerPosition (1) == 454 && view.markerPosition (3) == 454 && view.zoneProperties.getLoopLength () == 4.0,
+               "End-mode contraction retains the minimum four-frame SAMPLE and LOOP");
+        prepareContained ();
+        view.zoneProperties.setLoopStart (-1, true);
+        view.zoneProperties.setLoopLength (-1.0, true);
+        view.applyMenuAction (30, 400.0);
+        view.applyMenuAction (31, 650.0);
+        check (! view.zoneProperties.getLoopStart () && ! view.zoneProperties.getLoopLength () &&
+               view.markerPosition (2) == 400 && view.markerPosition (3) == 650,
+               "Unset loop markers follow the selected SAMPLE rather than the full WAV");
+        prepareContained ();
+        channel.setLoopLengthIsEnd (false, true);
+        view.resetZoom ();
+        const auto beforeMarkerDrag { view.zoneProperties.getValueTree ().createCopy () };
+        const juce::Point<float> dragOrigin { view.waveform.sampleToX (200) + 3.0f, 2.0f };
+        const auto dragRight { dragOrigin.translated (view.waveform.sampleToX (900) - view.waveform.sampleToX (200), 0) };
+        view.markerOverlay.mouseDown (mouse (view.markerOverlay, dragOrigin, dragOrigin, left));
+        view.markerOverlay.mouseDrag (mouse (view.markerOverlay, dragRight, dragOrigin, left));
+        check (view.markerPosition (0) == 599 && view.markerPosition (2) == 599 && view.zoneProperties.getLoopLength () == 200.5,
+               "Dragging Sample Start to its limit pushes the loop without shortening it");
+        view.markerOverlay.mouseDrag (mouse (view.markerOverlay, dragOrigin, dragOrigin, left));
+        view.markerOverlay.mouseUp (mouse (view.markerOverlay, dragOrigin, dragOrigin, left));
+        check (view.zoneProperties.getValueTree ().isEquivalentTo (beforeMarkerDrag),
+               "Returning a marker drag to mouse-down restores the original loop after a clamped push");
+
         view.zoneProperties.setSampleStart (200, true);
-        view.zoneProperties.setSampleEnd (400, true);
-        view.zoneProperties.setLoopStart (600, true);
+        view.zoneProperties.setSampleEnd (850, true);
+        view.zoneProperties.setLoopStart (300, true);
         view.zoneProperties.setLoopLength (250.5, true);
         view.resetZoom ();
         channel.setLoopMode (0, true);
-        auto bridge { view.markerOverlay.loopExtensionBounds () };
-        check (std::abs (bridge.getX () - view.waveform.sampleToX (400)) < 0.01f &&
-               std::abs (bridge.getRight () - view.waveform.sampleToX (600)) < 0.01f,
-               "Separated bridge remains visible with hardware No Loop; audition looping is independent");
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "No Loop never hatches an inactive loop tail");
+        channel.setLoopMode (1, true);
+        auto tail { view.markerOverlay.loopTailBounds () };
+        check (std::abs (tail.getX () - view.waveform.sampleToX (550.5)) < 0.01f &&
+               std::abs (tail.getRight () - view.waveform.sampleToX (850)) < 0.01f,
+               "Active loop stripes span exact Loop End to Sample End, entirely inside SAMPLE");
         for (const auto height : { 170, 560 })
         {
             view.setExpanded (height == 560);
             view.setSize (760, height);
             const auto rendered { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
-            const auto x { juce::roundToInt (view.waveform.sampleToX (500)) };
+            const auto x { juce::roundToInt (view.waveform.sampleToX (700)) };
             const auto middle { rendered.getHeight () / 2 };
             bool varies { false };
             for (auto y { middle }; y < middle + 16; ++y)
                 varies |= rendered.getPixelAt (x, y) != rendered.getPixelAt (x, middle);
-            check (varies, "No Loop bridge paints visible bands in compact and expanded views");
+            check (varies, "Active loop tail paints visible bands in compact and expanded views");
         }
         view.setExpanded (false);
         view.setSize (760, 170);
-        channel.setLoopMode (1, true);
-        auto extension { view.markerOverlay.loopExtensionBounds () };
-        check (std::abs (extension.getX () - view.waveform.sampleToX (400)) < 0.01f &&
-               std::abs (extension.getRight () - view.waveform.sampleToX (850.5)) < 0.01f, "Loop stripes span Sample End to exact Loop End, including the gap before Loop Start");
+        tail = view.markerOverlay.loopTailBounds ();
         view.setLoopSelected (false);
-        const auto sampleSelectedExtension { view.markerOverlay.loopExtensionBounds () };
+        const auto sampleSelectedTail { view.markerOverlay.loopTailBounds () };
         view.setLoopSelected (true);
-        check (view.markerOverlay.loopExtensionBounds () == sampleSelectedExtension, "Hardware loop extension is independent of audition region selection");
+        check (view.markerOverlay.loopTailBounds () == sampleSelectedTail, "Loop-tail indication is independent of audition region selection");
         channel.setLoopMode (2, true);
-        check (view.markerOverlay.loopExtensionBounds () == extension, "Loop/Release also shows the enabled loop extent");
+        check (view.markerOverlay.loopTailBounds () == tail, "Loop/Release also identifies the tail after Loop End");
         const auto hatched { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
-        const auto gapX { juce::roundToInt (view.waveform.sampleToX (500)) };
+        const auto gapX { juce::roundToInt (view.waveform.sampleToX (700)) };
         const auto outsideX { juce::roundToInt (view.waveform.sampleToX (950)) };
         const auto centre { hatched.getHeight () / 2 };
         auto bandVariation { false };
@@ -758,24 +814,71 @@ struct WaveformTestAccess
             bandVariation = bandVariation || hatched.getPixelAt (gapX, y) != hatched.getPixelAt (gapX, centre);
             check (hatched.getPixelAt (outsideX, y) == hatched.getPixelAt (outsideX, centre), "Ordinary unused audio stays uniformly dimmed");
         }
-        check (bandVariation, "Loop extension actually paints contrasting diagonal bands");
-        view.waveform.setVisibleRange (450, 300);
-        extension = view.markerOverlay.loopExtensionBounds ();
-        check (extension.getX () == 0.0f && extension.getWidth () == view.markerOverlay.getWidth (), "Hatching clips correctly when zoomed into the extension");
+        check (bandVariation, "Loop tail actually paints contrasting diagonal bands");
+        view.waveform.setVisibleRange (600, 200);
+        tail = view.markerOverlay.loopTailBounds ();
+        check (tail.getX () == 0.0f && tail.getWidth () == view.markerOverlay.getWidth (), "Hatching clips correctly when zoomed into the tail");
         view.waveform.setVisibleRange (900, 100);
-        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Offscreen extension does not shade unrelated audio");
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Offscreen tail does not shade unrelated audio");
         view.resetZoom ();
         view.setZone (2);
-        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Changing zones does not carry the previous extension");
+        check (std::abs (view.markerOverlay.loopTailBounds ().getX () - view.waveform.sampleToX (400.5)) < 0.01f &&
+               std::abs (view.markerOverlay.loopTailBounds ().getRight () - view.waveform.sampleToX (600)) < 0.01f,
+               "Changing zones recalculates the tail from the newly selected markers");
         view.setZone (1);
         view.sampleProperties.setStatus (SampleStatus::doesNotExist, true);
-        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Unloading a sample clears its loop extension");
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Unloading a sample clears its loop tail");
         view.sampleProperties.setStatus (SampleStatus::exists, true);
         view.zoneProperties.setLoopStart (300, true);
-        view.zoneProperties.setLoopLength (50, true);
-        check (view.markerOverlay.loopExtensionBounds ().isEmpty (), "Loops ending before Sample End retain ordinary selection shading");
-        view.zoneProperties.setLoopLength (200, true);
-        check (! view.markerOverlay.loopExtensionBounds ().isEmpty (), "A loop straddling Sample End also identifies its extended portion");
+        view.zoneProperties.setLoopLength (550, true);
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "A loop ending at Sample End has no tail");
+        view.zoneProperties.setLoopLength (600, true);
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Invalid legacy loops beyond SAMPLE never restore detached extension stripes");
+        view.zoneProperties.setLoopLength (250.5, true);
+        channel.setLoopMode (0, true);
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Turning hardware looping off clears the tail immediately");
+        audition.setSampleSource (0, view.zoneProperties.getId () - 1, true);
+        audition.setPlayState (AudioPlayerProperties::PlayState::sampleIntoLoop, true);
+        check (! view.markerOverlay.loopTailBounds ().isEmpty (), "Sample-into-loop simulation shows its active loop tail even with hardware No Loop");
+        audition.setSampleSource (0, 7, true);
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "A simulation in another zone does not hatch this zone");
+        audition.setSampleSource (0, view.zoneProperties.getId () - 1, true);
+        audition.setPlayState (AudioPlayerProperties::PlayState::stop, true);
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Stopping simulation restores unhatched No Loop shading");
+
+        prepareContained ();
+        channel.setAllowLoopOutsideSample (true, true);
+        channel.setLoopMode (1, true);
+        view.applyMenuAction (32, 850.0);
+        check (view.markerPosition (2) == 799 && view.markerPosition (3) == 999.5,
+               "Independent Loop Start is file-bounded rather than SAMPLE-bounded and retains fractional length");
+        view.applyMenuAction (31, 300.0);
+        check (view.markerPosition (1) == 300 && view.markerPosition (2) == 799 && view.zoneProperties.getLoopLength () == 200.5,
+               "Independent SAMPLE edits neither move nor resize an external loop");
+        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Independent editing suppresses all stripes, including active hardware loops");
+        view.applyMenuAction (30, 299.0);
+        check (view.markerPosition (0) == 296, "Independent SAMPLE still has a four-frame minimum");
+        view.resetZoom ();
+        view.setLoopSelected (true);
+        check (view.beginRegionMove (point (900)), "An independent external loop can be grabbed inside its own region");
+        view.waveform.onMoveRegion (-5000.0);
+        check (view.markerPosition (2) == 0 && view.markerPosition (3) == 200.5 && view.markerPosition (0) == 296,
+               "Independent grouped loop moves use full WAV bounds without moving SAMPLE");
+        view.zoneProperties.setLoopStart (500, true);
+        view.zoneProperties.setLoopLength (100.5, true);
+        view.sampleProperties.setSampleRate (48000, true);
+        for (auto frame { 0 }; frame < audio.getNumSamples (); ++frame) audio.setSample (0, frame, 0.6f);
+        audio.setSample (0, 700, 0.0f);
+        view.applyMenuAction (25, {});
+        check (view.markerPosition (2) == 700 && view.markerPosition (3) == 800.5,
+               "Zero-crossing search can reach a valid independent loop crossing beyond Sample End");
+        audio.setSample (0, 850, 0.0f);
+        view.applyMenuAction (47, {});
+        check (view.markerPosition (3) == 851 && view.markerPosition (2) == 700,
+               "Match Opposite Boundary searches beyond SAMPLE when independent loop editing is enabled");
+        channel.setAllowLoopOutsideSample (false, true);
+        prepareContained ();
+        view.sampleProperties.setSampleRate (1000, true);
         channel.setLoopMode (0, true);
 
         const auto artifacts { juce::SystemStats::getEnvironmentVariable ("A8MANAGER_TEST_ARTIFACTS", {}) };
@@ -807,28 +910,27 @@ struct WaveformTestAccess
                 stream->truncate ();
             }
             view.zoneProperties.setSampleStart (100, true);
-            view.zoneProperties.setSampleEnd (350, true);
-            view.zoneProperties.setLoopStart (550, true);
+            view.zoneProperties.setSampleEnd (850, true);
+            view.zoneProperties.setLoopStart (350, true);
             view.zoneProperties.setLoopLength (250, true);
             channel.setLoopMode (1, true);
             view.setLoopSelected (false);
             view.setExpanded (false);
             view.setSize (760, 220);
             view.resetZoom ();
-            auto stream { directory.getChildFile ("waveform-loop-extension.png").createOutputStream () };
-            check (stream != nullptr && stream->setPosition (0), "Open striped loop-extension artifact");
-            check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *stream), "Write striped loop-extension artifact");
+            auto stream { directory.getChildFile ("waveform-loop-tail.png").createOutputStream () };
+            check (stream != nullptr && stream->setPosition (0), "Open striped loop-tail artifact");
+            check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *stream), "Write striped loop-tail artifact");
             stream->truncate ();
             stream.reset ();
-            channel.setLoopMode (0, true);
             for (const auto height : { 170, 560 })
             {
                 view.setExpanded (height == 560);
                 view.setSize (760, height);
-                auto bridgeStream { directory.getChildFile (height == 170 ? "waveform-bridge-compact.png" : "waveform-bridge-expanded.png").createOutputStream () };
-                check (bridgeStream != nullptr && bridgeStream->setPosition (0), "Open No Loop bridge artifact");
-                check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *bridgeStream), "Write No Loop bridge artifact");
-                bridgeStream->truncate ();
+                auto tailStream { directory.getChildFile (height == 170 ? "waveform-loop-tail-compact.png" : "waveform-loop-tail-expanded.png").createOutputStream () };
+                check (tailStream != nullptr && tailStream->setPosition (0), "Open active loop-tail artifact");
+                check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *tailStream), "Write active loop-tail artifact");
+                tailStream->truncate ();
             }
         }
         // Schedule the production continuation callbacks in a deterministic

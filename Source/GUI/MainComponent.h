@@ -13,6 +13,7 @@
 #include "ModernTheme.h"
 #include "WaveformWorkspace.h"
 #include "PresetEditSession.h"
+#include "DesignerPresetSaveStatus.h"
 #include <thread>
 
 class WorkspaceSplitter : public SplitWindowComponent
@@ -35,6 +36,7 @@ public:
     ~MainComponent () override;
 
     void showWaveformWorkspace (bool show);
+    void showBankExport ();
     std::function<void (bool)> onWorkspaceChanged;
 
 private:
@@ -52,6 +54,7 @@ private:
     WaveformWorkspace waveformWorkspace;
     AppProperties appProperties;
     PresetEditSession presetSession;
+    DesignerPresetSaveStatus designerCopyStatus;
     juce::Label designerPresetLabel, designerSaveState;
     juce::TextEditor designerPresetName;
     juce::TextButton designerSave { "SAVE" }, designerFolder { "Root folder..." };

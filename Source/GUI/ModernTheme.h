@@ -25,11 +25,11 @@ namespace Theme
     inline juce::Colour markerColour (size_t index)
     {
         static const std::array<juce::Colour, 4> dark {
-            juce::Colour (0xffff8585), juce::Colour (0xff8fcaff),
-            juce::Colour (0xffffc879), juce::Colour (0xfff39db5) };
+            juce::Colour (0xff35aa7c), juce::Colour (0xffe35a62),
+            juce::Colour (0xff97f3a8), juce::Colour (0xfff7acc1) };
         static const std::array<juce::Colour, 4> light {
-            juce::Colour (0xffb32f39), juce::Colour (0xff175fa1),
-            juce::Colour (0xff965600), juce::Colour (0xffa33266) };
+            juce::Colour (0xff056338), juce::Colour (0xffb0283a),
+            juce::Colour (0xff3d8446), juce::Colour (0xffc14580) };
         return (isLight () ? light : dark)[index];
     }
 

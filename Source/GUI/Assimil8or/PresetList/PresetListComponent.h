@@ -21,6 +21,8 @@ public:
     std::function<void (std::function<void ()>, std::function<void ()>)> overwritePresetOrCancel;
 
 private:
+    friend struct PresetLoopRangeTestAccess;
+    std::function<void (const juce::StringArray&)> notifyLoopRepairs;
     using PresetInfo = PresetFileOperations::PresetInfo;
     using PresetInfoList = PresetFileOperations::PresetInfoList;
 

@@ -113,6 +113,13 @@ namespace WaveformDesign
                     return first + (settings.drawn[static_cast<size_t> (index + 1)] - first) * (position - index);
                 }
                 case Shape::random: return stepped (phase, settings, random);
+                case Shape::imported:
+                {
+                    const auto position { symmetric * static_cast<double> (settings.importedCycle.size ()) };
+                    const auto index { static_cast<size_t> (position) % settings.importedCycle.size () };
+                    const auto next { (index + 1) % settings.importedCycle.size () };
+                    return settings.importedCycle[index] + (settings.importedCycle[next] - settings.importedCycle[index]) * (position - std::floor (position));
+                }
             }
             return 0.0;
         }
@@ -195,7 +202,10 @@ namespace WaveformDesign
                 const auto sign { settings.invert ? -1.0 : 1.0 };
                 for (int frame { 0 }; frame < settings.cycleFrames; ++frame)
                 {
-                    auto value { peak > 1.0e-12 ? sign * buffer.getSample (0, frame) / peak : 0.0 };
+                    // A raw imported cycle keeps its original relative level;
+                    // amplitude becomes a gain, not an automatic peak boost.
+                    auto value { settings.shape == Shape::imported ? sign * buffer.getSample (0, frame)
+                        : peak > 1.0e-12 ? sign * buffer.getSample (0, frame) / peak : 0.0 };
                     if (settings.unipolar) value = (value + 1.0) * 0.5;
                     buffer.setSample (0, frame, static_cast<float> (value * settings.amplitude * level + settings.offset));
                 }
@@ -204,6 +214,8 @@ namespace WaveformDesign
                 output.warnings.add ("Harmonics above this cycle's Nyquist limit were omitted.");
             if (settings.drive > 0.0 || settings.fold > 0.0)
                 output.warnings.add ("Drive/fold is oversampled and harmonic-filtered; this is not an alias-free guarantee at every playback pitch.");
+            if (settings.shape == Shape::imported)
+                output.warnings.add ("Imported audio is periodically resampled, DC-removed and harmonic-filtered. Amplitude scales its original level; it is not peak-normalized.");
         }
 
         void analyse (Render& output)
@@ -285,6 +297,7 @@ namespace WaveformDesign
             case Shape::steps: return "Steps";
             case Shape::drawn: return "Drawn";
             case Shape::random: return "Random";
+            case Shape::imported: return "Imported";
         }
         return {};
     }
@@ -293,7 +306,8 @@ namespace WaveformDesign
     {
         Settings settings;
         settings.mode = mode;
-        settings.shape = mode != Mode::modulation && static_cast<int> (shape) > static_cast<int> (Shape::trapezoid) ? Shape::sine : shape;
+        settings.shape = mode != Mode::modulation && static_cast<int> (shape) > static_cast<int> (Shape::trapezoid)
+            && shape != Shape::imported ? Shape::sine : shape;
         settings.playback = mode == Mode::modulation ? (shape == Shape::envelope ? Playback::oneShot : Playback::loop) : Playback::gatedLoop;
         settings.unipolar = mode == Mode::modulation && shape == Shape::envelope;
         for (size_t index { 0 }; index < settings.drawn.size (); ++index)
@@ -327,7 +341,15 @@ namespace WaveformDesign
     {
         auto fail = [] (const char* reason) { return juce::Result::fail (reason); };
         if (modeName (s.mode).isEmpty () || shapeName (s.shape).isEmpty () || playbackName (s.playback).isEmpty ()) return fail ("Unknown waveform mode, shape or playback setting.");
-        if (s.mode != Mode::modulation && static_cast<int> (s.shape) > static_cast<int> (Shape::trapezoid)) return fail ("Audio oscillators/layers require a periodic audio shape.");
+        if (s.mode != Mode::modulation && static_cast<int> (s.shape) > static_cast<int> (Shape::trapezoid)
+            && s.shape != Shape::imported) return fail ("Audio oscillators/layers require a periodic audio shape.");
+        if (s.shape == Shape::imported && (s.mode == Mode::modulation || s.importedCycle.empty ()))
+            return fail ("Imported cycles require embedded audio and Audio Cycle or Layer Bank mode, never CV modulation.");
+        if ((! s.importedCycle.empty () && (s.importedCycle.size () < 4 || s.importedCycle.size () > 8192))
+            || s.importedCycleName.length () > 256 || s.importedCycleName.containsAnyOf ("\r\n"))
+            return fail ("An imported cycle must contain 4..8192 samples and a single-line name of at most 256 characters.");
+        for (const auto value : s.importedCycle)
+            if (! within (value, -1.0, 1.0)) return fail ("Imported audio samples must be finite digital full-scale values within -1..1.");
         if (s.sampleRate != 48000.0 && s.sampleRate != 96000.0) return fail ("Choose a sample rate of 48 or 96 kHz.");
         if (s.cycleFrames < 64 || s.cycleFrames > 8192 || (s.cycleFrames & (s.cycleFrames - 1)) != 0) return fail ("Cycle length must be a power of two from 64 to 8192 frames.");
         if (! within (s.durationSeconds, 0.001, 60.0) || ! within (s.cycles, 0.01, 1024.0)) return fail ("CV duration must be 0.001..60 seconds and cycles 0.01..1024.");
@@ -395,7 +417,7 @@ namespace WaveformDesign
         auto* root { new juce::DynamicObject };
         juce::var result (root);
         root->setProperty ("type", "A8Manager.WaveformDesign");
-        root->setProperty ("version", 1);
+        root->setProperty ("version", s.importedCycle.empty () ? 1 : 2);
         auto* object { new juce::DynamicObject };
         root->setProperty ("settings", juce::var (object));
         object->setProperty ("mode", modeName (s.mode));
@@ -426,6 +448,13 @@ namespace WaveformDesign
         object->setProperty ("voiceCount", s.voiceCount);
         object->setProperty ("seed", static_cast<juce::int64> (s.seed));
         object->setProperty ("measuredFullScaleVolts", s.measuredFullScaleVolts);
+        if (! s.importedCycle.empty ())
+        {
+            juce::Array<juce::var> samples;
+            for (const auto value : s.importedCycle) samples.add (value);
+            object->setProperty ("importedCycle", samples);
+            object->setProperty ("importedCycleName", s.importedCycleName);
+        }
         juce::Array<juce::var> steps, drawn, voices;
         for (const auto value : s.steps) steps.add (value);
         for (const auto value : s.drawn) drawn.add (value);
@@ -446,21 +475,36 @@ namespace WaveformDesign
 
     juce::Result fromJson (const juce::var& json, Settings& settings)
     {
-        auto fail = [] () { return juce::Result::fail ("Invalid or incomplete waveform recipe. Expected A8Manager.WaveformDesign version 1."); };
+        auto fail = [] () { return juce::Result::fail ("Invalid or incomplete waveform recipe. Expected A8Manager.WaveformDesign version 1 or 2."); };
         const auto* root { json.getDynamicObject () };
         int version { 0 };
-        if (root == nullptr || root->getProperty ("type") != juce::var ("A8Manager.WaveformDesign") || ! integer (*root, "version", version) || version != 1) return fail ();
+        if (root == nullptr || root->getProperty ("type") != juce::var ("A8Manager.WaveformDesign") || ! integer (*root, "version", version) || (version != 1 && version != 2)) return fail ();
         const auto* object { root->getProperty ("settings").getDynamicObject () };
         if (object == nullptr) return fail ();
         Settings candidate;
         bool foundMode { false }, foundShape { false }, foundPlayback { false };
         for (const auto mode : { Mode::oscillator, Mode::modulation, Mode::layers })
             if (object->getProperty ("mode") == juce::var (modeName (mode))) { candidate.mode = mode; foundMode = true; }
-        for (const auto shape : { Shape::sine, Shape::triangle, Shape::saw, Shape::pulse, Shape::trapezoid, Shape::envelope, Shape::steps, Shape::drawn, Shape::random })
+        for (const auto shape : { Shape::sine, Shape::triangle, Shape::saw, Shape::pulse, Shape::trapezoid, Shape::envelope, Shape::steps, Shape::drawn, Shape::random, Shape::imported })
             if (object->getProperty ("shape") == juce::var (shapeName (shape).toLowerCase ())) { candidate.shape = shape; foundShape = true; }
         for (const auto playback : { Playback::oneShot, Playback::loop, Playback::gatedLoop })
             if (object->getProperty ("playback") == juce::var (playbackName (playback))) { candidate.playback = playback; foundPlayback = true; }
         if (! foundMode || ! foundShape || ! foundPlayback) return fail ();
+        if (version == 2)
+        {
+            const auto* samples { object->getProperty ("importedCycle").getArray () };
+            const auto& name { object->getProperty ("importedCycleName") };
+            if (samples == nullptr || samples->size () < 4 || samples->size () > 8192 || ! name.isString ()) return fail ();
+            candidate.importedCycle.reserve (static_cast<size_t> (samples->size ()));
+            for (const auto& value : *samples)
+            {
+                if (! (value.isInt () || value.isInt64 () || value.isDouble ())) return fail ();
+                candidate.importedCycle.push_back (static_cast<double> (value));
+            }
+            candidate.importedCycleName = name.toString ();
+        }
+        else if (candidate.shape == Shape::imported || object->hasProperty ("importedCycle") || object->hasProperty ("importedCycleName"))
+            return fail ();
         if (! number (*object, "sampleRate", candidate.sampleRate) || ! integer (*object, "cycleFrames", candidate.cycleFrames)
             || ! number (*object, "durationSeconds", candidate.durationSeconds) || ! number (*object, "cycles", candidate.cycles)
             || ! number (*object, "amplitude", candidate.amplitude) || ! number (*object, "offset", candidate.offset)

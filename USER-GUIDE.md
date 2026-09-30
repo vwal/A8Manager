@@ -51,6 +51,12 @@ into it immediately. File operations are separate from saving the preset. Use
 distinct filenames and backups rather than relying on SAVE as an undo boundary
 for everything in the application.
 
+To import from another directory without leaving the open preset, use **Import
+WAV...** in the zone panel (or the **...** beside FILE). Choose files anywhere;
+copies are assigned to the current preset while its folder stays open. Multiple
+files fill consecutive zones. The originals stay unchanged. Navigating the left
+folder tree instead changes the working folder and its preset list.
+
 ## Finding your way around
 
 - **Current path:** the line beneath the application heading shows the folder
@@ -150,9 +156,9 @@ There are two separate pairs of boundaries:
 
 | Waveform indicator | Meaning | Matching zone fields |
 | --- | --- | --- |
-| **Red solid line, top handle** | Sample-region start | SMPL START |
-| **Blue solid line, top handle** | Sample-region end | SMPL END |
-| **Amber dashed line, bottom handle** | Loop start | LOOP START |
+| **Deep green solid line, top handle** | Sample-region start | SMPL START |
+| **Deep red solid line, top handle** | Sample-region end | SMPL END |
+| **Light green dashed line, bottom handle** | Loop start | LOOP START |
 | **Pink dashed line, bottom handle** | Loop end | LOOP LENGTH, or LOOP END |
 | **Yellow moving line with a small cap** | Current computer-audition position; not an editable boundary | None |
 
@@ -173,10 +179,50 @@ example, a sample region can include an attack and a tail, while its loop region
 covers a smaller, steady section in between. The two regions can also match,
 which is useful when a zone represents a single repeating slice.
 
-They are independent settings: changing the sample markers does not automatically
-make the loop markers match. The editor does not force the loop to stay inside
-the sample region. Check both pairs when preparing a conventional loop
-within a sample.
+**By default, editing keeps the loop entirely inside the selected sample area.**
+This suits ordinary playback with static sample boundaries.
+Until you edit the loop, it automatically follows the sample start/end. Once
+you set a loop, sample edits leave it alone unless a sample boundary pushes
+into it:
+
+- **Length mode:** the whole loop moves away from the advancing sample boundary,
+  keeping its exact length. The sample cannot be shortened below that length.
+- **End mode:** the corresponding loop boundary contracts with the sample
+  boundary. Both regions have a minimum length of four audio samples; an edge
+  stops when it cannot move farther without violating that minimum.
+
+These rules apply equally to numeric entry, dragging, and boundary commands.
+
+### Advanced loops outside the sample
+
+Enable **Allow loop outside sample**, below **XFADE GRP**, to position SAMPLE and
+LOOP independently anywhere within the audio file. This is a **channel** option
+covering all its zones; stereo pairs share it. It starts off for new channels.
+Explicit loops no longer move or shrink when you edit SAMPLE. Unset loops still
+follow SAMPLE, and every loop edit/nudge still respects the four-frame minimum
+and physical file bounds. All striped shading is hidden while this option is on.
+
+Use this for presets whose CV modulation exposes otherwise unreachable loop
+regions. The option permits those edits; it does not itself make a static
+out-of-sample loop reachable on A8. Direct LOOP audition previews that region
+independently, but **Sample > Loop** remains a static, contained-loop simulation:
+external CV, direction changes and scanning are not emulated.
+
+Loading a preset with a valid out-of-sample loop **preserves its positions** and
+automatically enables the option for that channel/pair. The notice identifies
+the affected zones. Only genuinely invalid loops (for example, fewer than four
+frames or beyond known file bounds) are reset to SAMPLE. Sample boundaries and
+source files are unchanged. A legacy sample selection shorter than four frames
+can still play once. Turning the option off asks for confirmation before
+resetting external loops to SAMPLE; Cancel preserves them and leaves it on.
+Settings-only Default, Revert, Clone and Paste keep the destination's permission
+because they leave its zone markers in place; purging the channel clears it.
+
+The option is editor-only metadata stored in a YAML comment, not an additional
+A8 hardware parameter. Changes remain **SAVE IS PENDING** until you save.
+The saved preset contains concrete loop coordinates for A8; a bound editor-only
+YAML comment remembers automatic defaults. If the hardware or another editor
+changes those coordinates, its explicit values take precedence on reload.
 
 ### Moving a region without resizing it
 
@@ -191,11 +237,13 @@ Hold **Option on macOS / Alt elsewhere** before left-dragging horizontally
 - Length remains fixed in both Length and End display modes, including fractional
   loop lengths.
 - Add **Shift** for ten-times-finer movement, or zoom in for greater precision.
-- Movement stops at the source file's beginning/end without shortening the
-  region. A region spanning the whole file cannot move.
+- Sample movement stops at the source file's beginning/end; loop movement stops
+  at the sample boundaries. Neither operation shortens the moved region.
 
-Only the chosen pair moves: moving the zone does not move its loop, and moving
-the loop does not change the sample boundaries. Moving a zone here means
+With the advanced option off, moving the sample leaves an explicit loop where it is until a sample boundary
+pushes it; then the loop moves inside without changing length. An automatic
+loop follows the sample. Moving a loop never changes the sample boundaries.
+Moving a zone here means
 sliding its audio region within the same file, not reordering the zone list or
 changing its voltage range. The audio file itself is not modified.
 
@@ -270,17 +318,14 @@ Zooming changes only the view. It does not alter sample boundaries, playback
 volume, audio files, or audition speed. The yellow playhead follows playback
 but does not automatically scroll the view; it may move off-screen when zoomed.
 
-**Diagonal gray stripes** always identify the gap from Sample End to a later
-Loop Start, so that bridge remains visible while editing—even with **No Loop**
-saved in the channel. With **Loop** or **Loop/Release** enabled, the striped
-extent continues through a Loop End beyond Sample End. Showing the bridge in
-No Loop mode does not enable hardware looping. The waveform stays visible through
-the stripes; ordinary unselected audio remains uniformly dimmed. The stripes
-update with markers, channel loop mode, zoom and selected zone, in both sizes.
-They describe the configured loop extent in source coordinates, independently of
-the SAMPLE/LOOP audition selection—not a simulation of reverse playback, gate
-release or modulation. Ordinary ONCE/LOOP audition plays only the selected
-region; **Sample > Loop** can audition the forward journey across that bridge.
+**Diagonal gray stripes** identify the sample tail between **Loop End and Sample
+End** while looping is enabled, including during **Sample > Loop** simulation.
+That tail is not reached while playback keeps repeating the active loop. With
+**No Loop**, or when Loop End equals Sample End, there is no striped tail.
+The waveform remains visible through the stripes; audio outside the selected
+region is otherwise dimmed. This is a forward-loop indicator, not a prediction
+of gate-release, reverse playback or CV-modulated behavior. It appears in both
+the normal and expanded views.
 
 ### Expanded view and marker tools
 
@@ -379,6 +424,46 @@ These controls use the word “loop,” but have different jobs:
 - **Sample > Loop:** a separate forward simulation that plays an intro and
   then repeats the loop, regardless of the saved channel mode.
 
+### Signal warnings before audition
+
+Sample **ONCE**, **LOOP**, Auto Loop and sample-into-loop audition check the
+selected signal before sound starts. The check deliberately avoids pop-ups for
+ordinary transients, loudness, clipping, or saw/pulse edges alone. It asks only
+when substantial sustained DC-like bias or strongly sub-audible content is found.
+Stereo sides are checked separately, so opposite polarities cannot cancel the
+warning. Known CV files remain blocked outright; this confirmation never
+overrides their CV protection.
+
+Choose **Stop/Cancel** if unsure. If you recognize the signal and intend to hear
+it, lower your physical listening level before continuing; the dialog does not
+automatically turn it down. An approval is remembered for that unchanged
+audition in this session. Changing the file, selected region, pitch/rate or
+relevant playback context requires a fresh check. STOP or a source change makes
+any old confirmation ineffective.
+
+The Designer checks its protected monitoring signal: its existing DC removal,
+audible-frequency limits and CV prohibition remain in force. Source DC that is
+removed before monitoring does not cause a redundant warning. These checks
+never rewrite WAVs or alter exports.
+
+This is a warning heuristic, **not proof that a WAV is safe** for your speakers
+or headphones. It cannot know the gain, wiring or hardware. Analysis is bounded
+to two million frames per selected region (about 42 seconds at 48 kHz); longer
+regions are inconclusive and do not produce an alarm merely because they are
+long. No warning is not a safety certification. Start at a low listening level.
+
+### Auto Loop while browsing samples
+
+Enable **Auto Loop** in the Zones panel to loop each subsequently imported,
+dropped, or browser-loaded sample automatically. It is off by default and is
+only remembered for the current application session. Enabling it does not start
+the sample already loaded. It auditions the **SAMPLE** region, never the separate
+LOOP region or sample-into-loop simulation. Known CV files remain blocked.
+
+**STOP** stays stopped until you explicitly load another sample. Switching off
+Auto Loop also stops an audition it started. Opening a preset, changing folders,
+or restoring zone settings does not automatically start playback.
+
 ### Simulating sample playback into a loop
 
 Click **Sample > Loop** in the waveform toolbar, or choose **Trigger sample into
@@ -389,12 +474,10 @@ In a very short, narrow waveform view, use the menu action: the toolbar button
 is hidden to leave room for the waveform and marker labels.
 
 - Playback starts at **Sample Start** and continues forward to **Loop Start**.
-  If the loop is later than Sample End, it continues across the striped gap
-  without stopping or skipping that audio.
 - On reaching the loop, playback repeats between **Loop Start and Loop End**.
-  The loop can be inside the sample region, overlap its end, or lie after it.
-  Sample End does not stop this simulation; audio after Loop End is not played.
-- During the intro and striped gap, the Zones panel stays on **SAMPLE**, with
+  The loop must be entirely inside the sample region. The striped sample tail
+  after Loop End is not played while the loop remains active.
+- During the intro, the Zones panel stays on **SAMPLE**, with
   **ONCE** highlighted as **STOP**. On entering the loop it switches to **LOOP**,
   with the **LOOP** transport button highlighted as **STOP**.
 - Click whichever **STOP** is highlighted to end playback. The waveform toolbar
@@ -407,9 +490,9 @@ inside the loop, moving that loop keeps playback inside its new bounds. Invalid
 ranges stop the preview. Switching samples/zones or purging a channel also stops
 the simulation; it does not transfer to the new source.
 
-If Sample Start is already inside the loop, simulation begins in the loop phase
-immediately. A loop ending at or before Sample Start cannot be reached by this
-forward preview, so the trigger is disabled. Empty/unavailable samples and known
+If Loop Start equals Sample Start, simulation begins in the loop phase
+immediately. An invalid or out-of-sample loop disables the trigger.
+Empty/unavailable samples and known
 CV waveforms cannot use it either. For stereo pairs, trigger from the left/master
 channel; both sides play together.
 
@@ -421,14 +504,14 @@ markers, or all unusual Assimil8or marker-order behaviors.
 ### Reading the small END/START display
 
 This is a magnified **join preview**, not a miniature overview of the file.
-It places the selected region's final frames on the **left** (END, amber) and
-its first frames on the **right** (START, teal). The centre line is where the
+It places the selected region's final frames on the **left** (END) and
+its first frames on the **right** (START). The centre line is where the
 audio jumps when that region repeats.
 
 Both halves share automatic visual gain so quiet waveforms remain visible
 without hiding their relative levels. This affects the drawing only, not audio
-volume. The colours here distinguish end from start; they do **not** indicate
-which sample/loop marker pair is selected.
+volume. Colors match the active marker pair: deep green/deep red for Sample,
+light green/pink for Loop.
 
 A large discontinuity at the join can cause a click. Zoom in, adjust the start
 or end, and listen repeatedly. Similar levels and slopes across the join can
@@ -603,7 +686,8 @@ creating a separate audio file for each part.
   sample region at the current SMPL END. It normally keeps the current region's
   duration and sets the new loop boundaries to match the new sample region.
 
-Both buttons select the destination zone. If it is occupied, replacement
+Both buttons select the destination zone and reset the waveform to full-file
+fit and 100% vertical zoom. If it is occupied, replacement
 requires confirmation and preserves that zone's voltage boundary. If it is
 empty, the source zone's voltage range is split to make room for the new zone.
 Review **MIN VOLTAGE** after adding zones if precise CV selection matters.
@@ -628,11 +712,26 @@ An independent, occupied next channel is never automatically made stereo-right.
 
 ### Giving a sample a shorter filename
 
+The **FILE** field uses smaller, selectable text. Drag across the text to scroll
+through a long name, or use the arrow/Home/End keys after clicking it. Hover to
+see the full filename. This field is read-only: use **...** to choose a sample,
+or its right-click menu to rename a copy.
+
 Right-click the **FILE** filename in Samples and choose **Rename sample copy...**.
-Enter the new name; you can omit `.wav`. For generated assignments, the readable
-beginning is initially selected, leaving the unique identifier and voice number
-at the end. Typing replaces just that beginning; the rest remains editable if
-needed. Put the important words first: Assimil8or truncates long names on screen.
+Enter the new name; you can omit `.wav`. For verified generated assignments,
+rename the readable beginning; the automatic identifier and voice number are
+kept at the end. Ordinary sample names remain fully editable.
+Put identifying information in the **first 6–10 characters**: **A8 Select**
+shows only the first six. For long names, **A8 Channels** shows the first
+**10 characters**, `...`, and the final **two**, without `.wav`.
+Live **A8 Select / A8 Channels**
+previews appear in the Samples panel, the rename dialog and the Designer's
+**Design name** area. These are readability hints, not stricter filename limits.
+Designer and verified generated-file rename previews show your editable prefix
+without exposing its automatic separator/random ID; the two-digit voice number
+is shown separately after `...`. For a short prefix the real A8 may show part of
+the automatic suffix. Ordinary sample filenames still preview their actual
+characters. Empty name fields show `--`.
 The dialog counts the entire filename, including its suffix and extension,
 against the 47-character hardware limit.
 
@@ -799,17 +898,75 @@ folder, then assigns them to your chosen channel/zone in the selected preset.
 Layer banks occupy consecutive channels. Review the confirmation: target zones
 are replaced and generated channel-wide settings affect their other zones too.
 The designer's **SAVE** also creates or refreshes a self-contained
-`PRNN - <preset name>` folder with all referenced WAVs and available
+`PNN - <preset name>` folder (for example, `P01 - My bass`) with all referenced WAVs and available
 recipes, then saves the working preset. Original/shared files stay in place;
 assignment itself does not save automatically. The folder name is limited to
 31 characters, without shortening the preset's actual name. Ordinary saves
 from **Samples** remain in place; return to the designer's **SAVE** to refresh
 its hardware copy. An already-open named folder for that slot is saved in place
 without creating nested copies; saving a different slot creates a sibling folder.
+Previously created `PRNN - ...` and `A8 Preset NN - ...` folders are also
+recognized when open and saved in place; they are not automatically renamed.
 For hardware, place the complete generated folder directly under the SD-card
 root. Loose files at the card root and nested preset folders are not the A8
 layout. You do not need a separate package for each assigned channel. See the
 [shared-preset transfer example](WAVEFORM-DESIGNER.md#getting-a-shared-preset-onto-assimil8or).
+
+If A8 initially shows **001 ~empty~** after loading a folder, select its actual
+preset number: for example, choose **002** for `P02 - ...` containing
+`prst002.yml`. This is slot selection, not an export failure; no automatic
+renumbering, filename change, or re-export is needed.
+
+### Creating multiple voices from one waveform
+
+To turn one waveform into multiple related voices within a preset, use
+**Create layer bank...** below the Waveform Designer's Audio Cycle preview.
+It preserves the current waveform and shaping, including imported cycles, and
+opens seven adjustable voices. Existing Layer Bank designs require confirmation
+before replacement; the original Audio Cycle stays available in the Workspace
+menu. Press **Start audition** to listen, then **Generate & Assign** and **Save**
+when ready. This is distinct from combining multiple presets as described below.
+
+### Saving/exporting a preset bank
+
+Use **Save/Export Bank** in the fixed top toolbar to put multiple presets into
+one folder that A8 can load together. This is separate from the designer's
+**Layer Bank**, which means multiple waveform voices within one preset.
+
+1. Save any pending preset edits when prompted. Export uses saved preset files,
+   not unsaved waveform designs.
+2. The current folder's saved slots are listed. Use **Add folder...** to include
+   other preset folders; scanning is limited to each selected folder, not its
+   descendants. Select the presets to include.
+3. Review the destination slot for each preset (001–199). Original numbers are
+   kept by default. If two selected presets use the same number, choose a
+   different destination slot or deselect one; the app never silently renumbers.
+4. Choose a new bank folder name (up to 31 characters) and its parent folder.
+   Export cannot replace an existing folder. **Open bank after export** is off
+   by default; enable it if you want to keep working in the combined folder.
+5. Export, wait for completion, then copy the **whole bank folder directly under
+   the SD-card root**. Select that folder and the desired preset number on A8.
+
+All selected preset files and referenced WAVs are kept at the same level. A8
+does not support preset-specific sample subfolders. Available waveform recipes
+are copied beside the WAVs, preserving designer recall and CV safety. Shared
+files can be reused; conflicting filenames are given unique names in the copy
+and the copied presets' references are updated. Required MIDI setups are copied
+and conflicting setups are assigned available MIDI slots, with the presets
+updated accordingly. An impossible MIDI combination or an over-capacity bank
+is reported without publishing a partial folder.
+
+Original presets, folders and samples are **always kept**. Export makes a new
+copy; it does not relocate your work. Cancel or failure leaves no partial bank
+at the destination. Once you open an exported bank in A8Manager, both Samples
+and Waveform Designer save in place there, including newly created preset slots.
+The bank's small hidden `.a8-preset-bank.json` file tells A8Manager to use this
+flat save behavior; keep it when copying the folder between computers. A8 does
+not use this desktop-only file. Use Save/Export Bank again with a new destination
+when you want a separate snapshot of your working bank.
+
+### Design exports, recall and audition
+
 CV and audio cannot share a channel. Known CV channels have Mix and Mix modulation
 locked **Off**, including when imported through Samples. Use separate channels
 for oscillator/audio and modulation content.
@@ -831,7 +988,7 @@ The [Waveform Designer guide](WAVEFORM-DESIGNER.md) explains the controls,
 supersaw layering, sample-length matching, DC safety, and voltage calibration.
 To edit an existing generated waveform, select its channel/zone in Samples and
 choose **Preset tools → Edit selected waveform in designer...**, or use **Recall
-assigned...** for the designer's chosen target. **Load recipe / WAV...** also
+assigned...** for the designer's chosen target. **Load recipe / cycle WAV...** also
 opens a saved JSON recipe or a generated WAV with its recipe beside it. Any bank
 voice recalls the entire saved bank. Recall asks before replacing the design,
 and does not change the preset or files; regenerate/assign and Save after editing.
@@ -840,8 +997,18 @@ Keep the companion recipe: the WAV alone cannot restore the shaping controls.
 This **Preset tools** item is greyed out for ordinary samples, empty zones, missing
 files or an invalid/missing associated recipe. It is enabled only when the
 selected generated WAV and its saved recipe are recognized together. If you
-renamed the files outside the app or have an older untagged export, use **Load recipe / WAV...**
+renamed the files outside the app or have an older untagged export, use **Load recipe / cycle WAV...**
 to select the JSON recipe explicitly instead.
+
+For a raw single-cycle audio WAV without a recipe, use **FILE → Import WAV as
+cycle in designer...**, **Preset tools → Import selected WAV as cycle...**, or
+the Designer's **Load recipe / cycle WAV...** / **Recall assigned...** controls.
+This makes a new **Imported** shape, not reconstructed generator settings.
+The entire WAV must contain one cycle of 4–8192 frames. Stereo offers left,
+right or average. Confirmation explains resampling/filtering, and the new recipe
+embeds the source cycle for later recall. The original remains untouched; use
+Generate & Assign and Save to update the preset. See the Designer guide for
+format, layer-bank and safety details.
 
 Use **Start audition** to hear an Audio Cycle or the complete Layer Bank while
 shaping it. Bank audition includes each voice's detune, phase, pan and level.
@@ -952,7 +1119,7 @@ does not indicate a volume change.
 
 **Why are markers missing?**  
 They may be outside the zoomed view. Press Fit, Zone, or Loop as appropriate.
-Use the top red/blue handles for the sample and bottom amber/pink handles for the loop.
+Use the top deep-green/deep-red handles for the sample and bottom light-green/pink handles for the loop.
 
 **Why is SAVE disabled after changing zoom or audition speed?**  
 Those controls do not modify the preset. No preset save is needed for them.

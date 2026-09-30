@@ -19,6 +19,7 @@ class AudioPlayer : public juce::AudioSource,
                     private juce::Timer
 {
 public:
+    ~AudioPlayer () override;
     void init (juce::ValueTree rootProperties);
     void shutdownAudio ();
 
@@ -36,6 +37,7 @@ private:
     friend struct AudioAuditTestAccess;
     friend struct WaveformAuditionRoutingTestAccess;
     friend struct CvAuditionTestAccess;
+    friend struct AuditionWarningRoutingTestAccess;
     AudioSettingsProperties audioSettingsProperties;
     AudioPlayerProperties audioPlayerProperties;
     AppProperties appProperties;
@@ -52,17 +54,45 @@ private:
 
     juce::AudioDeviceManager audioDeviceManager;
     juce::AudioSourcePlayer audioSourcePlayer;
-    std::unique_ptr < juce::AudioBuffer<float>> sampleBuffer;
+    // Published buffers are immutable; a message-thread safety check can retain
+    // one while the device/source callback replaces the active buffer.
+    std::shared_ptr<juce::AudioBuffer<float>> sampleBuffer;
     juce::AudioDeviceSelectorComponent audioSetupComp { audioDeviceManager, 0, 0, 0, 256, false, false, true, false };
 
     juce::CriticalSection dataCS;
     WaveformAudition waveformAudition;
     bool waveformSelected { false }, audioDeviceReady { false };
     bool sampleAuditionBlocked { false }; // Cached off the audio callback, protected by dataCS.
+    struct SignalCheckKey
+    {
+        std::uint64_t bufferRevision {}, deviceRevision {};
+        int start {}, length {}, loopStart {};
+        AudioPlayerProperties::PlayState mode {};
+        double rate {}, pitch {}, speed {};
+        bool keepPitch {};
+        juce::String folder;
+        bool operator== (const SignalCheckKey&) const = default;
+    };
+    struct SignalLifetime { AudioPlayer* owner {}; };
+    std::shared_ptr<SignalLifetime> signalLifetime { std::make_shared<SignalLifetime> (SignalLifetime { this }) };
+    bool signalCheckEnabled { false }, signalApproved { false }, signalCheckNeeded { false }, signalDialogOpen { false };
+    bool signalCheckQueued { false };
+    std::uint64_t signalRequestGeneration {}, sampleBufferRevision {}, deviceRevision {};
+    std::optional<SignalCheckKey> approvedSignal;
+    std::function<void (const juce::String&, std::function<void (bool)>)> confirmSignalWarning;
+    std::function<void (const juce::String&)> notifySignalBlocked;
+    std::function<bool (std::function<void ()>)> deferSignalCheck = [] (std::function<void ()> callback)
+    { return juce::MessageManager::callAsync (std::move (callback)); };
+    void invalidateSignalCheck ();
+    void wakeSignalCheck ();
+    void processSignalCheck ();
+    SignalCheckKey signalCheckKey ();
+    void finishSignalCheck (std::uint64_t generation, const SignalCheckKey&, bool approved);
     AudioPlayerProperties::PlayState playState { AudioPlayerProperties::PlayState::stop };
     double curSampleOffset { 0.0 }; // audible cursor, independent of resampler read-ahead
     int sampleStart { 0 };
     int sampleLength { 0 };
+    double selectedSourceLength { 0.0 }; // Before device-rate rounding; minimum loop length is in source frames.
     std::atomic<double> playbackPosition { -1.0 };
     std::atomic<bool> playbackFinished { false };
     std::atomic<AudioPlayerProperties::SimulationPhase> simulationPhase { AudioPlayerProperties::SimulationPhase::inactive };

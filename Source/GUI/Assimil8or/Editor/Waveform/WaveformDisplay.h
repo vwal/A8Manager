@@ -29,6 +29,7 @@ class WaveformDisplay : public juce::Component, private juce::ScrollBar::Listene
 public:
     WaveformDisplay ();
     void focusZone ();
+    void resetZoom ();
     void setLoopSelected (bool loopSelected);
     void setExpanded (bool expanded);
     void setReadOnly (bool readOnly);
@@ -47,6 +48,7 @@ private:
     friend struct WaveformTestAccess;
     friend struct AudioAuditTestAccess;
     friend struct SimulationUiTestAccess;
+    friend struct StereoChannelUiTestAccess;
     // Marker list indices, in the order they are added to the overlay.
     enum MarkerIndex
     {
@@ -72,6 +74,13 @@ private:
     RegionMoveWaveform waveform;
     RegionMarkerOverlay markerOverlay;
     std::optional<RegionMove::Region> movingRegion;
+    struct MarkerDrag
+    {
+        int marker;
+        juce::int64 fileLength;
+        ZoneSampleRanges::Stored original;
+    };
+    std::optional<MarkerDrag> markerDrag;
     // Draw the expand symbol ourselves: font fallback can replace a Unicode
     // arrow with an ellipsis in this compact button on some platforms.
     class ExpandButton : public juce::TextButton
@@ -107,7 +116,6 @@ private:
     void scrollBarMoved (juce::ScrollBar*, double start) override;
     void focusRange (double start, double end);
     void focusLoop ();
-    void resetZoom ();
     void jumpToMarker (int markerIndex);
     void showWaveformMenu (std::optional<double> clickedSample);
     void applyMenuAction (int action, std::optional<double> clickedSample);
@@ -140,6 +148,7 @@ private:
     void updateAudioSource ();
     void updateDisplayChannel ();
     void updateMarkerPositions ();
+    void updateLoopTail ();
     void publishView ();
 
     double constrainMarker (int markerIndex, double proposedPosition, bool keepOppositeBoundary = false);

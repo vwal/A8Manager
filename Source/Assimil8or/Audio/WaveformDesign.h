@@ -9,7 +9,7 @@
 namespace WaveformDesign
 {
     enum class Mode { oscillator, modulation, layers };
-    enum class Shape { sine, triangle, saw, pulse, trapezoid, envelope, steps, drawn, random };
+    enum class Shape { sine, triangle, saw, pulse, trapezoid, envelope, steps, drawn, random, imported };
     enum class Playback { oneShot, loop, gatedLoop };
 
     struct Voice
@@ -52,6 +52,10 @@ namespace WaveformDesign
         int voiceCount { 1 };
         std::array<Voice, 8> voices {};
         unsigned int seed { 1 };
+        // A detached, single mono audio cycle. Embedded in version-2 recipes;
+        // no path or original WAV is needed to render/recall the imported shape.
+        std::vector<double> importedCycle;
+        juce::String importedCycleName;
         // Optional user-measured positive full-scale output voltage; 0 = unknown.
         double measuredFullScaleVolts { 0.0 };
     };

@@ -47,6 +47,7 @@ juce::ValueTree ChannelProperties::getZoneVT (int zoneIndex)
 void ChannelProperties::copyFrom (juce::ValueTree sourceVT)
 {
     ChannelProperties sourceChannelProperties (sourceVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+    setAllowLoopOutsideSample (sourceChannelProperties.getAllowLoopOutsideSample (), false);
     setAliasing (sourceChannelProperties.getAliasing (), false);
     PresetHelpers::setCvInputAndAmount (sourceChannelProperties.getAliasingMod (), [this] (juce::String cvInput, double amount) { setAliasingMod (cvInput, amount, false); });
     setAttack (sourceChannelProperties.getAttack (), false);
@@ -205,6 +206,24 @@ void ChannelProperties::setLinAMisExtEnv (bool linAMisExtEnv, bool includeSelfCa
 void ChannelProperties::setLinFM (juce::String cvInput, double linFM, bool includeSelfCallback)
 {
     setValue (getCvInputAndValueString (cvInput, linFM, 4), LinFMPropertyId, includeSelfCallback);
+}
+
+void ChannelProperties::setAllowLoopOutsideSample (bool allow, bool includeSelfCallback)
+{
+    if (allow) setValue (true, AllowLoopOutsideSamplePropertyId, includeSelfCallback);
+    else
+    {
+        if (forwardedToMessageThread ([this, includeSelfCallback] () { setAllowLoopOutsideSample (false, includeSelfCallback); })) return;
+        // Absent means false, so default/reset copies keep the original tree
+        // shape. Other wrappers still receive the property-removal event.
+        const juce::ScopedValueSetter<bool> suppress (suppressAllowLoopOutsideSampleCallback, ! includeSelfCallback);
+        data.removeProperty (AllowLoopOutsideSamplePropertyId, nullptr);
+    }
+}
+
+bool ChannelProperties::getAllowLoopOutsideSample ()
+{
+    return getValue<bool> (AllowLoopOutsideSamplePropertyId);
 }
 
 void ChannelProperties::setLoopLengthIsEnd (bool isEnd, bool includeSelfcallback)
@@ -630,6 +649,11 @@ void ChannelProperties::valueTreePropertyChanged (juce::ValueTree& vt, const juc
     {
         if (onLinFMChange != nullptr)
             onLinFMChange (getLinFM ());
+    }
+    else if (property == AllowLoopOutsideSamplePropertyId)
+    {
+        if (! suppressAllowLoopOutsideSampleCallback && onAllowLoopOutsideSampleChange != nullptr)
+            onAllowLoopOutsideSampleChange (getAllowLoopOutsideSample ());
     }
     else if (property == LoopLengthIsEndPropertyId)
     {

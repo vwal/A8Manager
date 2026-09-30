@@ -358,6 +358,19 @@ private:
 
     WaveformDisplay sampleWaveformDisplay;
     bool waveformExpanded { false };
+    class LoopOutsideToggle : public juce::ToggleButton
+    {
+        void paintButton (juce::Graphics& g, bool over, bool down) override
+        {
+            getLookAndFeel ().drawTickBox (g, *this, 1.0f, 9.0f, 14.0f, 14.0f, getToggleState (), isEnabled (), over, down);
+            g.setColour (findColour (juce::ToggleButton::textColourId).withMultipliedAlpha (isEnabled () ? 1.0f : 0.5f));
+            g.setFont (juce::FontOptions (11.0f));
+            g.drawFittedText ("Allow loop\noutside sample", getLocalBounds ().withTrimmedLeft (20), juce::Justification::centredLeft, 2);
+        }
+    } allowLoopOutsideSampleButton;
+    void allowLoopOutsideSampleUiChanged (bool allow);
+    void syncPairedLoopPermission ();
+    std::function<void (juce::String, std::function<void (bool)>)> confirmOutsideLoopReset;
 
     std::array<ZoneEditor, 8> zoneEditors;
     std::array<ZoneProperties, 8> zoneProperties;
@@ -366,6 +379,7 @@ private:
     void checkStereoRightOverlay ();
     void clearAllZones ();
     void confirmZoneEdit (juce::String title, juce::String message, std::function<void ()> apply);
+    juce::Result prepareZonePaste (int zoneIndex, juce::ValueTree clipboard, juce::ValueTree& prepared, juce::StringArray& repaired);
     void configAudioPlayer ();
     void copyZone (int zoneIndex, bool settingsOnly);
     void copyToNextZone (int zoneIndex, bool continueSlice);

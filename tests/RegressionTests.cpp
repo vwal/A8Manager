@@ -1,5 +1,6 @@
 #include "Assimil8or/Assimil8orPreset.h"
 #include "Assimil8or/Preset/ZoneContinuation.h"
+#include "Assimil8or/Preset/ZoneSampleRanges.h"
 #include "Assimil8or/Audio/AudioManager.h"
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "oolib/Debug/DebugLog.h"
@@ -54,7 +55,47 @@ namespace
         require (parser.getParseErrorsVT ().getNumChildren () == 0, "Parse errors did not reset");
         PresetProperties cleanPreset (parser.getPresetVT (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
         require (cleanPreset.getId () == 3 && cleanPreset.getName () == "Clean", "Parsing did not recover after malformed CV");
-        std::cout << "PASS: parser/CV (all scopes, 100 repeated parses, malformed CV, normalization)\n";
+
+        // Exact reported card contents, including CRLF, negative zero, a numeric-leading
+        // filename and a settings-only channel. This checks our parser, not A8 firmware.
+        parser.parse (juce::StringArray::fromLines (
+            "Preset 2 :\r\n"
+            "  Name : koe-3\r\n"
+            "  Channel 1 :\r\n"
+            "    LoopMode : 2\r\n"
+            "    MixLevel : -0\r\n"
+            "    Release : 0\r\n"
+            "    Zone 1 :\r\n"
+            "      LoopLength : 512\r\n"
+            "      LoopStart : 0\r\n"
+            "      MinVoltage : -5\r\n"
+            "      Sample : 1234567890abcdefg-a4e6352772f0-01.wav\r\n"
+            "      SampleStart : 0\r\n"
+            "      SampleEnd : 512\r\n"
+            "  Channel 7 :\r\n"
+            "    MixLevel : -90\r\n"
+            "    MixMod : Off 0.0000"));
+        require (parser.getParseErrorsVT ().getNumChildren () == 0, "Reported card preset must parse without diagnostics");
+        PresetProperties cardPreset (parser.getPresetVT (), PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
+        ChannelProperties populated (cardPreset.getChannelVT (0), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        ChannelProperties settingsOnly (cardPreset.getChannelVT (6), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+        ZoneProperties populatedZone (populated.getZoneVT (0), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        require (cardPreset.getId () == 2 && cardPreset.getName () == "koe-3", "Reported card preset identity must survive parsing");
+        require (populatedZone.getSample () == "1234567890abcdefg-a4e6352772f0-01.wav",
+                 "Settings-only channel must not discard the populated channel or alter its filename");
+        require (populatedZone.getSampleStart () == 0 && populatedZone.getSampleEnd () == 512
+                 && populatedZone.getLoopStart () == 0 && populatedZone.getLoopLength () == 512.0
+                 && populatedZone.getMinVoltage () == -5.0, "Reported card zone boundaries must survive parsing");
+        require (populated.getLoopMode () == 2 && populated.getMixLevel () == 0.0 && populated.getRelease () == 0.0,
+                 "Reported card loop mode, negative-zero mix level and zero release must survive parsing");
+        require (settingsOnly.getMixLevel () == -90.0 && std::get<0> (settingsOnly.getMixMod ()) == "Off"
+                 && std::get<1> (settingsOnly.getMixMod ()) == 0.0, "Settings-only channel must retain its muted mix and modulation");
+        for (auto zoneIndex { 0 }; zoneIndex < 8; ++zoneIndex)
+        {
+            ZoneProperties emptyZone (settingsOnly.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            require (emptyZone.getSample ().isEmpty (), "Settings-only channel must not acquire a sample while parsing");
+        }
+        std::cout << "PASS: parser/CV (all scopes, 100 repeated parses, malformed CV, normalization, reported card preset)\n";
     }
 
     struct StereoFixture
@@ -89,7 +130,9 @@ namespace
         require (copied.isEquivalentTo (before) && copied != source.getValueTree (), "Copy must be detached and preserve all settings");
         ZoneProperties next (ZoneContinuation::makeNext (source.getValueTree (), 1000, true), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
         require (next.getSampleStart () == 300 && next.getSampleEnd () == 500, "Continuation must start at the previous end with the same duration");
-        require (next.getLoopStart () == 300 && std::abs (next.getLoopLength ().value_or (0) - 200.0) < 1e-9, "Loop points must move with the new slice");
+        const auto nextRange { ZoneSampleRanges::resolve (ZoneSampleRanges::read (next), 1000) };
+        require (! next.getLoopStart () && ! next.getLoopLength () && nextRange.loopStart == 300 && nextRange.loopLength == 200.0,
+                 "Continued slice starts with an automatic loop following its sample range");
         require (next.getSample () == "slices.wav" && next.getSide () == 1 && std::abs (next.getPitchOffset () - 2.0) < 1e-9, "Continuation lost sample settings");
         ZoneProperties tail (ZoneContinuation::makeNext (source.getValueTree (), 350, true), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
         require (tail.getSampleEnd () == 350 && tail.getSampleStart () == 300, "Tail must stop at the file end");

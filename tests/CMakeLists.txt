@@ -52,10 +52,18 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     WaveformAuditionRoutingTests.cpp
     ../Source/Assimil8or/Audio/WaveformAudition.cpp
     WaveformDesignTests.cpp
+    RawCycleImportTests.cpp
+    AutoLoopUiTests.cpp
+    AuditionSignalCheckTests.cpp
+    AuditionWarningRoutingTests.cpp
     WaveformDesignExportTests.cpp
     WaveformDesignAssignmentTests.cpp
     PresetFolderCopyTests.cpp
     ../Source/Assimil8or/PresetFolderCopy.cpp
+    PresetBankExportTests.cpp
+    BankExportUiTests.cpp
+    ../Source/Assimil8or/PresetBankExport.cpp
+    ../Source/GUI/BankExportComponent.cpp
     SharedPresetSessionTests.cpp
     ChannelCvSafetyTests.cpp
     GeneratedSidecarValidatorTests.cpp
@@ -63,6 +71,8 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     WaveformWorkspaceTests.cpp
     WaveformDurationTests.cpp
     ../Source/Assimil8or/Audio/WaveformDesign.cpp
+    ../Source/Assimil8or/Audio/RawCycleImport.cpp
+    ../Source/Assimil8or/Audio/AuditionSignalCheck.cpp
     ../Source/Assimil8or/Audio/WaveformDesignExport.cpp
     ../Source/Assimil8or/Audio/WaveformDesignAssignment.cpp
     ../Source/GUI/WaveformWorkspace.cpp
@@ -71,6 +81,8 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     LoopPointsTests.cpp
     ZoneVoltageTests.cpp
     RegionMoveTests.cpp
+    ZoneSampleRangesTests.cpp
+    PresetLoopRangeTests.cpp
     WaveformWorkflowTests.cpp
     EditorRefinementTests.cpp
     AudioAuditTests.cpp
@@ -102,6 +114,7 @@ target_sources(A8ManagerInteractionTests PRIVATE ValueDragTests.cpp
     ../Source/GUI/Assimil8or/Editor/ZoneEditor.cpp
     ../Source/GUI/Assimil8or/Editor/ChannelEditor.cpp
     ../Source/GUI/Assimil8or/Editor/Assimil8orEditorComponent.cpp
+    ../Source/GUI/Assimil8or/PresetList/PresetListComponent.cpp
     ../Source/GUI/Assimil8or/Editor/CvInputComboBox.cpp
     ../Source/GUI/GuiControlProperties.cpp
     ../Source/GUI/Assimil8or/Editor/EditManager.cpp
@@ -154,9 +167,18 @@ add_test(NAME HardwareTestOutputUiRegression COMMAND A8ManagerInteractionTests -
 set_tests_properties(HardwareTestOutputRegression HardwareTestOutputUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 set_tests_properties(AppearanceRegression PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME WaveformDesignRegression COMMAND A8ManagerInteractionTests --waveform-design)
+add_test(NAME RawCycleImportRegression COMMAND A8ManagerInteractionTests --raw-cycle-import)
+add_test(NAME AutoLoopUiRegression COMMAND A8ManagerInteractionTests --auto-loop-ui)
+set_tests_properties(RawCycleImportRegression AutoLoopUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
+add_test(NAME AuditionSignalCheckRegression COMMAND A8ManagerInteractionTests --audition-signal-check)
+add_test(NAME AuditionWarningRoutingRegression COMMAND A8ManagerInteractionTests --audition-warning-routing)
+set_tests_properties(AuditionSignalCheckRegression AuditionWarningRoutingRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME WaveformDesignExportRegression COMMAND A8ManagerInteractionTests --waveform-design-export)
 add_test(NAME WaveformDesignAssignmentRegression COMMAND A8ManagerInteractionTests --waveform-design-assignment)
 add_test(NAME PresetFolderCopyRegression COMMAND A8ManagerInteractionTests --preset-folder-copy)
+add_test(NAME PresetBankExportRegression COMMAND A8ManagerInteractionTests --preset-bank-export)
+add_test(NAME BankExportUiRegression COMMAND A8ManagerInteractionTests --bank-export-ui)
+set_tests_properties(PresetBankExportRegression BankExportUiRegression PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 set_tests_properties(PresetFolderCopyRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME SharedPresetSessionRegression COMMAND A8ManagerInteractionTests --shared-preset-session)
 add_test(NAME ChannelCvSafetyRegression COMMAND A8ManagerInteractionTests --channel-cv-safety)
@@ -193,6 +215,9 @@ add_test(NAME StereoAssignmentRegression COMMAND A8ManagerInteractionTests --ste
 add_test(NAME StereoCollapseRegression COMMAND A8ManagerInteractionTests --stereo-collapse)
 add_test(NAME SampleRenameRegression COMMAND A8ManagerInteractionTests --sample-rename)
 add_test(NAME SampleRenameUiRegression COMMAND A8ManagerInteractionTests --sample-rename-ui)
+add_test(NAME ZoneSampleRangesRegression COMMAND A8ManagerInteractionTests --zone-sample-ranges)
+add_test(NAME PresetLoopRangeRegression COMMAND A8ManagerInteractionTests --preset-loop-ranges)
+set_tests_properties(ZoneSampleRangesRegression PresetLoopRangeRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 set_tests_properties(SampleRenameRegression SampleRenameUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")
 add_test(NAME StereoCollapseUiRegression COMMAND A8ManagerInteractionTests --stereo-collapse-ui)
 set_tests_properties(StereoCollapseRegression StereoCollapseUiRegression PROPERTIES TIMEOUT 90 FAIL_REGULAR_EXPRESSION "JUCE Assertion failure")

@@ -96,7 +96,8 @@ namespace PresetHelpers
         ChannelProperties channelPropertiesTwo (channelTwoVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
 #if LOG_DIFFERENCE
 #endif
-        return  channelPropertiesOne.getAliasing () == channelPropertiesTwo.getAliasing () &&
+        return  channelPropertiesOne.getAllowLoopOutsideSample () == channelPropertiesTwo.getAllowLoopOutsideSample () &&
+                channelPropertiesOne.getAliasing () == channelPropertiesTwo.getAliasing () &&
                 channelPropertiesOne.getAliasingMod () == channelPropertiesTwo.getAliasingMod () &&
                 channelPropertiesOne.getAttack () == channelPropertiesTwo.getAttack () &&
                 channelPropertiesOne.getAttackFromCurrent () == channelPropertiesTwo.getAttackFromCurrent () &&

@@ -305,6 +305,9 @@ void testPairedZoneEdits ()
     check (zone (preset, 0, 3).getSampleEnd () == 1001 && zone (preset, 1, 3).getSampleEnd () == 1001, "Explode covers final remainder on both sides");
     check (zone (preset, 1, 2).getSample () == "right.wav" && zone (preset, 1, 2).getSide () == 1, "Explode retains distinct right source");
     check (zone (preset, 0, 2).getSampleStart () == zone (preset, 1, 2).getSampleStart (), "Explode slice boundaries match");
+    for (int side { 0 }; side < 2; ++side)
+        for (int index { 1 }; index <= 3; ++index)
+            check (! zone (preset, side, index).getLoopStart () && ! zone (preset, side, index).getLoopLength (), "New slices use automatic full-sample loops on both sides");
     const auto valid { preset.createCopy () };
     check (! PairedZoneEdits::explode (left, 6, 3, 1001) && ! PairedZoneEdits::explode (left, 0, 8, 10) && preset.isEquivalentTo (valid), "Invalid explode is a no-op");
     check (! PairedZoneEdits::clearAll (preset.getChild (1), ZoneProperties::create (1)), "Cannot independently clear read-only stereo-right");

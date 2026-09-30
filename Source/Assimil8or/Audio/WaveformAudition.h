@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WaveformDesign.h"
+#include "AuditionSignalCheck.h"
 #include <memory>
 
 // Monitor-only source for the existing audio device. It never edits a preset,
@@ -38,6 +39,10 @@ public:
     // Negative-only banks do not extend the nominal ceiling. Invalid rates or
     // active-bank metadata return the lower bound; full payload validation is separate.
     static double maximumTransposeSemitones (const WaveformDesign::Settings& settings) noexcept;
+    // Worker/non-audio thread only: inspect one second of the actual protected
+    // monitor signal at 48 kHz/unity monitor gain, after a short settling period.
+    // Uses a separate engine; never starts or alters the live audio device.
+    static AuditionSignalCheck::Report inspectSignal (PayloadPtr payload, double transposeSemitones);
     // Non-audio thread only. nullptr invalidates readiness and ramps playback
     // down; publishing a new valid payload never starts a stopped or range-
     // paused monitor. Only a subsequent valid transpose change can resume it.

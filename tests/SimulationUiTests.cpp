@@ -47,7 +47,7 @@ struct SimulationUiTestAccess
                 ZoneProperties zone (channel.getZoneVT (zoneIndex), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
                 zone.setSample ("fixture.wav", false);
                 zone.setSampleStart (100, false); zone.setSampleEnd (800, false);
-                zone.setLoopStart (1200, false); zone.setLoopLength (200, false);
+                zone.setLoopStart (400, false); zone.setLoopLength (200, false);
                 SampleProperties sample (samples.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
                 sample.setName ("fixture.wav", false);
                 sample.setAudioBufferPtr (&buffer, false);
@@ -84,16 +84,16 @@ struct SimulationUiTestAccess
                    target.loopPlayButton.getButtonText () == (loopStop ? "STOP" : "LOOP") &&
                    target.oneShotPlayButton.getToggleState () == onceStop && target.loopPlayButton.getToggleState () == loopStop, message);
         };
-        check (editor->canStartSampleIntoLoop (), "A valid late loop supports sample-into-loop simulation");
+        check (editor->canStartSampleIntoLoop (), "A valid contained loop supports sample-into-loop simulation");
         editor->startSampleIntoLoop ();
         check (audition.getPlayState () == State::sampleIntoLoop && audition.getSampleSource () == std::make_tuple (0, 0),
                "The zone starts the dedicated simulation transport for its exact source");
         expectControls (*editor, true, false, "Simulation initially highlights SAMPLE/ONCE as STOP before the first phase tick");
         check (! editor->isLoopSelected () && editor->activePointBackground == &editor->samplePointsBackground, "Initial simulation uses SAMPLE panel");
         audition.setSimulationPhase (Phase::sample, false);
-        audition.setPlaybackPosition (1100, false); // Beyond SAMPLE END, before LOOP START.
+        audition.setPlaybackPosition (300, false); // Inside SAMPLE, before LOOP START.
         editor->updatePlaybackDisplay ();
-        expectControls (*editor, true, false, "The traversed gap remains in SAMPLE with ONCE highlighted as STOP");
+        expectControls (*editor, true, false, "The sample intro remains in SAMPLE with ONCE highlighted as STOP");
         editor->selectLoop (true);
         check (! editor->isLoopSelected () && audition.getPlayState () == State::sampleIntoLoop,
                "Marker/section selection during the sample phase cannot stop or prematurely switch the simulation");
@@ -119,7 +119,7 @@ struct SimulationUiTestAccess
         editor->startSampleIntoLoop ();
         check (audition.getSimulationPhase () == Phase::sample && ! editor->isLoopSelected (), "Retrigger immediately resets a stale loop phase to the new sample lead-in");
         editor->oneShotPlayButton.onClick ();
-        check (audition.getPlayState () == State::stop, "The highlighted sample ONCE STOP ends the lead-in/gap simulation");
+        check (audition.getPlayState () == State::stop, "The highlighted sample ONCE STOP ends the contained lead-in simulation");
         editor->startSampleIntoLoop ();
         audition.setSimulationPhase (Phase::loop, false);
         editor->oneShotPlayButton.onClick ();
@@ -127,14 +127,21 @@ struct SimulationUiTestAccess
                "A still-visible SAMPLE STOP remains a stop if the audible loop phase arrives before the queued UI refresh");
         check (preset.getValueTree ().isEquivalentTo (untouched), "Simulation and phase following never alter preset data");
 
+        editor->zoneProperties.setLoopStart (1200, true);
+        editor->zoneProperties.setLoopLength (200, true);
+        check (! editor->canStartSampleIntoLoop (), "A detached legacy loop is not eligible for simulation");
+        editor->startSampleIntoLoop ();
+        check (audition.getPlayState () == State::stop, "A stale trigger cannot traverse beyond Sample End into an invalid loop");
         editor->zoneProperties.setLoopStart (50, true);
         editor->zoneProperties.setLoopLength (200, true);
+        check (! editor->canStartSampleIntoLoop (), "A loop overlapping before Sample Start is invalid");
+        editor->zoneProperties.setLoopStart (100, true);
         editor->startSampleIntoLoop ();
         check (audition.getSimulationPhase () == Phase::loop && audition.getSamplePointsSelector () == Selection::LoopPoints && editor->isLoopSelected (),
-               "A sample starting inside the loop immediately selects loop phase and marker range");
-        expectControls (*editor, false, true, "Starting inside an overlapping loop highlights LOOP STOP immediately");
+               "Equal Sample and Loop Start immediately selects loop phase and marker range");
+        expectControls (*editor, false, true, "Equal Sample and Loop Start highlights LOOP STOP immediately");
         editor->loopPlayButton.onClick ();
-        editor->zoneProperties.setLoopStart (1200, true);
+        editor->zoneProperties.setLoopStart (400, true);
         editor->zoneProperties.setLoopLength (200, true);
 
         // Regular audition retains its two independent transport modes.
@@ -182,7 +189,7 @@ struct SimulationUiTestAccess
         check (! editor->canStartSampleIntoLoop () && availabilityChanges > 0, "Loop ending at Sample Start is disabled and publishes availability changes");
         editor->startSampleIntoLoop ();
         check (audition.getPlayState () == State::stop, "A stale trigger cannot start an unsupported earlier loop");
-        editor->zoneProperties.setLoopStart (1200, true);
+        editor->zoneProperties.setLoopStart (400, true);
         editor->zoneProperties.setLoopLength (200, true);
         editor->sampleProperties.setIsCv (true, true);
         check (! editor->canStartSampleIntoLoop (), "CV simulation is disabled at its entry point");
@@ -225,7 +232,7 @@ struct SimulationUiTestAccess
         expectControls (*editor, false, false, "Queued callbacks read latest state/source, and callbacks for destroyed editors are safe");
         expectControls (*otherZone, false, false, "No stale notification can reinstate STOP on another source");
         editor->setLookAndFeel (nullptr); otherZone->setLookAndFeel (nullptr);
-        std::cout << "PASS: simulation zone phase/STOP highlights, gap following, source isolation, ordinary transport, eligibility, CV/stereo safety and deferred lifetime/state handling\n";
+        std::cout << "PASS: contained simulation phase/STOP highlights, source isolation, ordinary transport, invalid legacy eligibility, CV/stereo safety and deferred lifetime/state handling\n";
     }
 };
 

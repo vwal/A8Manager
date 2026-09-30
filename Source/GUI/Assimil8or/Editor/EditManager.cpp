@@ -4,6 +4,7 @@
 #include "SampleManager/SampleManagerProperties.h"
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
+#include "../../../Assimil8or/Preset/ZoneSampleRanges.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
@@ -248,31 +249,15 @@ juce::ValueTree EditManager::getZoneDefaults ()
 
 juce::int64 EditManager::getMaxLoopStart (int channelIndex, int zoneIndex)
 {
-    jassert (channelIndex < 8);
-    jassert (zoneIndex < 8);
+    jassert (channelIndex >= 0 && channelIndex < 8 && zoneIndex >= 0 && zoneIndex < 8);
+    if (channelIndex < 0 || channelIndex >= 8 || zoneIndex < 0 || zoneIndex >= 8) return 0;
     auto& sampleProperties { zoneAndSamplePropertiesList [channelIndex][zoneIndex].sampleProperties };
     auto& zoneProperties { zoneAndSamplePropertiesList [channelIndex][zoneIndex].zoneProperties };
-    if (! channelPropertiesList [channelIndex].getLoopLengthIsEnd ())
-    {
-        // if normal Loop Length behavior is used, then Loop Start cannot push Loop Length past the end of the sample
-        const auto sampleLength { sampleProperties.getLengthInSamples () };
-        const auto loopLength { static_cast<juce::int64> (zoneProperties.getLoopLength ().value_or (sampleLength - zoneProperties.getLoopStart ().value_or (0))) };
-        const auto maxLoopStart { sampleLength - loopLength };
-        //DebugLog ("EditManager::getMaxLoopStart (loopLength)", "sampleLength: " + juce::String (sampleLength) + ", loopLength: " + juce::String (loopLength) + ", maxLoopStart: " + juce::String (maxLoopStart));
-        return sampleProperties.getLengthInSamples () < 4 ? 0 : maxLoopStart;
-    }
-    else
-    {
-        // if Loop Length is being viewed as Loop End, then Loop Length will be changed by the location of Loop Start, down to a End Of Sample - 4
-        const auto loopStart { zoneProperties.getLoopStart ().value_or (0) };
-        const auto loopLength { static_cast<juce::int64> (zoneProperties.getLoopLength ().value_or (minZoneProperties.getLoopLength ().value ())) };
-        const auto loopEnd { loopStart + loopLength };
-        const auto maxLoopStart { loopEnd - 4 };
-        //const auto sampleLength { sampleProperties.getLengthInSamples () };
-        //     DebugLog ("EditManager::getMaxLoopStart (loopEnd)", "sampleLength: " + juce::String (sampleLength) + ", loopStart: " + juce::String (loopStart) +
-        //               ", loopLength: " + juce::String (loopLength) + ", loopEnd: " + juce::String (loopEnd));
-        return maxLoopStart;
-    }
+    const auto mode { channelPropertiesList [channelIndex].getLoopLengthIsEnd () ? ZoneSampleRanges::Mode::end : ZoneSampleRanges::Mode::length };
+    const auto bounds { ZoneSampleRanges::limits (ZoneSampleRanges::read (zoneProperties), sampleProperties.getLengthInSamples (),
+                                                ZoneSampleRanges::Marker::loopStart, mode, false,
+                                                channelPropertiesList[channelIndex].getAllowLoopOutsideSample ()) };
+    return bounds.editable ? static_cast<juce::int64> (std::floor (bounds.maximum)) : 0;
 }
 
 bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::StringArray& files)
@@ -347,15 +332,11 @@ bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::St
         auto& zoneProperties { zoneAndSamplePropertiesList [channelIndex][zoneIndex + filesIndex].zoneProperties };
         zoneProperties.setSample (file.getFileName (), false);
         zoneProperties.setSide (0, false);
-        const auto sampleStart { std::clamp<juce::int64> (zoneProperties.getSampleStart ().value_or (0), 0, imported.length - 1) };
-        if (zoneProperties.getSampleStart ().has_value ()) zoneProperties.setSampleStart (sampleStart, false);
-        if (zoneProperties.getSampleEnd ().has_value ())
-            zoneProperties.setSampleEnd (std::clamp<juce::int64> (*zoneProperties.getSampleEnd (), sampleStart + 1, imported.length), false);
-        const auto minimumLoop { std::min<juce::int64> (4, imported.length) };
-        const auto loopStart { std::clamp<juce::int64> (zoneProperties.getLoopStart ().value_or (0), 0, imported.length - minimumLoop) };
-        if (zoneProperties.getLoopStart ().has_value ()) zoneProperties.setLoopStart (loopStart, false);
-        if (zoneProperties.getLoopLength ().has_value ())
-            zoneProperties.setLoopLength (std::clamp (*zoneProperties.getLoopLength (), static_cast<double> (minimumLoop), static_cast<double> (imported.length - loopStart)), false);
+        ZoneSampleRanges::apply (zoneProperties,
+            ZoneSampleRanges::repair (ZoneSampleRanges::read (zoneProperties), imported.length,
+                channelPropertiesList[channelIndex].getLoopLengthIsEnd () ? ZoneSampleRanges::Mode::end : ZoneSampleRanges::Mode::length,
+                channelPropertiesList[channelIndex].getAllowLoopOutsideSample ()),
+            imported.length, false, channelPropertiesList[channelIndex].getAllowLoopOutsideSample ());
 
         // Retain existing pairs for mono imports too, duplicating mono to both
         // sides rather than leaving unrelated old audio in the right zone.
@@ -384,6 +365,7 @@ bool EditManager::assignSamples (int channelIndex, int zoneIndex, const juce::St
                             right.setSide (reader && reader->numChannels == 2 ? 1 : 0, false);
                         }
                     nextChannelProperties.setChannelMode (ChannelProperties::ChannelMode::stereoRight, false);
+                    nextChannelProperties.setAllowLoopOutsideSample (channelPropertiesList[channelIndex].getAllowLoopOutsideSample (), false);
                     nextChannelZoneProperties.copyFrom (zoneProperties.getValueTree (), false);
                     nextChannelZoneProperties.setSide (imported.channels == 2 ? 1 : 0, false);
                     nextChannelZoneProperties.setSample (zoneProperties.getSample (), false); // when the other editor receives this update, it will also update the sample positions, so do it after setting them

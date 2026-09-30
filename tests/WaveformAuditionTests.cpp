@@ -64,6 +64,85 @@ namespace
                 check (std::isfinite (audio.getSample (channel, frame)) && std::abs (audio.getSample (channel, frame)) <= 0.980001f, "Audition output is finite and safety-bounded");
     }
 
+    void testProtectedSignalInspection ()
+    {
+        using Status = AuditionSignalCheck::Status;
+        for (const auto shape : { Shape::sine, Shape::saw, Shape::pulse })
+        {
+            auto settings { startingPoint (Mode::oscillator, shape) };
+            settings.amplitude = 1.0;
+            settings.brightness = 1.0;
+            settings.harmonics = 1024;
+            settings.pulseWidth = 0.2;
+            for (const auto transpose : { -12.0, 0.0, 12.0 })
+            {
+                const auto report { WaveformAudition::inspectSignal (payloadFor (settings), transpose) };
+                check (report.status == Status::clear && ! report.needsConfirmation () && report.channels.size () == 2
+                       && report.durationSeconds == 1.0, "Normal full-scale sine/saw/pulse cycles do not trigger speculative safety warnings");
+                for (const auto& channel : report.channels)
+                    check (std::isfinite (channel.peak) && channel.peak <= 0.980001 && std::abs (channel.mean) < 0.02,
+                           "Signal inspection measures the monitor's bounded, DC-protected stereo output");
+                if (shape == Shape::sine && transpose == 0.0)
+                    check (report.channels[0].rms > 0.4, "Inspection uses unity monitor gain, not the quiet default monitor level");
+            }
+        }
+
+        auto shifted { startingPoint (Mode::oscillator, Shape::imported) };
+        shifted.importedCycleName = "DC-offset audio cycle";
+        shifted.importedCycle.resize (512);
+        for (size_t frame { 0 }; frame < shifted.importedCycle.size (); ++frame)
+            shifted.importedCycle[frame] = 0.6 + 0.2 * std::sin (juce::MathConstants<double>::twoPi * static_cast<double> (frame) / shifted.importedCycle.size ());
+        shifted.amplitude = 1.0;
+        shifted.brightness = 1.0;
+        shifted.harmonics = 1024;
+        shifted.offset = 0.45; // Deliberate exported DC, removed only in monitoring.
+        Render source;
+        check (render (shifted, source).wasOk () && source.dc > 0.44, "Offset fixture really contains substantial DC before monitor protection");
+        WaveformAudition::PayloadPtr shiftedPayload;
+        check (WaveformAudition::preparePayload (shifted, source, shiftedPayload).wasOk (), "Prepare imported shifted-DC monitor payload");
+        const auto shiftedReport { WaveformAudition::inspectSignal (shiftedPayload, 0.0) };
+        check (shiftedReport.status == Status::clear && shiftedReport.channels.size () == 2,
+               "Removed source DC does not cause a warning about audio that never reaches the monitor");
+        for (const auto& channel : shiftedReport.channels)
+            check (std::abs (channel.mean) < 0.002 && channel.rms > 0.05, "The inspected imported cycle remains audible while actual monitored DC is negligible");
+
+        const auto clean { payloadFor (startingPoint (Mode::oscillator, Shape::sine)) };
+        const auto missing { WaveformAudition::inspectSignal ({}, 0.0) };
+        check (missing.isBlocked () && ! missing.needsConfirmation () && missing.channels.empty ()
+               && missing.explanation ().contains ("valid audio waveform"), "Missing payload is a hard block with the real engine start failure");
+        auto cv { startingPoint (Mode::modulation, Shape::sine) };
+        Render cvRender;
+        check (render (cv, cvRender).wasOk (), "Render wrong-mode fixture without playing it");
+        WaveformAudition::PayloadPtr rejected { clean };
+        check (WaveformAudition::preparePayload (cv, cvRender, rejected).failed () && ! rejected,
+               "CV mode cannot create an inspectable speaker-audition payload");
+        check (WaveformAudition::inspectSignal (rejected, 0.0).isBlocked (), "A failed CV payload cannot become a warning that the user could override");
+        for (const auto transpose : { std::numeric_limits<double>::quiet_NaN (), -49.0, 73.0 })
+        {
+            const auto report { WaveformAudition::inspectSignal (clean, transpose) };
+            check (report.isBlocked () && report.channels.empty () && report.explanation ().contains ("Monitor transpose"),
+                   "Invalid/hardware-out-of-range transpose returns the actual setter error without rendering");
+        }
+        for (const int frames : { 64, 8192 })
+        {
+            auto settings { startingPoint (Mode::oscillator, Shape::sine) };
+            settings.cycleFrames = frames;
+            const auto transpose { frames == 64 ? 60.0 : 0.0 };
+            const auto report { WaveformAudition::inspectSignal (payloadFor (settings), transpose) };
+            check (report.isBlocked () && ! report.needsConfirmation () && report.explanation ().contains ("20 Hz")
+                   && report.explanation ().contains ("20000"), "Monitor frequency restrictions stay non-overridable hard blocks in inspection");
+        }
+
+        WaveformAudition live;
+        live.prepareToPlay (48000.0);
+        live.setPayload (clean);
+        check (live.start ().wasOk (), "Start independent live-engine fixture");
+        collect (live, 4800);
+        juce::ignoreUnused (WaveformAudition::inspectSignal (shiftedPayload, 12.0));
+        check (live.isActive () && ! live.isPausedForRange () && std::abs (frequency (collect (live, 24000), 0, 48000.0) - 93.75) < 0.03,
+               "Inspection's temporary engine never alters live playback intent, payload, phase or transpose");
+    }
+
     void testHardwareTransposeRange ()
     {
         auto settings { startingPoint (Mode::oscillator, Shape::sine) };
@@ -345,6 +424,7 @@ namespace
 
 void testWaveformAudition ()
 {
+    testProtectedSignalInspection ();
     testHardwareTransposeRange ();
     testRangePause ();
     using namespace WaveformDesign;

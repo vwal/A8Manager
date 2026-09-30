@@ -133,10 +133,34 @@ namespace WaveformDesign
         return failures.isEmpty () ? juce::Result::ok () : juce::Result::fail (failures.joinIntoString ("\n"));
     }
 
+    juce::String reserveAssignmentId ()
+    {
+        return juce::Uuid ().toString ().substring (0, 12);
+    }
+
+    bool isAssignmentIdValid (const juce::String& id)
+    {
+        return id.length () == 12 && id.containsOnly ("0123456789abcdef");
+    }
+
+    juce::String assignmentFileStem (const juce::String& name, const juce::String& id)
+    {
+        return isAssignmentIdValid (id) ? ExportSupport::safeStem (name).substring (0, 22) + "-" + id : juce::String ();
+    }
+
+    juce::String assignmentWaveName (const juce::String& name, const juce::String& id, int voiceNumber)
+    {
+        if (! isAssignmentIdValid (id) || voiceNumber < 1 || voiceNumber > kNumChannels) return {};
+        return assignmentFileStem (name, id) + "-" + juce::String (voiceNumber).paddedLeft ('0', 2) + ".wav";
+    }
+
     juce::Result prepareAssignment (const Settings& settings, const juce::File& folder, const juce::String& name,
-                                    const juce::ValueTree& sourcePreset, int firstChannel, int zone, AssignmentResult& result)
+                                    const juce::ValueTree& sourcePreset, int firstChannel, int zone, AssignmentResult& result,
+                                    std::optional<juce::String> reservedId)
     {
         result = {};
+        const auto id { reservedId ? *reservedId : reserveAssignmentId () };
+        if (! isAssignmentIdValid (id)) return juce::Result::fail ("The reserved generation identifier is invalid. No files were generated.");
         if (! folder.isDirectory ()) return juce::Result::fail ("Choose an existing current preset folder.");
         if (const auto valid { validate (settings) }; valid.failed ()) return valid;
         const auto count { settings.mode == Mode::layers ? settings.voiceCount : 1 };
@@ -161,11 +185,11 @@ namespace WaveformDesign
             return juce::Result::fail (message + (rollback.failed () ? "\n" + rollback.getErrorMessage () : juce::String ()) +
                 (removed ? juce::String () : "\nIncomplete staging files remain at " + stage.getFullPathName ()));
         };
-        const auto stem { ExportSupport::safeStem (name).substring (0, 22) + "-" + token.substring (0, 12) };
+        const auto stem { assignmentFileStem (name, id) };
         juce::StringArray names;
         for (int index { 0 }; index < count; ++index)
         {
-            const auto filename { stem + "-" + juce::String (index + 1).paddedLeft ('0', 2) + ".wav" };
+            const auto filename { assignmentWaveName (name, id, index + 1) };
             if (const auto written { ExportSupport::writeWave (stage.getChildFile (filename), rendered.voices[static_cast<size_t> (index)],
                                                                rendered.sampleRate, settings.mode == Mode::modulation) }; written.failed ())
                 return fail (written.getErrorMessage ());

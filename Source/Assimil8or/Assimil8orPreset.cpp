@@ -2,13 +2,17 @@
 #include "FileTypeHelpers.h"
 #include "Preset/ParameterNames.h"
 #include "Preset/ParameterPresetsSingleton.h"
+#include "Preset/AutomaticLoopDefaults.h"
 #include "oolib/Debug/DebugLog.h"
+#include <array>
 #include <charconv>
 #include <cmath>
+#include <map>
 #include <set>
 
 namespace
 {
+    const juce::String outsideLoopComment { "# A8Manager allow loop outside sample v1" };
     bool isFiniteNumber (juce::String text, bool integer = false)
     {
         if (text.startsWithChar ('+')) text = text.substring (1);
@@ -71,7 +75,7 @@ Assimil8orPreset::Assimil8orPreset ()
                               PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
 }
 
-juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree presetPropertiesVT)
+juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree presetPropertiesVT, juce::File sampleFolder)
 {
     if (! presetPropertiesVT.hasType (PresetProperties::PresetTypeId) || presetPropertiesVT.getNumChildren () != kNumChannels)
         return juce::Result::fail ("The preset is not valid.");
@@ -100,6 +104,48 @@ juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree pre
             presetPropertiesToWrite.setId (presetNumber, false);
     }
 
+    // Missing loop fields mean "follow the selected sample" in the editor.
+    // Resolve those fields for hardware, without changing the live preset, and
+    // remember the default intent in a bound comment for a later editor reload.
+    std::array<std::array<juce::String, kNumZones>, kNumChannels> loopDefaultComments;
+    if (sampleFolder == juce::File ()) sampleFolder = presetFile.getParentDirectory ();
+    juce::WavAudioFormat waveFormat;
+    std::map<juce::String, juce::int64> fileLengths;
+    for (int channel { 0 }; channel < kNumChannels; ++channel)
+        for (int zone { 0 }; zone < kNumZones; ++zone)
+        {
+            ZoneProperties original (presetPropertiesVT.getChild (channel).getChild (zone), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            ZoneProperties written (presetPropertiesToWrite.getChannelVT (channel).getChild (zone), ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            if (original.getSample ().isEmpty () || (original.getLoopStart () && original.getLoopLength ())) continue;
+            if (! original.getSampleStart () && ! original.getSampleEnd () && ! original.getLoopStart () && ! original.getLoopLength ()) continue;
+            const auto start { original.getLoopStart ().value_or (original.getSampleStart ().value_or (0)) };
+            if (! original.getLoopStart ()) written.setLoopStart (start, false);
+            if (! original.getLoopLength ())
+            {
+                auto end { original.getSampleEnd ().value_or (-1) };
+                ChannelProperties originalChannel (presetPropertiesVT.getChild (channel), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
+                if (end < 0 || (originalChannel.getAllowLoopOutsideSample () && original.getLoopStart () && end <= start))
+                {
+                    const auto name { original.getSample () };
+                    if (name.containsAnyOf ("/\\") || juce::File::isAbsolutePath (name))
+                        return juce::Result::fail ("Cannot resolve an automatic loop for a non-flat sample filename: " + name);
+                    if (const auto found { fileLengths.find (name) }; found != fileLengths.end ()) end = found->second;
+                    else
+                    {
+                        auto stream { sampleFolder.getChildFile (name).createInputStream () };
+                        std::unique_ptr<juce::AudioFormatReader> reader { stream ? waveFormat.createReaderFor (stream.release (), true) : nullptr };
+                        if (! reader || reader->lengthInSamples <= 0)
+                            return juce::Result::fail ("Cannot determine the sample length for its automatic loop: " + name + ". Restore the WAV before saving.");
+                        end = reader->lengthInSamples;
+                        fileLengths[name] = end;
+                    }
+                }
+                if (end <= start) return juce::Result::fail ("The automatic loop has no valid sample range: " + original.getSample ());
+                written.setLoopLength (static_cast<double> (end - start), false);
+            }
+            loopDefaultComments[static_cast<size_t> (channel)][static_cast<size_t> (zone)] = AutomaticLoopDefaults::comment (original, written);
+        }
+
     PresetProperties defaultPresetProperties (ParameterPresetsSingleton::getInstance ()->getParameterPresetListProperties ().getParameterPreset (ParameterPresetListProperties::DefaultParameterPresetType),
                                               PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
     ChannelProperties defaultChannelProperties (defaultPresetProperties.getChannelVT (0), ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
@@ -127,13 +173,14 @@ juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree pre
     addLine (presetPropertiesToWrite.getXfadeDCV () != defaultPresetProperties.getXfadeDCV (), Parameter::Preset::XfadeDCVId + " : " + presetPropertiesToWrite.getXfadeDCV ());
     addLine (presetPropertiesToWrite.getXfadeDWidth () != defaultPresetProperties.getXfadeDWidth (), Parameter::Preset::XfadeDWidthId + " : " + juce::String (presetPropertiesToWrite.getXfadeDWidth (), 2));
 
-    presetPropertiesToWrite.forEachChannel ([this, &addLine, &lines, &indentAmount, &defaultZoneProperties, &defaultChannelProperties] (juce::ValueTree channelVT, int)
+    presetPropertiesToWrite.forEachChannel ([this, &addLine, &lines, &indentAmount, &defaultZoneProperties, &defaultChannelProperties, &loopDefaultComments] (juce::ValueTree channelVT, int channelIndex)
     {
         ChannelProperties channelProperties (channelVT, ChannelProperties::WrapperType::client, ChannelProperties::EnableCallbacks::no);
         const auto channelHeader { lines.size () };
         {
             addLine (true, Section::ChannelId + " " + juce::String (channelProperties.getId ()) + " :");
             ++indentAmount;
+            addLine (channelProperties.getAllowLoopOutsideSample (), outsideLoopComment);
             addLine (channelProperties.getAliasing () != defaultChannelProperties.getAliasing (), Parameter::Channel::AliasingId + " : " + juce::String (channelProperties.getAliasing ()));
             addLine (channelProperties.getAliasingMod () != defaultChannelProperties.getAliasingMod (), Parameter::Channel::AliasingModId + " : " + ChannelProperties::getCvInputAndValueString (channelProperties.getAliasingMod (), 4));
             addLine (channelProperties.getAttack () != defaultChannelProperties.getAttack (), Parameter::Channel::AttackId + " : " + juce::String (channelProperties.getAttack ()));
@@ -175,7 +222,7 @@ juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree pre
             addLine (channelProperties.getZonesCV () != defaultChannelProperties.getZonesCV (), Parameter::Channel::ZonesCVId + " : " + channelProperties.getZonesCV ());
             addLine (channelProperties.getZonesRT () != defaultChannelProperties.getZonesRT (), Parameter::Channel::ZonesRTId + " : " + juce::String (channelProperties.getZonesRT ()));
 
-            channelProperties.forEachZone ([this, &indentAmount, &addLine, &lines, &defaultZoneProperties] (juce::ValueTree zoneVT, int)
+            channelProperties.forEachZone ([this, &indentAmount, &addLine, &lines, &defaultZoneProperties, &loopDefaultComments, channelIndex] (juce::ValueTree zoneVT, int zoneIndex)
             {
                 ZoneProperties zoneProperties (zoneVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
                 const auto zoneHeader { lines.size () };
@@ -195,6 +242,8 @@ juce::Result Assimil8orPreset::write (juce::File presetFile, juce::ValueTree pre
                     addLine (zoneProperties.getSampleEnd ().has_value () && zoneProperties.getSampleEnd () != defaultZoneProperties.getSampleEnd (),
                              Parameter::Zone::SampleEndId + " : " + juce::String (zoneProperties.getSampleEnd ().value_or (0)));
                     addLine (zoneProperties.getSide () != defaultZoneProperties.getSide (), Parameter::Zone::SideId + " : " + juce::String (zoneProperties.getSide ()));
+                    const auto& loopDefaults { loopDefaultComments[static_cast<size_t> (channelIndex)][static_cast<size_t> (zoneIndex)] };
+                    addLine (loopDefaults.isNotEmpty (), loopDefaults);
                     --indentAmount;
                 }
                 // A sample-less zone may still have offsets, markers or a voltage boundary.
@@ -266,12 +315,20 @@ void Assimil8orPreset::parse (juce::StringArray presetLines)
         parseErrorList.addChild (error, -1, nullptr);
     };
     std::set<juce::String> sections, parameters;
+    std::vector<std::pair<juce::ValueTree, juce::String>> loopDefaultComments;
     auto presetHeaders { 0 };
 
     for (const auto& presetLine : presetLines)
     {
         LogParsing ("parsing - " + presetLine.trimStart ());
-        if (presetLine.trim ().isEmpty () || presetLine.trimStart ().startsWithChar ('#'))
+        const auto trimmed { presetLine.trim () };
+        // Accept only the exact editor annotation in a Channel section,
+        // never a similarly named hardware parameter or a misplaced Zone comment.
+        if (trimmed == outsideLoopComment && channelProperties.isValid () && curActions == &channelActions)
+            channelProperties.setAllowLoopOutsideSample (true, false);
+        if (trimmed.startsWith (AutomaticLoopDefaults::prefix) && zoneProperties.isValid ())
+            loopDefaultComments.emplace_back (zoneProperties.getValueTree (), trimmed);
+        if (trimmed.isEmpty () || trimmed.startsWithChar ('#'))
             continue;
 
         if (! presetLine.containsChar (':'))
@@ -378,6 +435,12 @@ void Assimil8orPreset::parse (juce::StringArray presetLines)
     }
     if (presetHeaders != 1)
         reportError ("ParameterFormatError", "Expected exactly one Preset section.");
+    if (parseErrorList.getNumChildren () == 0)
+        for (const auto& [tree, comment] : loopDefaultComments)
+        {
+            ZoneProperties zone (tree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+            AutomaticLoopDefaults::restore (zone, comment);
+        }
     LogParsing ("Assimil8orPreset::parse - exit");
 }
 

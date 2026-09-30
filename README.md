@@ -8,10 +8,15 @@ It also includes a **Waveform designer** for single-cycle audio,
 CV/modulation and linked layer banks such as supersaws. Both workspaces share
 the preset slots and unsaved edits. Generate & Assign writes unique 24-bit WAVs
 and a recipe into the current folder; the designer's Save writes the selected
-preset and creates a self-contained `PRNN - <name>` copy for the SD card.
+preset and creates a self-contained `PNN - <name>` copy for the SD card.
 Original/shared samples remain in place; place the complete named copy directly
 under the card root, not its loose contents. Standalone
 package export remains available with a selectable preset number.
+**Save/Export Bank** combines saved presets from one or more explicitly selected
+folders into a new flat hardware folder. Originals stay untouched; duplicate
+preset slots must be resolved before export. Open the exported bank to work in
+one flat folder, with ordinary in-place saves from both workspaces. See
+[bank export](USER-GUIDE.md#savingexporting-a-preset-bank).
 The designer's **Test output...** action exports a separate hardware-validation
 package: the current design or audio/CV test signals, a low-level timing reference
 on its own channel, and an exact-frame manifest for recordings. It does not start

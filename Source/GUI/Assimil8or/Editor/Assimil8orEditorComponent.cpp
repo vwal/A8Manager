@@ -1,6 +1,7 @@
 #include "Assimil8orEditorComponent.h"
 #include "WaveformDuration.h"
 #include "../../ModernTheme.h"
+#include "../../A8NamePreview.h"
 #include "ParameterToolTipData.h"
 #include "../../../SystemServices.h"
 #include "../../../Assimil8or/Assimil8orPreset.h"
@@ -10,7 +11,9 @@
 #include "../../../Assimil8or/Preset/ParameterPresetsSingleton.h"
 #include "../../../Assimil8or/Preset/PresetHelpers.h"
 #include "../../../Assimil8or/Preset/StereoChannelTools.h"
+#include "../../../Assimil8or/Preset/PresetLoopRanges.h"
 #include "../../../Assimil8or/Audio/WaveformDesignRecall.h"
+#include "../../../Assimil8or/Audio/RawCycleImport.h"
 #include "../../../Assimil8or/Audio/AudioPlayer.h"
 #include "oolib/Debug/DebugLog.h"
 #include "oolib/Debug/DumpStack.h"
@@ -24,31 +27,30 @@ namespace
     class SampleRenamePrompt final : public juce::AlertWindow
     {
     public:
-        SampleRenamePrompt (const juce::String& title, const juce::String& message, const juce::String& initialName)
-            : juce::AlertWindow (title, message, juce::AlertWindow::NoIcon)
+        SampleRenamePrompt (const juce::String& title, const juce::String& message, const juce::String& initialName, juce::String immutableSuffix)
+            : juce::AlertWindow (title, message, juce::AlertWindow::NoIcon), protectedSuffix (std::move (immutableSuffix))
         {
             setComponentID ("sample-rename-dialog");
-            addTextEditor ("sample-rename-name", initialName, "New name (.wav is kept):");
+            addTextEditor ("sample-rename-name", initialName, protectedSuffix.isEmpty () ? "New name (.wav is kept):" : "Friendly name (automatic suffix is kept):");
             addButton ("CREATE COPY", 1, juce::KeyPress (juce::KeyPress::returnKey));
             addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
             feedback.setComponentID ("sample-rename-character-count");
-            feedback.setSize (520, 66);
+            feedback.setSize (520, 98);
             feedback.setFont (juce::FontOptions (13.0f));
             feedback.setMinimumHorizontalScale (1.0f);
             feedback.setJustificationType (juce::Justification::topLeft);
             addCustomComponent (&feedback);
             auto* input { getTextEditor ("sample-rename-name") };
-            // Assigned designer files end in a generated ID and voice number.
-            // Select the useful, visible beginning without locking that suffix.
-            const auto stem { initialName.endsWithIgnoreCase (".wav") ? initialName.dropLastCharacters (4) : initialName };
-            const auto prefixLength { stem.length () - 16 };
-            const auto generatedSuffix { prefixLength > 0 && stem[prefixLength] == '-'
-                && stem[stem.length () - 3] == '-'
-                && stem.substring (prefixLength + 1, stem.length () - 3).containsOnly ("0123456789abcdefABCDEF")
-                && stem.getLastCharacters (2).startsWithChar ('0')
-                && stem.getLastCharacters (1).containsOnly ("12345678") };
-            input->setSelectAllWhenFocused (! generatedSuffix);
-            input->setHighlightedRegion ({ 0, generatedSuffix ? prefixLength : initialName.length () });
+            // The caller supplies a suffix only after verifying the actual WAV
+            // and its saved recipe. A lookalike filename alone locks nothing.
+            input->setSelectAllWhenFocused (true);
+            input->setHighlightedRegion ({ 0, initialName.length () });
+            const auto help { A8NamePreview::advice () + (protectedSuffix.isEmpty ()
+                ? " These are exact previews of the filename you enter; its final characters remain editable."
+                : " " + A8NamePreview::generatedAdvice () + " The verified generated file's automatic unique identifier and two-digit voice number " + protectedSuffix
+                    + " are kept and are not editable here. The final two displayed characters are the voice number, not characters from the friendly name.") };
+            input->setTooltip (help);
+            feedback.setTooltip (help);
             input->onTextChange = [this] { updateNameFeedback (); };
             updateNameFeedback ();
         }
@@ -57,16 +59,24 @@ namespace
 
     private:
         juce::Label feedback;
+        juce::String protectedSuffix;
 
         void updateNameFeedback ()
         {
-            const auto requested { getTextEditorContents ("sample-rename-name").trim () };
+            auto requested { getTextEditorContents ("sample-rename-name").trim () };
+            if (protectedSuffix.isNotEmpty () && requested.endsWithIgnoreCase (".wav")) requested = requested.dropLastCharacters (4);
+            const auto empty { requested.isEmpty () };
+            const auto friendlyPrefix { requested };
+            if (! empty) requested += protectedSuffix;
             const auto displayed { requested.endsWithIgnoreCase (".wav") ? requested : requested + ".wav" };
             juce::String filename;
             const auto valid { SampleRename::validateName (requested, filename) };
+            const auto preview { protectedSuffix.isEmpty () ? A8NamePreview::fromFilename (displayed)
+                : A8NamePreview::fromGeneratedPrefix (friendlyPrefix, protectedSuffix.getLastCharacters (2).getIntValue ()) };
             feedback.setText (juce::String (displayed.length ()) + " / 47 characters including .wav\n"
                 + (valid.wasOk () ? "Valid WAV filename. Existing files are never overwritten." : valid.getErrorMessage ())
-                + "\nA8 shows the beginning: keep important words first.", juce::dontSendNotification);
+                + "\nA8 Select: " + (empty ? "--" : preview.select) + "    A8 Channels: " + (empty ? "--" : preview.channel)
+                + "\nPut identifying information in the first 6-10 characters.", juce::dontSendNotification);
             Theme::bindColour (feedback, juce::Label::textColourId, [error = valid.failed ()] { return error ? Theme::warning : Theme::text; });
             getButton ("CREATE COPY")->setEnabled (valid.wasOk ());
         }
@@ -118,7 +128,8 @@ std::optional<double> Assimil8orEditorComponent::getSelectedDuration (int region
     {
         ZoneProperties zoneProperties (zoneTree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
         SampleProperties sampleProperties (sampleTree, SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
-        result = WaveformDuration::selected (zoneProperties, sampleProperties, region, channelProperties[channel].getPitch ());
+        result = WaveformDuration::selected (zoneProperties, sampleProperties, region, channelProperties[channel].getPitch (),
+                                             channelProperties[channel].getAllowLoopOutsideSample ());
     });
     return result;
 }
@@ -145,10 +156,10 @@ Assimil8orEditorComponent::Assimil8orEditorComponent ()
     {
         return StereoCollapse::prepare (folder, preset, channel, mode, result);
     };
-    promptSampleRename = [this] (const juce::String& title, const juce::String& message, const juce::String& initialName,
+    promptSampleRename = [this] (const juce::String& title, const juce::String& message, const juce::String& initialName, const juce::String& protectedSuffix,
                                 std::function<void (std::optional<juce::String>)> completion)
     {
-        sampleRenameAlert = createSampleRenamePrompt (title, message, initialName);
+        sampleRenameAlert = createSampleRenamePrompt (title, message, initialName, protectedSuffix);
         auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
         auto window = juce::Component::SafePointer<juce::AlertWindow> (sampleRenameAlert.get ());
         sampleRenameAlert->enterModalState (true, juce::ModalCallbackFunction::create ([safe, window, completion = std::move (completion)] (int response)
@@ -883,14 +894,38 @@ juce::PopupMenu Assimil8orEditorComponent::createSampleFileMenu (int channelInde
         if (safe != nullptr && safe->channelActionSession.matches (*source))
             safe->requestSampleRename (*source, filename, source->folder.getChildFile (filename).getFileNameWithoutExtension ());
     });
+    RawCycleImport::Info rawInfo;
+    const auto rawAvailable { onRecallWaveform && ! channelFileOperationBusy ()
+        && ! juce::File::isAbsolutePath (filename) && ! filename.containsAnyOf ("/\\")
+        && RawCycleImport::inspect (source->folder.getChildFile (filename), rawInfo).wasOk () };
+    menu.addItem ("Import WAV as cycle in designer...", rawAvailable, false, [safe, source, filename, channelIndex, zoneIndex]
+    {
+        RawCycleImport::Info info;
+        if (safe != nullptr && ! safe->channelFileOperationBusy () && safe->onRecallWaveform
+            && safe->channelActionSession.matches (*source)
+            && RawCycleImport::inspect (source->folder.getChildFile (filename), info).wasOk ())
+            safe->onRecallWaveform (channelIndex, zoneIndex);
+    });
     return menu;
+}
+
+juce::String Assimil8orEditorComponent::verifiedSampleRenameSuffix (const juce::File& source)
+{
+    const auto stem { source.getFileNameWithoutExtension () };
+    const auto suffix { stem.getLastCharacters (16) };
+    if (stem.length () <= 16 || suffix[0] != '-' || suffix[13] != '-'
+        || ! suffix.substring (1, 13).containsOnly ("0123456789abcdefABCDEF")
+        || suffix[14] != '0' || suffix[15] < '1' || suffix[15] > '8') return {};
+    WaveformDesignRecall::RecalledDesign design;
+    if (WaveformDesignRecall::recallWave (source, design).failed () || design.voiceIndex + 1 != suffix.getLastCharacters (2).getIntValue ()) return {};
+    return suffix;
 }
 
 std::unique_ptr<juce::AlertWindow> Assimil8orEditorComponent::createSampleRenamePrompt (const juce::String& title,
                                                                                      const juce::String& message,
-                                                                                     const juce::String& initialName)
+                                                                                     const juce::String& initialName, const juce::String& protectedSuffix)
 {
-    return std::make_unique<SampleRenamePrompt> (title, message, initialName);
+    return std::make_unique<SampleRenamePrompt> (title, message, initialName, protectedSuffix);
 }
 
 void Assimil8orEditorComponent::requestSampleRename (const PresetEditSession::Snapshot& source, const juce::String& filename,
@@ -905,12 +940,15 @@ void Assimil8orEditorComponent::requestSampleRename (const PresetEditSession::Sn
     sampleRenamePrompting = true;
     const auto request { ++sampleRenameConfirmation };
     auto safe = juce::Component::SafePointer<Assimil8orEditorComponent> (this);
+    const auto protectedSuffix { verifiedSampleRenameSuffix (source.folder.getChildFile (filename)) };
+    auto editableName { proposedName.endsWithIgnoreCase (".wav") ? proposedName.dropLastCharacters (4) : proposedName };
+    if (protectedSuffix.isNotEmpty () && editableName.endsWith (protectedSuffix)) editableName = editableName.dropLastCharacters (protectedSuffix.length ());
     promptSampleRename ("Rename sample copy",
         (error.isEmpty () ? juce::String () : "Name not accepted: " + error + "\n\n")
         + "Create a copy of '" + filename + "' with a new name in this folder. All " + juce::String (references)
         + " matching sample references in the current preset will follow the copy, including stereo partners and other zones.\n\n"
         "The original WAV and other saved presets stay unchanged. The .wav extension is kept; the full name can contain up to 47 characters. Click SAVE afterward to write the updated preset.",
-        proposedName, [safe, source, filename, request] (std::optional<juce::String> entered)
+        editableName, protectedSuffix, [safe, source, filename, protectedSuffix, request] (std::optional<juce::String> entered)
         {
             if (safe == nullptr || safe->sampleRenameConfirmation != request) return;
             ++safe->sampleRenameConfirmation;
@@ -923,6 +961,11 @@ void Assimil8orEditorComponent::requestSampleRename (const PresetEditSession::Sn
             }
             juce::String finalName;
             auto requestedName { entered->trim () };
+            if (protectedSuffix.isNotEmpty ())
+            {
+                if (requestedName.endsWithIgnoreCase (".wav")) requestedName = requestedName.dropLastCharacters (4);
+                if (requestedName.isNotEmpty ()) requestedName += protectedSuffix;
+            }
             // The prompt edits the stem. Keep the original extension's case so
             // accepting an unchanged Foo.WAV is a no-op on every platform.
             if (! requestedName.endsWithIgnoreCase (".wav") && filename.endsWithIgnoreCase (".wav"))
@@ -935,7 +978,7 @@ void Assimil8orEditorComponent::requestSampleRename (const PresetEditSession::Sn
             }
             if (valid.failed ())
             {
-                safe->requestSampleRename (source, filename, *entered, valid.getErrorMessage ());
+                safe->requestSampleRename (source, filename, requestedName, valid.getErrorMessage ());
                 return;
             }
             safe->startSampleRename (source, filename, finalName);
@@ -1033,7 +1076,7 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIn
         juce::PopupMenu cloneMenu;
         cloneMenu.addSubMenu ("Channel Settings", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
         {
-            destChannelProperties.copyFrom (channelProperties[channelIndex].getValueTree ());
+            StereoChannelTools::copySettingsPreservingLoopPermission (destChannelProperties.getValueTree (), channelProperties[channelIndex].getValueTree ());
         }));
         cloneMenu.addSubMenu ("Zones", createChannelCloneMenu (channelIndex, [this, channelIndex] (ChannelProperties& destChannelProperties)
         {
@@ -1077,7 +1120,7 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIn
         });
         editMenu.addItem ("Paste", copyBufferHasData, false, [this, channelIndex] ()
         {
-            channelProperties[channelIndex].copyFrom (copyBufferChannelProperties.getValueTree ());
+            StereoChannelTools::copySettingsPreservingLoopPermission (channelProperties[channelIndex].getValueTree (), copyBufferChannelProperties.getValueTree ());
         });
         toolsMenu.addSubMenu ("Edit", editMenu, true);
     }
@@ -1093,7 +1136,7 @@ juce::PopupMenu Assimil8orEditorComponent::createChannelToolsMenu (int channelIn
     addChannelDefaultMenuItem (toolsMenu, channelIndex);
     toolsMenu.addItem ("Revert", true, false, [this, channelIndex] ()
     {
-        channelProperties[channelIndex].copyFrom (unEditedPresetProperties.getChannelVT (channelIndex));
+        StereoChannelTools::copySettingsPreservingLoopPermission (channelProperties[channelIndex].getValueTree (), unEditedPresetProperties.getChannelVT (channelIndex));
     });
     toolsMenu.addSeparator ();
     addStereoCollapseMenu (toolsMenu, channelIndex);
@@ -1168,6 +1211,21 @@ void Assimil8orEditorComponent::paint ([[maybe_unused]] juce::Graphics& g)
 
 void Assimil8orEditorComponent::explodeChannel (int channelIndex, int explodeCount)
 {
+    if (channelIndex < 0 || explodeCount < 2 || channelIndex + explodeCount > 8) return;
+    SampleManagerProperties sampleManagerProperties (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
+    bool tooShort { false };
+    channelProperties[channelIndex].forEachZone ([&] (juce::ValueTree tree, int zoneIndex)
+    {
+        ZoneProperties zone (tree, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no);
+        SampleProperties sample (sampleManagerProperties.getSamplePropertiesVT (channelIndex, zoneIndex), SampleProperties::WrapperType::client, SampleProperties::EnableCallbacks::no);
+        if (zone.getSample ().isNotEmpty () && sample.getLengthInSamples () < 4 * explodeCount) tooShort = true;
+        return true;
+    });
+    if (tooShort)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Sample too short", "Every resulting sample slice must contain at least 4 audio samples. Choose fewer slices or a longer sample.");
+        return;
+    }
     // clone channelIndex into explodeCount-1 subsequent channels
     for (auto destinationChannelIndex { channelIndex + 1 }; destinationChannelIndex < channelIndex + explodeCount; ++destinationChannelIndex)
     {
@@ -1182,7 +1240,6 @@ void Assimil8orEditorComponent::explodeChannel (int channelIndex, int explodeCou
         });
     }
     // set sample/loop points for channelIndex and explodeCount-1 subsequent channels to sequential slice size pieces
-    SampleManagerProperties sampleManagerProperties (runtimeRootProperties.getValueTree (), SampleManagerProperties::WrapperType::client, SampleManagerProperties::EnableCallbacks::no);
     channelProperties [channelIndex].forEachZone ([this, channelIndex, explodeCount, &sampleManagerProperties] (juce::ValueTree zonePropertiesVT, int zoneIndex)
     {
         ZoneProperties zoneProperties { zonePropertiesVT, ZoneProperties::WrapperType::client, ZoneProperties::EnableCallbacks::no };
@@ -1195,8 +1252,8 @@ void Assimil8orEditorComponent::explodeChannel (int channelIndex, int explodeCou
             const auto sampleEnd { sampleStart + sliceSize };
             zpToUpdate.setSampleStart (sampleStart, true);
             zpToUpdate.setSampleEnd (sampleEnd, true);
-            zpToUpdate.setLoopStart (sampleStart, true);
-            zpToUpdate.setLoopLength (static_cast<double> (sliceSize), true);
+            zpToUpdate.setLoopStart (-1, true);
+            zpToUpdate.setLoopLength (-1.0, true);
         };
         setSamplePoints (zoneProperties, 0);
         for (auto channelCount { 0 }; channelCount < explodeCount - 1; ++channelCount)
@@ -1276,6 +1333,25 @@ void Assimil8orEditorComponent::recallSelectedWaveform ()
     if (zone >= 0 && zone < 8) onRecallWaveform (channel, zone);
 }
 
+bool Assimil8orEditorComponent::canImportSelectedCycle ()
+{
+    const auto channel { channelTabs.getCurrentTabIndex () };
+    if (! channelEditorsInitialized || ! onRecallWaveform || channelFileOperationBusy () || channel < 0 || channel >= 8) return false;
+    const auto zone { channelEditors[channel].getSelectedZoneIndex () };
+    if (zone < 0 || zone >= 8 || appProperties.getMostRecentFolder ().isEmpty ()) return false;
+    const auto sample { channelProperties[channel].getZoneVT (zone).getProperty (ZoneProperties::SamplePropertyId).toString () };
+    if (sample.isEmpty () || juce::File::isAbsolutePath (sample) || sample.containsAnyOf ("/\\")) return false;
+    RawCycleImport::Info info;
+    return RawCycleImport::inspect (juce::File (appProperties.getMostRecentFolder ()).getChildFile (sample), info).wasOk ();
+}
+
+void Assimil8orEditorComponent::importSelectedCycle ()
+{
+    if (! canImportSelectedCycle ()) return;
+    const auto channel { channelTabs.getCurrentTabIndex () };
+    onRecallWaveform (channel, channelEditors[channel].getSelectedZoneIndex ());
+}
+
 void Assimil8orEditorComponent::displayToolsMenu ()
 {
     auto popupMenuLnF { std::make_shared<ModernLookAndFeel> () };
@@ -1309,6 +1385,19 @@ juce::PopupMenu Assimil8orEditorComponent::createPresetToolsMenu ()
     juce::Component::SafePointer<Assimil8orEditorComponent> safe (this);
     toolsMenu.addItem ("Edit selected waveform in designer...", canRecallSelectedWaveform (), false,
         [safe] () { if (safe != nullptr) safe->recallSelectedWaveform (); });
+    const auto importSource { channelActionSession.snapshot () };
+    const auto importChannel { channelTabs.getCurrentTabIndex () };
+    const auto importZone { channelEditorsInitialized && importChannel >= 0 && importChannel < 8
+        ? channelEditors[importChannel].getSelectedZoneIndex () : -1 };
+    toolsMenu.addItem ("Import selected WAV as cycle...", canImportSelectedCycle (), false,
+        [safe, importSource, importChannel, importZone] ()
+        {
+            if (safe != nullptr && importSource && safe->channelActionSession.matches (*importSource)
+                && importChannel >= 0 && importChannel < 8 && importZone >= 0
+                && safe->channelTabs.getCurrentTabIndex () == importChannel
+                && safe->channelEditors[importChannel].getSelectedZoneIndex () == importZone)
+                safe->importSelectedCycle ();
+        });
 
     return toolsMenu;
 }
@@ -1323,7 +1412,7 @@ void Assimil8orEditorComponent::exportPresetSettings ()
             auto exportPresetFile { fc.getURLResults () [0].getLocalFile () };
             appProperties.setImportExportMruFolder (exportPresetFile.getParentDirectory ().getFullPathName ());
             Assimil8orPreset assimil8orPreset;
-            const auto result { assimil8orPreset.write (exportPresetFile, presetProperties.getValueTree ()) };
+            const auto result { assimil8orPreset.write (exportPresetFile, presetProperties.getValueTree (), juce::File (appProperties.getMostRecentFolder ())) };
             if (result.failed ()) juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Export failed", result.getErrorMessage ());
         }
     }, nullptr);
@@ -1365,7 +1454,7 @@ void Assimil8orEditorComponent::exportPresetSettingsAndSamples ()
             // write out temp preset file
             Assimil8orPreset assimil8orPreset;
             auto presetFile { tempFolder.getChildFile (exportContainerFile.getFileNameWithoutExtension () + (".yml")) };
-            if (auto result { assimil8orPreset.write (presetFile, presetProperties.getValueTree ()) }; result.failed ())
+            if (auto result { assimil8orPreset.write (presetFile, presetProperties.getValueTree (), juce::File (appProperties.getMostRecentFolder ())) }; result.failed ())
             {
                 juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Export failed", result.getErrorMessage ());
                 return;
@@ -1418,9 +1507,12 @@ void Assimil8orEditorComponent::importPresetSettings ()
                 // change the imported Preset Id to the current Preset Id
                 PresetProperties importedPresetProperties (imported, PresetProperties::WrapperType::client, PresetProperties::EnableCallbacks::no);
                 importedPresetProperties.setId (presetProperties.getId (), false);
+                const auto repaired { PresetLoopRanges::repair (imported, juce::File (appProperties.getMostRecentFolder ())) };
 
                 // copy imported preset to current preset
                 PresetProperties::copyTreeProperties (importedPresetProperties.getValueTree (), presetProperties.getValueTree ());
+                if (! repaired.isEmpty ())
+                    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Loop import settings", PresetLoopRanges::message (repaired));
             }
         }, nullptr);
     },
@@ -1452,8 +1544,11 @@ void Assimil8orEditorComponent::importPresetSettingsAndSamples ()
                     return;
                 }
                 imported.setProperty (PresetProperties::IdPropertyId, safe->presetProperties.getId (), nullptr);
+                const auto repaired { PresetLoopRanges::repair (imported, juce::File (folder)) };
                 PresetProperties::copyTreeProperties (imported, safe->presetProperties.getValueTree ());
                 safe->appProperties.setImportExportMruFolder (archive.getParentDirectory ().getFullPathName ());
+                if (! repaired.isEmpty ())
+                    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Loop import settings", PresetLoopRanges::message (repaired));
             }, nullptr);
     }, [] () {});
 }

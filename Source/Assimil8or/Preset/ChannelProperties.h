@@ -27,6 +27,8 @@ public:
     };
 
     void setId (int id, bool includeSelfCallback);
+    // Editor-only permission, never emitted as an Assimil8or parameter.
+    void setAllowLoopOutsideSample (bool allow, bool includeSelfCallback);
     void setAliasing (int aliasing, bool includeSelfCallback);
     void setAliasingMod (juce::String cvInput, double aliasingMod, bool includeSelfCallback);
     void setAttack (double attack, bool includeSelfCallback);
@@ -69,6 +71,7 @@ public:
     void setZonesRT (int zonesRT, bool includeSelfCallback);
 
     int getId ();
+    bool getAllowLoopOutsideSample ();
     int getAliasing ();
     CvInputAndAmount getAliasingMod ();
     double getAttack ();
@@ -111,6 +114,7 @@ public:
     int getZonesRT ();
 
     std::function<void (int id)> onIdChange;
+    std::function<void (bool allow)> onAllowLoopOutsideSampleChange;
     std::function<void (int aliasing)> onAliasingChange;
     std::function<void (CvInputAndAmount amountAndCvInput)> onAliasingModChange;
     std::function<void (double attack)> onAttackChange;
@@ -165,6 +169,7 @@ public:
 
     static inline const juce::Identifier ChannelTypeId { "Channel" };
     static inline const juce::Identifier IdPropertyId                { "_id" };
+    static inline const juce::Identifier AllowLoopOutsideSamplePropertyId { "_allowLoopOutsideSample" };
     static inline const juce::Identifier AliasingPropertyId          { "aliasing" };
     static inline const juce::Identifier AliasingModPropertyId       { "aliasingMod" };
     static inline const juce::Identifier AttackPropertyId            { "attack" };
@@ -210,6 +215,7 @@ public:
     void processValueTree () {}
 
 private:
+    bool suppressAllowLoopOutsideSampleCallback { false };
     int getNumZones ();
 
     void valueTreePropertyChanged (juce::ValueTree& vt, const juce::Identifier& property) override;

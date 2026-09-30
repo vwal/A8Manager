@@ -60,7 +60,7 @@ namespace PresetFolderCopy
         {
             const auto name { folder.getFileName () };
             // Keep existing copies recognized without renaming user folders.
-            const juce::String prefix { name.startsWith ("PR") ? "PR" : "A8 Preset " };
+            const juce::String prefix { name.startsWith ("PR") ? "PR" : name.startsWith ("P") ? "P" : "A8 Preset " };
             if (! name.startsWith (prefix)) return 0;
             const auto number { name.substring (prefix.length ()).upToFirstOccurrenceOf (" - ", false, false) };
             const auto slot { number.getIntValue () };
@@ -172,7 +172,7 @@ namespace PresetFolderCopy
     juce::String folderName (int slot, const juce::String& presetName)
     {
         if (slot < 1 || slot > 199) return {};
-        const auto prefix { "PR" + juce::String (slot).paddedLeft ('0', 2) + " - " };
+        const auto prefix { "P" + juce::String (slot).paddedLeft ('0', 2) + " - " };
         auto name { presetName.retainCharacters ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-").trim () };
         if (name.isEmpty ()) name = "Untitled";
         name = name.substring (0, 31 - prefix.length ()).trimEnd ();

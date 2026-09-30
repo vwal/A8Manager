@@ -21,15 +21,17 @@ void testLoopPoints ()
             audio.setSample (0, i, level * (i < 128 ? 1.0f : 0.25f) * std::sin (juce::MathConstants<float>::twoPi * i / 20.0f));
     };
     auto snapshot = [&] () { return view.createComponentSnapshot (view.getLocalBounds ()); };
-    auto traceHeight = [] (const juce::Image& image, bool left)
+    auto traceHeight = [] (const juce::Image& image, bool left, bool loop = false)
     {
         auto top { image.getHeight () }, bottom { 0 };
+        const auto expected { Theme::markerColour (left ? (loop ? 3 : 1) : (loop ? 2 : 0)) };
         for (auto x { left ? 2 : image.getWidth () / 2 + 2 }; x < (left ? image.getWidth () / 2 - 2 : image.getWidth () - 2); ++x)
             for (auto y { 14 }; y < image.getHeight () - 2; ++y)
             {
                 const auto c { image.getPixelAt (x, y) };
-                const auto isTrace { left ? c.getRed () > 180 && c.getGreen () > 130 && c.getBlue () < 160
-                                         : c.getRed () < 120 && c.getGreen () > 160 && c.getBlue () > 120 };
+                const auto isTrace { std::abs (static_cast<int> (c.getRed ()) - expected.getRed ()) < 30 &&
+                                     std::abs (static_cast<int> (c.getGreen ()) - expected.getGreen ()) < 30 &&
+                                     std::abs (static_cast<int> (c.getBlue ()) - expected.getBlue ()) < 30 };
                 if (isTrace) { top = std::min (top, y); bottom = std::max (bottom, y); }
             }
         return std::max (0, bottom - top);
@@ -48,6 +50,15 @@ void testLoopPoints ()
     const auto sampleBefore { audio.getSample (0, 17) };
     snapshot ();
     check (sampleBefore == audio.getSample (0, 17), "Drawing must not alter audio samples");
+
+    view.setLoopPoints (0, 255.5, 0, true);
+    const auto fractional { snapshot () };
+    check (traceHeight (fractional, false, true) > 32 && traceHeight (fractional, true, true) > 0,
+           "Fractional loop end draws safely using the loop START/END marker colours");
+    view.setLoopPoints (0, 3.5, 0, true);
+    check (traceHeight (snapshot (), false, true) == 0, "Sub-four-frame loop cannot appear as a valid loop preview");
+    view.setLoopPoints (0, std::numeric_limits<double>::infinity (), 0, true);
+    check (traceHeight (snapshot (), false, true) == 0, "Nonfinite loop length cannot form a sample pointer");
 
     view.setLoopPoints (252, 4, 0);
     check (traceHeight (snapshot (), false) > 0, "Minimum four-sample loops at EOF must draw safely");

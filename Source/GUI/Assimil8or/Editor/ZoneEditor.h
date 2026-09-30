@@ -8,8 +8,9 @@
 #include "../../../Assimil8or/Audio/AudioManager.h"
 #include "../../../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "../../../Assimil8or/Preset/ZoneProperties.h"
+#include "../../../Assimil8or/Preset/ZoneSampleRanges.h"
 #include "../../DragValueEditor.h"
-#include "oolib/GUI/FileSelectLabel.h"
+#include "../../SelectableFileLabel.h"
 
 class ZoneEditor : public juce::Component,
                    public juce::FileDragAndDropTarget
@@ -36,7 +37,7 @@ public:
     std::function<void (int zoneIndex)> displayToolsMenu;
     std::function<void (bool continueSlice)> copyToNext;
     std::function<juce::PopupMenu ()> createSampleFileActions;
-    juce::Rectangle<int> getSampleFileBounds () const { return sampleNameLabel.getBounds ().getUnion (sampleNameSelectLabel.getBounds ()); }
+    juce::Rectangle<int> getSampleFileBounds () const { return sampleNameLabel.getBounds ().getUnion (sampleNameSelectLabel.getBounds ()).getUnion (importSamplesButton.getBounds ()); }
 
 private:
     void lookAndFeelChanged () override { sampleNameSelectLabel.setOutline (Theme::border); repaint (); }
@@ -45,6 +46,8 @@ private:
     friend struct CvAuditionTestAccess;
     friend struct SimulationUiTestAccess;
     friend struct SampleRenameUiTestAccess;
+    friend struct ZoneSampleRangesTestAccess;
+    friend struct AutoLoopUiTestAccess;
     class ClickListener : public juce::MouseListener
     {
     public:
@@ -89,6 +92,30 @@ private:
     LoopPointsView loopPointsView;
     juce::TextButton oneShotPlayButton;
     juce::TextButton loopPlayButton;
+    juce::ToggleButton autoLoopButton { "Auto Loop" };
+    juce::TextButton importSamplesButton { "Import WAV..." };
+    struct LoadContext
+    {
+        juce::ValueTree zone, preset, before;
+        juce::String folder, sample;
+        unsigned int generation;
+    };
+    unsigned int loadContextGeneration { 0 };
+    std::optional<LoadContext> pendingAutoLoop;
+    bool autoLoopPlaying { false };
+    std::unique_ptr<juce::FileChooser> sampleChooser;
+    std::function<bool ()> isActiveLoadTarget = [this] { return isShowing (); };
+    std::function<void (std::function<void ()>)> deferAutoLoop = [] (std::function<void ()> callback)
+        { juce::MessageManager::callAsync (std::move (callback)); };
+    std::function<void (juce::File, std::function<void (juce::StringArray)>)> chooseSampleFiles;
+    LoadContext captureLoadContext ();
+    bool loadContextMatches (const LoadContext&);
+    void importSamples ();
+    void queueAutoLoopAttempt ();
+    void tryAutoLoop ();
+    void cancelAutoLoop (bool stopPlayback);
+    void invalidateLoadContext ();
+    void visibilityChanged () override;
     juce::Label cvAuditionNotice;
     bool hasCvAuditionSource ();
     void updateAuditionControls ();
@@ -120,7 +147,8 @@ private:
     juce::TextButton leftChannelSelectButton;
     juce::TextButton rightChannelSelectButton;
     juce::Label sampleNameLabel;
-    FileSelectLabel sampleNameSelectLabel; // filename
+    SelectableFileLabel sampleNameSelectLabel; // selectable read-only filename
+    juce::Label a8SelectNameLabel, a8ChannelNameLabel;
     juce::PopupMenu createSampleFileMenu ();
     juce::Label sampleEndLabel;
     DragValueEditorInt64 sampleEndTextEditor; // int
@@ -146,6 +174,10 @@ private:
     void setupZoneComponents ();
     void setupZonePropertiesCallbacks ();
     double snapLoopLength (double rawValue);
+    ZoneSampleRanges::Mode rangeMode () const;
+    ZoneSampleRanges::Resolved resolvedRanges ();
+    ZoneSampleRanges::Limits boundaryLimits (ZoneSampleRanges::Marker marker);
+    void editBoundary (ZoneSampleRanges::Marker marker, double value);
     void updateLoopPointsView ();
     void updateSampleFileInfo (juce::String sample);
     void updateSamplePositionInfo ();

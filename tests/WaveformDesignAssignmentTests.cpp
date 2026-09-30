@@ -75,6 +75,42 @@ void testWaveformDesignAssignment ()
     channel (source, 3).setMixMod ("1A", 1.0, false);
     const auto untouched { source.createCopy () };
 
+    const auto reservedId { reserveAssignmentId () };
+    require (isAssignmentIdValid (reservedId) && reserveAssignmentId () != reservedId,
+             "Each reserved assignment identifier contains twelve real lowercase hexadecimal characters");
+    require (assignmentWaveName ("adf", reservedId, 1) == "adf-" + reservedId + "-01.wav"
+             && assignmentWaveName ("Name with spaces", reservedId, 8) == "Name-with-spaces-" + reservedId + "-08.wav"
+             && assignmentWaveName ("This name is longer than twenty two characters", reservedId, 1).length () <= 47
+             && assignmentWaveName ("adf", reservedId, 0).isEmpty () && assignmentWaveName ("adf", reservedId, 9).isEmpty (),
+             "Shared assignment naming preserves existing format and validates the one-based voice number");
+    for (const auto& invalidId : { juce::String (), juce::String ("abcdefghijkl"), juce::String ("ABCDEF012345"),
+                                  juce::String ("abc123"), juce::String ("../abcdefghi"), juce::String::repeatedString ("a", 10000) })
+    {
+        const auto countBefore { folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) };
+        AssignmentResult invalid;
+        require (! isAssignmentIdValid (invalidId) && assignmentFileStem ("adf", invalidId).isEmpty ()
+                 && assignmentWaveName ("adf", invalidId, 1).isEmpty ()
+                 && prepareAssignment (audio, folder, "adf", source, 0, 0, invalid, invalidId).failed () && empty (invalid)
+                 && source.isEquivalentTo (untouched) && folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == countBefore,
+                 "Invalid reserved identifiers are rejected before staging, preset changes or file publication");
+    }
+    AssignmentResult reserved;
+    require (prepareAssignment (audio, folder, "adf", source, 0, 0, reserved, reservedId).wasOk ()
+             && reserved.waves[0].getFileName () == assignmentWaveName ("adf", reservedId, 1)
+             && reserved.recipe.getFileName () == assignmentFileStem ("adf", reservedId) + ".design.json",
+             "The worker publishes exactly the reserved WAV and recipe names shown before generation");
+    const auto reservedFileCount { folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) };
+    juce::MemoryBlock reservedBytes;
+    require (reserved.waves[0].loadFileAsData (reservedBytes), "Snapshot reserved output for no-overwrite regression");
+    AssignmentResult collision;
+    require (prepareAssignment (audio, folder, "adf", source, 0, 0, collision, reservedId).failed () && empty (collision)
+             && folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == reservedFileCount,
+             "Accidental reserved identifier reuse fails without replacing files or leaving a staging directory");
+    juce::MemoryBlock afterCollision;
+    require (reserved.waves[0].loadFileAsData (afterCollision) && afterCollision == reservedBytes
+             && reserved.recipe.existsAsFile () && cleanupAssignmentFiles (reserved).wasOk (),
+             "An identifier collision preserves previously published audio and its recipe byte-for-byte");
+
     AssignmentResult assigned;
     require (prepareAssignment (cv, folder, "My CV", source, 3, 0, assigned).wasOk (), "Assign CV into an empty independent channel");
     verifyFiles (assigned, folder, true, 1);

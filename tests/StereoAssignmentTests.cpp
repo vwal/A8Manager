@@ -1,4 +1,5 @@
 #include "Assimil8or/Preset/ParameterPresetsSingleton.h"
+#include "Assimil8or/Preset/ZoneSampleRanges.h"
 #include "GUI/Assimil8or/Editor/EditManager.h"
 #include <iostream>
 #include <stdexcept>
@@ -96,10 +97,27 @@ void testStereoAssignment ()
     const auto neighbor { tree.getChild (2).createCopy () };
     check (editor.assignSamples (1, 0, { replacement.getFullPathName () }), "Right-side drop replaces an occupied pair");
     checkPair (tree, 0, 0, replacement, 1);
-    check (left.getSampleStart () == 8 && left.getSampleEnd () == 48 && left.getLoopStart () == 16
-           && left.getLoopLength () == 32.0 && left.getPitchOffset () == 3.5 && left.getLevelOffset () == -4.0,
-           "Right-side replacement preserves left settings and clamps ranges to a shorter file");
+    const auto replacedRange { ZoneSampleRanges::resolve (ZoneSampleRanges::read (left), 48) };
+    check (replacedRange.sampleStart == 8 && replacedRange.sampleEnd == 48 && replacedRange.loopValid
+           && replacedRange.loopStart == 8 && replacedRange.loopLength == 40.0 && replacedRange.implicitLoop
+           && left.getPitchOffset () == 3.5 && left.getLevelOffset () == -4.0,
+           "Right-side replacement preserves left settings, bounds SAMPLE to the shorter file and resets its invalid loop to SAMPLE");
     check (tree.getChild (2).isEquivalentTo (neighbor), "Right-side replacement never overwrites the following channel");
+
+    // Assigning another WAV must respect an advanced channel's independent
+    // markers and carry the editor option to its stereo companion.
+    check (editor.assignSamples (4, 0, { first.getFullPathName () }), "Create an advanced stereo assignment fixture");
+    channelAt (tree, 4).setAllowLoopOutsideSample (true, false);
+    auto advanced { zoneAt (tree, 4, 0) };
+    advanced.setSampleStart (64, false); advanced.setSampleEnd (96, false);
+    advanced.setLoopStart (0, false); advanced.setLoopLength (32.0, false);
+    const auto advancedReplacement { folder.getChildFile ("advanced.wav") };
+    makeAudio (advancedReplacement, 2, 64);
+    check (editor.assignSamples (5, 0, { advancedReplacement.getFullPathName () }), "Replace the advanced pair from its right side");
+    const auto advancedRange { ZoneSampleRanges::resolve (ZoneSampleRanges::read (advanced), 64, true) };
+    check (advancedRange.sampleValid && advancedRange.loopValid && advanced.getLoopStart () == 0 && advanced.getLoopLength () == 32.0
+           && channelAt (tree, 4).getAllowLoopOutsideSample () && channelAt (tree, 5).getAllowLoopOutsideSample (),
+           "Replacement preserves a file-valid external loop and synchronizes the channel override across the pair");
 
     check (editor.assignSamples (1, 0, { mono.getFullPathName () }), "Right-side mono replacement succeeds");
     checkPair (tree, 0, 0, mono, 0);
