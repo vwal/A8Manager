@@ -77,7 +77,7 @@ namespace
             for (const auto transpose : { -12.0, 0.0, 12.0 })
             {
                 const auto report { WaveformAudition::inspectSignal (payloadFor (settings), transpose) };
-                check (report.status == Status::clear && ! report.needsConfirmation () && report.channels.size () == 2
+                check (report.status == Status::clear && ! report.hasWarning () && report.channels.size () == 2
                        && report.durationSeconds == 1.0, "Normal full-scale sine/saw/pulse cycles do not trigger speculative safety warnings");
                 for (const auto& channel : report.channels)
                     check (std::isfinite (channel.peak) && channel.peak <= 0.980001 && std::abs (channel.mean) < 0.02,
@@ -108,7 +108,7 @@ namespace
 
         const auto clean { payloadFor (startingPoint (Mode::oscillator, Shape::sine)) };
         const auto missing { WaveformAudition::inspectSignal ({}, 0.0) };
-        check (missing.isBlocked () && ! missing.needsConfirmation () && missing.channels.empty ()
+        check (missing.isBlocked () && ! missing.hasWarning () && missing.channels.empty ()
                && missing.explanation ().contains ("valid audio waveform"), "Missing payload is a hard block with the real engine start failure");
         auto cv { startingPoint (Mode::modulation, Shape::sine) };
         Render cvRender;
@@ -129,8 +129,8 @@ namespace
             settings.cycleFrames = frames;
             const auto transpose { frames == 64 ? 60.0 : 0.0 };
             const auto report { WaveformAudition::inspectSignal (payloadFor (settings), transpose) };
-            check (report.isBlocked () && ! report.needsConfirmation () && report.explanation ().contains ("20 Hz")
-                   && report.explanation ().contains ("20000"), "Monitor frequency restrictions stay non-overridable hard blocks in inspection");
+            check (report.status == Status::unavailable && ! report.hasWarning () && report.explanation ().contains ("20 Hz")
+                   && report.explanation ().contains ("20000"), "Valid out-of-band signals defer to live device range pausing instead of being classified as malformed audio");
         }
 
         WaveformAudition live;

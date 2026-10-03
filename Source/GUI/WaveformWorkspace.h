@@ -32,6 +32,9 @@ public:
     std::function<juce::Result ()> onStartAudition;
     std::function<void ()> onStopAudition;
     std::function<juce::Result (double monitorDb, double transposeSemitones)> onAuditionMonitorChange;
+    // Publish before audio/monitor changes. The shared player owns the optional
+    // automatic level reduction, without changing this workspace's level slider.
+    std::function<void (bool)> onAuditionSignalWarning;
     std::function<bool ()> isAuditionActive;
     std::function<bool ()> isAuditionPausedForRange;
 
@@ -43,7 +46,6 @@ private:
     std::function<void (const juce::String&, std::function<void (bool)>)> confirmLayerConversion;
     std::function<void (const juce::String&, std::function<void (int)>)> chooseRawChannel;
     std::function<AuditionSignalCheck::Report (WaveformAudition::PayloadPtr, double)> inspectAuditionSignal;
-    std::function<void (const juce::String&, std::function<void (bool)>)> confirmAuditionWarning;
     std::function<void (const WaveformDesign::Settings&, juce::File, const juce::String&, int)> launchTestOutput;
     struct Impl;
     std::unique_ptr<Impl> impl;

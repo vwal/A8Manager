@@ -370,18 +370,21 @@ struct WaveformWorkspaceTestAccess
 
     static void signalWarningWorkflow ()
     {
+        // Declare captured state first: the workspace clears transport callbacks
+        // again during destruction.
+        bool active { false }, warning { false };
+        int starts {}, inspections {}, publications {};
+        auto signalStatus { AuditionSignalCheck::Status::warning };
+        juce::StringArray events;
         WaveformWorkspace workspace;
         workspace.setSize (1000, 760);
         workspace.updateAuditionVisibility (true);
-        bool active { false };
-        int starts {}, prompts {}, inspections {};
-        auto signalStatus { AuditionSignalCheck::Status::warning };
-        std::function<void (bool)> answer;
         workspace.isAuditionActive = [&] { return active; };
-        workspace.onStopAudition = [&] { active = false; };
-        workspace.onStartAudition = [&] { ++starts; active = true; return juce::Result::ok (); };
-        workspace.onAuditionPayload = [] (auto) {};
-        workspace.onAuditionMonitorChange = [] (double, double) { return juce::Result::ok (); };
+        workspace.onStopAudition = [&] { active = false; events.add ("stop"); };
+        workspace.onStartAudition = [&] { ++starts; active = true; events.add ("start"); return juce::Result::ok (); };
+        workspace.onAuditionSignalWarning = [&] (bool detected) { warning = detected; events.add (detected ? "warning" : "clear"); };
+        workspace.onAuditionPayload = [&] (auto payload) { if (payload) { ++publications; events.add ("payload"); } };
+        workspace.onAuditionMonitorChange = [&] (double, double) { events.add ("monitor"); return juce::Result::ok (); };
         workspace.inspectAuditionSignal = [&] (auto, double)
         {
             ++inspections;
@@ -390,44 +393,62 @@ struct WaveformWorkspaceTestAccess
             report.reasons.add ("Synthetic high-confidence DC test warning");
             return report;
         };
-        workspace.confirmAuditionWarning = [&] (const juce::String&, std::function<void (bool)> callback)
-        { ++prompts; answer = std::move (callback); };
         settle (workspace);
+        events.clear ();
         click (workspace, "Start audition");
-        check (prompts == 1 && starts == 0 && ! active, "Signal warning holds Designer silent before Start");
-        auto oldAnswer { answer };
-        click (workspace, "Stop audition");
-        oldAnswer (true);
-        check (starts == 0, "STOP cancels a pending warning's playback intent");
-        click (workspace, "Start audition"); answer (false);
-        check (prompts == 2 && starts == 0, "Cancel never starts a suspicious audition");
-        click (workspace, "Start audition");
-        oldAnswer = answer;
+        check (starts == 1 && active && warning && events.joinIntoString (",") == "warning,payload,monitor,start",
+               "A heuristic warning starts uninterrupted audition, publishing attenuation status before payload, monitor and start");
+        const auto cachedInspections { inspections };
+        events.clear ();
         control<juce::Slider> (workspace, "design-monitor-level-value").setValue (-24, juce::sendNotificationSync);
-        oldAnswer (true);
-        check (starts == 0, "A level change invalidates warning confirmation");
-        click (workspace, "Start audition"); answer (true);
-        check (starts == 1 && active, "Explicit approval starts the unchanged audition");
-        const auto approvedPrompts { prompts }, cachedInspections { inspections };
+        check (active && starts == 1 && inspections == cachedInspections && events.joinIntoString (",") == "warning,monitor",
+               "Manual monitor gain stays independent of warning attenuation and reuses the cached signal report");
         click (workspace, "Stop audition"); click (workspace, "Start audition");
-        check (starts == 2 && prompts == approvedPrompts && inspections == cachedInspections,
-               "Unchanged repeated playback reuses inspection and approval without more prompts");
+        check (starts == 2 && active && warning && inspections == cachedInspections,
+               "Repeated playback reuses inspection without an approval cache or confirmation dialog");
+        signalStatus = AuditionSignalCheck::Status::clear;
+        events.clear ();
         control<juce::Slider> (workspace, "design-drive-value").setValue (0.2, juce::sendNotificationSync);
         settle (workspace);
-        check (! active && starts == 2 && prompts == approvedPrompts + 1,
-               "A suspicious live design edit is held before publishing its new payload");
-        oldAnswer = answer;
-        workspace.updateAuditionVisibility (false);
-        oldAnswer (true);
-        check (! active && starts == 2, "Leaving the Designer invalidates a live-edit warning");
-        workspace.updateAuditionVisibility (true);
-        signalStatus = AuditionSignalCheck::Status::blocked;
+        check (active && starts == 2 && ! warning && events.indexOf ("clear") >= 0
+               && events.indexOf ("clear") < events.indexOf ("payload"),
+               "A clear live edit updates detection before publishing its payload, without stopping or restarting");
+        signalStatus = AuditionSignalCheck::Status::warning;
+        events.clear ();
+        control<juce::Slider> (workspace, "design-monitor-transpose-value").setValue (1, juce::sendNotificationSync);
+        check (active && starts == 2 && warning && events.joinIntoString (",") == "warning,monitor",
+               "A newly detected live pitch warning is published before monitor change without interrupting transport");
+        signalStatus = AuditionSignalCheck::Status::unavailable;
         control<juce::Slider> (workspace, "design-drive-value").setValue (0.3, juce::sendNotificationSync);
         settle (workspace);
+        check (active && ! warning && starts == 2, "Unavailable analysis does not retain a warning from the previous payload");
+        signalStatus = AuditionSignalCheck::Status::blocked;
+        const auto beforeBlocked { publications };
+        control<juce::Slider> (workspace, "design-drive-value").setValue (0.4, juce::sendNotificationSync);
+        settle (workspace);
+        check (! active && ! warning && publications == beforeBlocked,
+               "An invalid live payload stops transport and is never published as playable warning content");
         click (workspace, "Start audition");
-        check (starts == 2 && ! active && prompts == approvedPrompts + 1,
-               "Invalid signal data is blocked, not offered an unsafe override");
-        std::cout << "PASS: Designer preflight warning, exact approval cache, stale/STOP/visibility rejection and live-edit gate\n";
+        check (starts == 2 && ! active && ! warning, "Invalid signal data remains blocked on manual Start without an override");
+        signalStatus = AuditionSignalCheck::Status::warning;
+        control<juce::Slider> (workspace, "design-drive-value").setValue (0.5, juce::sendNotificationSync);
+        workspace.updateAuditionVisibility (false);
+        settle (workspace);
+        check (! active && ! warning && starts == 2, "Hidden or stale renders cannot restart audition or re-light its warning");
+        workspace.updateAuditionVisibility (true);
+        settle (workspace);
+        click (workspace, "Start audition");
+        check (starts == 3 && active && warning, "Returning permits only a fresh deliberate start with the current signal status");
+        click (workspace, "Stop audition");
+        check (! active && ! warning, "STOP clears active detection without any pending warning callback");
+        click (workspace, "Start audition");
+        control<juce::ComboBox> (workspace, "design-mode").setSelectedId (2, juce::sendNotificationSync);
+        settle (workspace);
+        auto& audition { control<juce::Button> (workspace, "design-audition") };
+        audition.onClick ();
+        check (starts == 4 && ! active && ! warning && ! audition.isEnabled (),
+               "Switching to known CV clears detection and cannot bypass the visual-only audition block");
+        std::cout << "PASS: Designer non-blocking signal status, publication ordering, cache, live changes, STOP/visibility and hard invalid/CV gates\n";
     }
 
     static void layerConversionWorkflow ()
@@ -1020,11 +1041,13 @@ struct WaveformWorkspaceTestAccess
         WaveformAudition engine;
         engine.prepareToPlay (48000.0);
         int starts { 0 };
+        bool signalWarning { false };
         WaveformWorkspace workspace;
         workspace.setSize (975, 732);
         workspace.onAuditionPayload = [&] (auto payload) { engine.setPayload (std::move (payload)); };
         workspace.onStartAudition = [&] { ++starts; return engine.start (); };
         workspace.onStopAudition = [&] { engine.setPlaying (false); };
+        workspace.onAuditionSignalWarning = [&] (bool warning) { signalWarning = warning; };
         workspace.onAuditionMonitorChange = [&] (double db, double semitones)
         {
             engine.setMonitorGain (juce::Decibels::decibelsToGain (db));
@@ -1069,6 +1092,25 @@ struct WaveformWorkspaceTestAccess
         check (engine.isActive () && ! engine.isPausedForRange () && starts == 1,
                "Returning to range resumes without a new UI Start request");
         render ();
+
+        const auto actualInspection { workspace.inspectAuditionSignal };
+        workspace.inspectAuditionSignal = [actualInspection] (auto payload, double semitones)
+        {
+            auto report { actualInspection (std::move (payload), semitones) };
+            if (report.status == AuditionSignalCheck::Status::clear)
+                report.status = AuditionSignalCheck::Status::warning;
+            return report;
+        };
+        transpose.setValue (1, juce::sendNotificationSync);
+        check (signalWarning && engine.isActive (), "A detected signal remains actively monitored before range-pause testing");
+        pause ();
+        check (! signalWarning && engine.isPausedForRange (), "Out-of-band inspection is unavailable without erasing paused playback intent");
+        transpose.setValue (1, juce::sendNotificationSync);
+        check (signalWarning && engine.isActive () && ! engine.isPausedForRange () && starts == 1,
+               "A warned signal resumes on returning into range without requiring approval or another Start");
+        workspace.inspectAuditionSignal = actualInspection;
+        transpose.setValue (0, juce::sendNotificationSync);
+        check (! signalWarning && engine.isActive (), "A clear in-band signal removes detection without interrupting monitoring");
 
         pause ();
         frames.setSelectedId (8192, juce::sendNotificationSync);

@@ -2292,7 +2292,7 @@ void ChannelEditor::setupChannelComponents ()
     setupComboBox (xfadeGroupComboBox, "XfadeGroup", [this] () { xfadeGroupUiChanged (xfadeGroupComboBox.getText ()); });
     allowLoopOutsideSampleButton.setButtonText ("Allow loop outside sample");
     allowLoopOutsideSampleButton.setComponentID ("allowLoopOutsideSample");
-    allowLoopOutsideSampleButton.setTooltip ("Advanced editing: allow independent loop boundaries anywhere in the WAV. No striped regions are shown. "
+    allowLoopOutsideSampleButton.setTooltip ("Advanced editing: allow independent loop boundaries anywhere in the WAV. "
         "LOOP audition remains available; Sample > Loop simulation still requires a contained loop and does not simulate external CV. "
         "This is an editor-only setting, not an Assimil8or parameter.");
     allowLoopOutsideSampleButton.onClick = [this] { allowLoopOutsideSampleUiChanged (allowLoopOutsideSampleButton.getToggleState ()); };
@@ -2984,8 +2984,24 @@ void ChannelEditor::positionColumnFour (int xOffset, int width)
     curYOffset += kParameterLineHeight;
     curYOffset += kNewSectionOffset;
     // LOOP MODE
-    loopModeLabel.setBounds (xOffset, curYOffset + 2, scaleWidth (0.33f), kMediumLabelIntSize);
-    loopModeComboBox.setBounds (loopModeLabel.getRight () + 3, curYOffset, scaleWidth (0.66f), kParameterLineHeight);
+    const auto loopLabelWidth { juce::roundToInt (std::ceil (juce::GlyphArrangement::getStringWidth (loopModeLabel.getFont (), "LOOP"))) + 2 };
+    const auto loopFieldMinimum { juce::roundToInt (std::ceil (juce::GlyphArrangement::getStringWidth (
+        loopModeComboBox.getLookAndFeel ().getComboBoxFont (loopModeComboBox), "Loop/Release"))) + 10 };
+    if (width - loopLabelWidth >= loopFieldMinimum)
+    {
+        loopModeLabel.setJustificationType (juce::Justification::centredRight);
+        loopModeLabel.setBounds (xOffset, curYOffset + 2, loopLabelWidth, kMediumLabelIntSize);
+        loopModeComboBox.setBounds (loopModeLabel.getRight () + 3, curYOffset, width - loopLabelWidth, kParameterLineHeight);
+    }
+    else
+    {
+        // A compact editor still needs the complete mode name. Use a full-width
+        // field rather than shrinking its text or borrowing the next column.
+        loopModeLabel.setJustificationType (juce::Justification::centredLeft);
+        loopModeLabel.setBounds (xOffset, curYOffset, width, kMediumLabelIntSize);
+        curYOffset += kMediumLabelIntSize + kFirstControlSectionYOffset;
+        loopModeComboBox.setBounds (xOffset, curYOffset, width + 3, kParameterLineHeight);
+    }
     curYOffset += kParameterLineHeight;
     curYOffset += kInterControlYOffset;
     // LOOP START/LENGTH/END
@@ -3011,8 +3027,7 @@ void ChannelEditor::positionColumnFour (int xOffset, int width)
 
 void ChannelEditor::resized ()
 {
-    const auto columnWidth { 100 };
-    const auto spaceBetweenColumns { 40 };
+    const auto spaceBetweenColumns { 20 };
 
     // this is the overlay that is used to indicate a channel is in Stereo/Right mode
     stereoRightTransparantOverly.setBounds (getLocalBounds ());
@@ -3037,6 +3052,10 @@ void ChannelEditor::resized ()
     zoneTabs.setBounds (zoneColumn);
 
     // layout the four columns of controls
+    // Share the available area equally, leaving the Zones panel unchanged.
+    // The cap keeps large windows from turning numeric inputs into long bars;
+    // compact windows gain space from the narrower, consistent gutters.
+    const auto columnWidth { std::clamp ((zoneTabs.getX () - 30 - 3 * spaceBetweenColumns - 3) / 4, 0, 180) };
     auto xOffSet { 15 };
     positionColumnOne (xOffSet, columnWidth);
     xOffSet += columnWidth + spaceBetweenColumns;

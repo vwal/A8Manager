@@ -28,6 +28,13 @@ public:
     // Session-only preference for explicit Samples workspace loads, not a preset setting.
     void setAutoLoopEnabled (bool enabled, bool includeSelfCallback);
     bool getAutoLoopEnabled ();
+    // Monitor-only preference and runtime status; never written into a preset.
+    void setAutoReduceAudition (bool enabled, bool includeSelfCallback);
+    bool getAutoReduceAudition ();
+    void setAuditionSignalWarning (bool warning, bool includeSelfCallback);
+    bool getAuditionSignalWarning ();
+    void setAuditionAttenuated (bool attenuated, bool includeSelfCallback);
+    bool getAuditionAttenuated ();
     void showConfigDialog (bool includeSelfCallback);
     // Actual active computer output, not the last saved device configuration.
     void setOutputDeviceName (const juce::String& name, bool includeSelfCallback);
@@ -51,6 +58,9 @@ public:
     std::function<void (double)> onAuditionRateChange;
     std::function<void (bool)> onPreservePitchChange;
     std::function<void (bool)> onAutoLoopEnabledChange;
+    std::function<void (bool)> onAutoReduceAuditionChange;
+    std::function<void (bool)> onAuditionSignalWarningChange;
+    std::function<void (bool)> onAuditionAttenuatedChange;
 
     static inline const juce::Identifier AudioConfigTypeId { "AudioPlayer" };
     static inline const juce::Identifier PlayStatePropertyId            { "playState" };
@@ -63,6 +73,9 @@ public:
     static inline const juce::Identifier PreservePitchPropertyId        { "preservePitch" };
     static inline const juce::Identifier OutputDeviceNamePropertyId     { "outputDeviceName" };
     static inline const juce::Identifier AutoLoopEnabledPropertyId       { "autoLoopEnabled" };
+    static inline const juce::Identifier AutoReduceAuditionPropertyId    { "autoReduceAudition" };
+    static inline const juce::Identifier AuditionSignalWarningPropertyId { "auditionSignalWarning" };
+    static inline const juce::Identifier AuditionAttenuatedPropertyId    { "auditionAttenuated" };
 
     void initValueTree ();
     void processValueTree () {}

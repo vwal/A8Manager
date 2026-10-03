@@ -15,10 +15,13 @@ void GuiProperties::initValueTree ()
     setPaneSizes (defaultSplitter1Offset, defaultSplitter2Offset, defaultSplitter3Offset, false);
     setUiScale (1.25);
     setLightAppearance (false);
+    setAutoReduceAudition (true);
 }
 
 void GuiProperties::processValueTree ()
 {
+    if (! data.hasProperty (AutoReduceAuditionPropertyId))
+        setAutoReduceAudition (true);
     if (! data.hasProperty (LightAppearancePropertyId))
         setLightAppearance (false);
     if (! data.hasProperty (UiScalePropertyId))

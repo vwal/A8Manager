@@ -215,10 +215,26 @@ AuditionSignalCheck::Report WaveformAudition::inspectSignal (PayloadPtr payload,
         monitor.prepareToPlay (48000.0);
         monitor.setPayload (std::move (payload));
         monitor.setMonitorGain (1.0);
+        // The immutable payload has already passed PCM/mode validation. A
+        // valid hardware transpose can still be outside this inspection
+        // engine's audible band; that is unavailable analysis, not corrupt
+        // audio. Let the live engine use its actual device band and preserve
+        // its pause/resume intent when the user moves transpose out and back.
+        const auto* source { monitor.state->candidate () };
+        double lower {}, upper {};
+        const auto outsideInspectionBand { source != nullptr && std::isfinite (transpose) && transpose >= -48.0
+            && transpose <= maximumTransposeSemitones (source->settings)
+            && monitor.state->transposeRange (source, lower, upper) && (transpose < lower || transpose >= upper) };
+        const auto preparationFailure = [&] (const juce::String& reason)
+        {
+            auto report { blocked (reason) };
+            if (outsideInspectionBand) report.status = AuditionSignalCheck::Status::unavailable;
+            return report;
+        };
         if (const auto transposed { monitor.setTransposeSemitones (transpose) }; transposed.failed ())
-            return blocked (transposed.getErrorMessage ());
+            return preparationFailure (transposed.getErrorMessage ());
         if (const auto started { monitor.start () }; started.failed ())
-            return blocked (started.getErrorMessage ());
+            return preparationFailure (started.getErrorMessage ());
 
         // Reuse one bounded two-channel buffer. Do not analyse startup ramps or
         // the DC blocker's initial condition as a characteristic of the source.

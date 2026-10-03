@@ -79,8 +79,7 @@ WaveformDisplay::WaveformDisplay ()
     durationInfo.setBorderSize ({ 0, 3, 0, 3 });
     durationInfo.setTooltip ("File, sample region and loop lengths in minutes:seconds at channel PITCH + zone PITCH OFFSET, capped at the sampler's playback-rate limit. "
                              "Excludes audition speed and external CV. Marker timestamps remain source-file positions. "
-                             "When looping is enabled, gray stripes mark the sample tail from Loop End to Sample End: it is not reached while the loop repeats. "
-                             "This hint does not change which region the audition buttons play.");
+                             "Audio outside the selected SAMPLE or LOOP audition region is dimmed.");
     addAndMakeVisible (durationInfo);
     auditionRateLabel.setText ("Audition speed", juce::dontSendNotification);
     auditionRateLabel.setFont (juce::FontOptions (13.0f));
@@ -408,11 +407,7 @@ void WaveformDisplay::updateMarkerPositions ()
 {
     ++matchGeneration;
     refreshSimulationControls ();
-    if (! hasSample ())
-    {
-        markerOverlay.setLoopTail ({});
-        return;
-    }
+    if (! hasSample ()) return;
 
     const auto ranges { ZoneSampleRanges::resolve (ZoneSampleRanges::read (zoneProperties), getSampleLength (), channelProperties.getAllowLoopOutsideSample ()) };
 
@@ -423,19 +418,6 @@ void WaveformDisplay::updateMarkerPositions ()
     // in the model/readouts and round only its handle representation.
     markerOverlay.setPosition (kLoopEnd, ranges.loopEnd ());
     updateDurations ();
-}
-
-void WaveformDisplay::updateLoopTail ()
-{
-    juce::Range<double> tail;
-    if (hasSample () && ! channelProperties.getAllowLoopOutsideSample ())
-    {
-        const auto ranges { ZoneSampleRanges::resolve (ZoneSampleRanges::read (zoneProperties), getSampleLength ()) };
-        const auto loopMode { channelProperties.getLoopMode () };
-        if (ranges.loopValid && (loopMode == 1 || loopMode == 2 || isSimulatingThisZone ()) && ranges.loopEnd () < ranges.sampleEnd)
-            tail = { ranges.loopEnd (), static_cast<double> (ranges.sampleEnd) };
-    }
-    markerOverlay.setLoopTail (tail);
 }
 
 // The timeline and the overlay both position by sample, so they have to be
@@ -469,7 +451,6 @@ void WaveformDisplay::refreshSimulationControls ()
     simulationButton.setButtonText (active ? "Stop simulation" : "Sample > Loop");
     simulationButton.setToggleState (active, juce::dontSendNotification);
     simulationButton.setEnabled (canEdit () && (active || (onTriggerSimulation && canTriggerSimulation && canTriggerSimulation ())));
-    updateLoopTail ();
 }
 
 void WaveformDisplay::triggerSimulation ()

@@ -90,6 +90,73 @@ namespace
 
 struct StereoChannelUiTestAccess
 {
+    static void checkColumnLayout (ChannelEditor& channel)
+    {
+        const auto before { channel.channelProperties.getValueTree ().createCopy () };
+        const auto originalBounds { channel.getBounds () };
+        const auto originalMode { channel.loopModeComboBox.getSelectedId () };
+        const auto originalAppearance { Theme::isLight () };
+        channel.loopModeComboBox.setSelectedId (3, juce::dontSendNotification);
+        bool inlineModeSeen { false }, fullWidthModeSeen { false };
+        for (const auto width : { 760, 820, 1000, 1140, 1600 })
+        {
+            channel.setSize (width, 720);
+            const std::array<juce::Label*, 4> headings { &channel.pitchLabel, &channel.phaseSourceSectionLabel,
+                                                        &channel.mutateLabel, &channel.channelModeLabel };
+            const auto columnWidth { headings.front ()->getWidth () };
+            check (columnWidth > 100, "Parameter columns are wider than the old fixed 100-point columns, even in compact layouts");
+            for (size_t index {}; index < headings.size (); ++index)
+            {
+                check (headings[index]->getWidth () == columnWidth, "All four parameter columns share the same width");
+                check (headings[index]->getRight () + 3 < channel.zoneTabs.getX (), "Columns never overlap the unchanged Zones panel");
+                if (index > 0)
+                    check (headings[index]->getX () - headings[index - 1]->getRight () == 20, "Column gutters stay equal at every window width");
+            }
+            check (channel.pitchCVTextEditor.getRight () <= channel.pitchLabel.getRight () + 3 &&
+                   channel.releaseModTextEditor.getRight () <= channel.phaseSourceSectionLabel.getRight () + 3 &&
+                   channel.mixModTextEditor.getRight () <= channel.mutateLabel.getRight () + 3 &&
+                   channel.loopLengthModTextEditor.getRight () <= channel.channelModeLabel.getRight () + 3,
+                   "Parameter inputs stay within their own equal-width columns");
+            const auto modeFont { channel.loopModeComboBox.getLookAndFeel ().getComboBoxFont (channel.loopModeComboBox) };
+            check (channel.loopModeComboBox.getWidth () >= juce::GlyphArrangement::getStringWidth (modeFont, "Loop/Release") + 10.0f,
+                   "Loop/Release fits unabridged at the normal font size, including text padding");
+            check (! channel.loopModeLabel.getBounds ().intersects (channel.loopModeComboBox.getBounds ()) &&
+                   channel.loopStartModLabel.getY () >= channel.loopModeComboBox.getBottom () &&
+                   channel.sampleWaveformDisplay.getY () >= channel.allowLoopOutsideSampleButton.getBottom () + 12,
+                   "Compact full-width loop mode moves following controls and waveform down without overlaps");
+            const auto inlineMode { channel.loopModeLabel.getY () > channel.loopModeComboBox.getY () };
+            inlineModeSeen = inlineModeSeen || inlineMode;
+            fullWidthModeSeen = fullWidthModeSeen || ! inlineMode;
+            check (channel.zoneTabs.getWidth () == 236, "Wider parameter columns do not shrink Zones");
+            const auto artifacts { juce::SystemStats::getEnvironmentVariable ("A8MANAGER_TEST_ARTIFACTS", {}) };
+            if (artifacts.isNotEmpty () && (width == 760 || width == 1140))
+            {
+                const juce::File directory { artifacts };
+                check (directory.createDirectory ().wasOk (), "Create column layout snapshots");
+                for (bool light : { false, true })
+                {
+                    Theme::setAppearance (light);
+                    Theme::refreshComponentTree (channel);
+                    const auto content { channel.createComponentSnapshot (channel.getLocalBounds (), true, 1.5f) };
+                    juce::Image rendered (juce::Image::RGB, content.getWidth (), content.getHeight (), true);
+                    juce::Graphics g (rendered);
+                    g.fillAll (Theme::panel);
+                    g.drawImageAt (content, 0, 0);
+                    auto stream { directory.getChildFile (juce::String ("channel-columns-") + juce::String (width)
+                        + (light ? "-light.png" : "-dark.png")).createOutputStream () };
+                    check (stream && stream->setPosition (0) && juce::PNGImageFormat ().writeImageToStream (rendered, *stream)
+                           && stream->truncate ().wasOk (), "Render real parameter columns and the complete Loop/Release text");
+                }
+            }
+        }
+        check (inlineModeSeen && fullWidthModeSeen, "Both roomy inline and compact full-width loop-mode layouts are exercised");
+        channel.loopModeComboBox.setSelectedId (originalMode, juce::dontSendNotification);
+        channel.setBounds (originalBounds);
+        Theme::setAppearance (originalAppearance);
+        Theme::refreshComponentTree (channel);
+        check (channel.channelProperties.getValueTree ().isEquivalentTo (before), "Resizing and appearance do not alter channel or zone settings");
+    }
+
     static void run ()
     {
         checkSettingsOnlyLoopPermission ();
@@ -157,6 +224,7 @@ struct StereoChannelUiTestAccess
         auto& right { editor->channelEditors[1] };
         auto& leftProperties { editor->channelProperties[0] };
         auto& rightProperties { editor->channelProperties[1] };
+        checkColumnLayout (left);
 
         auto checkTools = [&] (juce::Component& component, const char* id, const char* caption, int minimumWidth)
         {

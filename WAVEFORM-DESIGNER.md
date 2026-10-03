@@ -337,13 +337,33 @@ design become audible after the background render finishes. In Layer Bank, each
 voice plays with its own detune and pan, so you can hear beating and stereo
 spread rather than just an untransposed individual WAV.
 
-Audition checks the protected monitor signal for high-confidence sustained DC
-or strongly sub-audible content. Normal sharp-edged shapes and loud signals do
-not generate warnings just because they have steep gradients. The monitor's
-existing DC removal and audible-frequency limits still apply. Warnings hold
-playback until you approve; canceling or changing the design invalidates the
-old approval. Replaying an unchanged approved design does not ask repeatedly.
-This is not a hardware/speaker-safety certification; keep listening levels low.
+The shared **Auto-reduce audition** option, below the workspace tabs/audio
+output, is on by default and remembered across restarts independently of
+presets. It checks the protected monitor signal, including imported
+cycles and layer banks, for high-confidence sustained DC or strongly
+sub-audible content. A detection shows a red **DC / sub-audio detected** notice
+and adds **−24 dB** attenuation without muting playback, opening a confirmation
+dialog or interrupting edits. The option can be disabled or re-enabled during
+playback; the notice remains visible for a detected signal even when automatic
+reduction is off. Lower your physical listening level before disabling it.
+The status specifies **level −24 dB** or **reduction off**; while analysis is
+pending it may instead show **Checking signal — audition reduced** with
+temporary attenuation.
+
+Normal sharp-edged shapes and loud signals do not trigger reduction merely
+because they have steep gradients. The monitor's existing DC removal and
+audible-frequency limits still apply; removed source DC does not cause a
+redundant detection. Known CV remains prohibited from audition, and invalid
+non-finite PCM is blocked, regardless of this option. Your **Monitor level**
+setting is unchanged; automatic attenuation affects computer monitoring only,
+not rendered/exported WAVs, recipes or presets. The same option covers Samples
+ONCE/LOOP, Auto Loop and Sample > Loop simulation.
+The reduction is additional, not an absolute output target: a −18 dB Monitor
+level becomes effectively −42 dB during reduction, while still displaying −18 dB.
+
+This heuristic cannot detect every dangerous signal, and attenuated audio can
+still be unsafe at high downstream gain. It is not a hardware/speaker-safety
+certification; keep listening levels low.
 
 - **Monitor level** changes computer-listening volume only. Start low; use the
   design's amplitude and per-voice gain controls to change exported file levels.

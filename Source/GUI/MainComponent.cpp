@@ -128,6 +128,7 @@ MainComponent::MainComponent (juce::ValueTree rootPropertiesVT)
         waveformWorkspace.onStartAudition = [player] () { return player->startWaveformAudition (); };
         waveformWorkspace.onStopAudition = [player] () { player->stopWaveformAudition (); };
         waveformWorkspace.onAuditionMonitorChange = [player] (double decibels, double semitones) { return player->setWaveformMonitor (decibels, semitones); };
+        waveformWorkspace.onAuditionSignalWarning = [player] (bool warning) { player->setWaveformSignalWarning (warning); };
         waveformWorkspace.isAuditionActive = [player] () { return player->isWaveformAuditionActive (); };
         waveformWorkspace.isAuditionPausedForRange = [player] () { return player->isWaveformAuditionPausedForRange (); };
     }

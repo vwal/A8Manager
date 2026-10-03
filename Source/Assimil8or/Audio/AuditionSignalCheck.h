@@ -9,6 +9,8 @@ namespace AuditionSignalCheck
 {
     constexpr int maximumFrames { 2000000 };
     constexpr int maximumChannels { 8 };
+    // Additional computer-monitor attenuation only; never applied to exports.
+    constexpr double attenuationDecibels { -24.0 };
 
     struct Request
     {
@@ -41,7 +43,7 @@ namespace AuditionSignalCheck
         std::vector<ChannelMetrics> channels;
         juce::StringArray reasons;
 
-        bool needsConfirmation () const { return status == Status::warning; }
+        bool hasWarning () const { return status == Status::warning; }
         bool isBlocked () const { return status == Status::blocked; }
         juce::String explanation () const;
     };

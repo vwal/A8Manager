@@ -148,7 +148,6 @@ private:
     void updateAudioSource ();
     void updateDisplayChannel ();
     void updateMarkerPositions ();
-    void updateLoopTail ();
     void publishView ();
 
     double constrainMarker (int markerIndex, double proposedPosition, bool keepOppositeBoundary = false);

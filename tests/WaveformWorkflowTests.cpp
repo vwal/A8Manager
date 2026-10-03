@@ -776,75 +776,81 @@ struct WaveformTestAccess
         view.zoneProperties.setLoopStart (300, true);
         view.zoneProperties.setLoopLength (250.5, true);
         view.resetZoom ();
-        channel.setLoopMode (0, true);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "No Loop never hatches an inactive loop tail");
-        channel.setLoopMode (1, true);
-        auto tail { view.markerOverlay.loopTailBounds () };
-        check (std::abs (tail.getX () - view.waveform.sampleToX (550.5)) < 0.01f &&
-               std::abs (tail.getRight () - view.waveform.sampleToX (850)) < 0.01f,
-               "Active loop stripes span exact Loop End to Sample End, entirely inside SAMPLE");
+        const auto markerLabels { view.markerOverlay.labelText };
+        // Isolate shading from labels, handles and waveform content. A constant
+        // column must have no diagonal bands, regardless of hardware loop mode.
+        view.markerOverlay.labelText = {};
+        auto checkUnstripedColumn = [&] (double frame)
+        {
+            const auto rendered { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
+            const auto x { juce::roundToInt (view.waveform.sampleToX (frame)) };
+            const auto middle { rendered.getHeight () / 2 };
+            const auto colour { rendered.getPixelAt (x, middle) };
+            for (auto y { middle - 12 }; y < middle + 12; ++y)
+                check (rendered.getPixelAt (x, y) == colour, "Waveform shading has no post-loop diagonal bands");
+            return colour;
+        };
         for (const auto height : { 170, 560 })
         {
             view.setExpanded (height == 560);
             view.setSize (760, height);
-            const auto rendered { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
-            const auto x { juce::roundToInt (view.waveform.sampleToX (700)) };
-            const auto middle { rendered.getHeight () / 2 };
-            bool varies { false };
-            for (auto y { middle }; y < middle + 16; ++y)
-                varies |= rendered.getPixelAt (x, y) != rendered.getPixelAt (x, middle);
-            check (varies, "Active loop tail paints visible bands in compact and expanded views");
+            for (const auto loopMode : { 0, 1, 2 })
+            {
+                channel.setLoopMode (loopMode, true);
+                for (const auto selectLoop : { false, true })
+                {
+                    view.setLoopSelected (selectLoop);
+                    const auto afterLoop { checkUnstripedColumn (700) };
+                    const auto withinLoop { checkUnstripedColumn (400) };
+                    const auto outsideSample { checkUnstripedColumn (950) };
+                    check (withinLoop.getAlpha () == 0, "Selected audio remains undimmed in compact and expanded views");
+                    check (outsideSample.getAlpha () > withinLoop.getAlpha (), "Audio outside the selected region stays dimmed");
+                    check (afterLoop == (selectLoop ? outsideSample : withinLoop),
+                           "Post-loop SAMPLE audio follows audition selection, not the hardware loop mode");
+                }
+            }
         }
+        channel.setAllowLoopOutsideSample (true, true);
+        view.setLoopSelected (false);
+        check (checkUnstripedColumn (700).getAlpha () == 0, "Allow loop outside sample retains plain selected-SAMPLE shading");
+        view.setLoopSelected (true);
+        check (checkUnstripedColumn (700) == checkUnstripedColumn (950), "Independent editing uses the same ordinary LOOP audition dimming");
+        channel.setAllowLoopOutsideSample (false, true);
         view.setExpanded (false);
         view.setSize (760, 170);
-        tail = view.markerOverlay.loopTailBounds ();
-        view.setLoopSelected (false);
-        const auto sampleSelectedTail { view.markerOverlay.loopTailBounds () };
-        view.setLoopSelected (true);
-        check (view.markerOverlay.loopTailBounds () == sampleSelectedTail, "Loop-tail indication is independent of audition region selection");
-        channel.setLoopMode (2, true);
-        check (view.markerOverlay.loopTailBounds () == tail, "Loop/Release also identifies the tail after Loop End");
-        const auto hatched { view.markerOverlay.createComponentSnapshot (view.markerOverlay.getLocalBounds ()) };
-        const auto gapX { juce::roundToInt (view.waveform.sampleToX (700)) };
-        const auto outsideX { juce::roundToInt (view.waveform.sampleToX (950)) };
-        const auto centre { hatched.getHeight () / 2 };
-        auto bandVariation { false };
-        for (auto y { centre - 12 }; y < centre + 12; ++y)
+        for (const auto selectLoop : { false, true })
         {
-            bandVariation = bandVariation || hatched.getPixelAt (gapX, y) != hatched.getPixelAt (gapX, centre);
-            check (hatched.getPixelAt (outsideX, y) == hatched.getPixelAt (outsideX, centre), "Ordinary unused audio stays uniformly dimmed");
+            view.setLoopSelected (selectLoop);
+            view.waveform.setVisibleRange (600, 200);
+            check (checkUnstripedColumn (700).getAlpha () == (selectLoop ? juce::Colours::black.withAlpha (0.45f).getAlpha () : 0),
+                   "Zooming into post-loop audio preserves plain audition-selection shading");
         }
-        check (bandVariation, "Loop tail actually paints contrasting diagonal bands");
-        view.waveform.setVisibleRange (600, 200);
-        tail = view.markerOverlay.loopTailBounds ();
-        check (tail.getX () == 0.0f && tail.getWidth () == view.markerOverlay.getWidth (), "Hatching clips correctly when zoomed into the tail");
         view.waveform.setVisibleRange (900, 100);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Offscreen tail does not shade unrelated audio");
+        check (checkUnstripedColumn (950).getAlpha () > 0, "Zoomed audio outside SAMPLE remains uniformly dimmed");
         view.resetZoom ();
         view.setZone (2);
-        check (std::abs (view.markerOverlay.loopTailBounds ().getX () - view.waveform.sampleToX (400.5)) < 0.01f &&
-               std::abs (view.markerOverlay.loopTailBounds ().getRight () - view.waveform.sampleToX (600)) < 0.01f,
-               "Changing zones recalculates the tail from the newly selected markers");
+        view.setLoopSelected (false);
+        check (checkUnstripedColumn (500).getAlpha () == 0, "New zone's post-loop SAMPLE audio is not marked inaccessible");
         view.setZone (1);
         view.sampleProperties.setStatus (SampleStatus::doesNotExist, true);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Unloading a sample clears its loop tail");
+        check (! view.markerOverlay.isVisible (), "Unloading a sample hides the marker overlay");
         view.sampleProperties.setStatus (SampleStatus::exists, true);
         view.zoneProperties.setLoopStart (300, true);
         view.zoneProperties.setLoopLength (550, true);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "A loop ending at Sample End has no tail");
+        check (checkUnstripedColumn (700).getAlpha () == 0, "A loop ending at Sample End has no extra shading");
         view.zoneProperties.setLoopLength (600, true);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Invalid legacy loops beyond SAMPLE never restore detached extension stripes");
+        check (checkUnstripedColumn (700).getAlpha () == 0, "Legacy loop positions do not restore special shading");
         view.zoneProperties.setLoopLength (250.5, true);
         channel.setLoopMode (0, true);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Turning hardware looping off clears the tail immediately");
         audition.setSampleSource (0, view.zoneProperties.getId () - 1, true);
         audition.setPlayState (AudioPlayerProperties::PlayState::sampleIntoLoop, true);
-        check (! view.markerOverlay.loopTailBounds ().isEmpty (), "Sample-into-loop simulation shows its active loop tail even with hardware No Loop");
+        check (checkUnstripedColumn (700).getAlpha () == 0, "Simulation does not add a post-loop warning overlay");
         audition.setSampleSource (0, 7, true);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "A simulation in another zone does not hatch this zone");
+        check (checkUnstripedColumn (700).getAlpha () == 0, "Simulation source changes do not add special shading");
         audition.setSampleSource (0, view.zoneProperties.getId () - 1, true);
         audition.setPlayState (AudioPlayerProperties::PlayState::stop, true);
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Stopping simulation restores unhatched No Loop shading");
+        check (checkUnstripedColumn (700).getAlpha () == 0, "Stopping simulation preserves normal audition-selection shading");
+        view.markerOverlay.labelText = markerLabels;
 
         prepareContained ();
         channel.setAllowLoopOutsideSample (true, true);
@@ -855,7 +861,6 @@ struct WaveformTestAccess
         view.applyMenuAction (31, 300.0);
         check (view.markerPosition (1) == 300 && view.markerPosition (2) == 799 && view.zoneProperties.getLoopLength () == 200.5,
                "Independent SAMPLE edits neither move nor resize an external loop");
-        check (view.markerOverlay.loopTailBounds ().isEmpty (), "Independent editing suppresses all stripes, including active hardware loops");
         view.applyMenuAction (30, 299.0);
         check (view.markerPosition (0) == 296, "Independent SAMPLE still has a four-frame minimum");
         view.resetZoom ();
@@ -919,8 +924,8 @@ struct WaveformTestAccess
             view.setSize (760, 220);
             view.resetZoom ();
             auto stream { directory.getChildFile ("waveform-loop-tail.png").createOutputStream () };
-            check (stream != nullptr && stream->setPosition (0), "Open striped loop-tail artifact");
-            check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *stream), "Write striped loop-tail artifact");
+            check (stream != nullptr && stream->setPosition (0), "Open unstriped post-loop waveform artifact");
+            check (juce::PNGImageFormat ().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds (), true, 1.5f), *stream), "Write unstriped post-loop waveform artifact");
             stream->truncate ();
             stream.reset ();
             for (const auto height : { 170, 560 })

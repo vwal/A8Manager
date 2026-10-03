@@ -6,13 +6,13 @@ struct WorkspaceHeaderLayout
 {
     int height;
     juce::Rectangle<int> samples, designer, bankExport, scaleLabel, scaleSelector, audioSettings, help,
-                         outputDevice, appearanceLabel, appearanceSelector;
+                         outputDevice, appearanceLabel, appearanceSelector, auditionProtection;
 
     static WorkspaceHeaderLayout forWidth (int width)
     {
         WorkspaceHeaderLayout layout;
         const bool compact { width < 1000 };
-        layout.height = compact ? 132 : 92;
+        layout.height = compact ? 168 : 128;
         juce::Rectangle<int> row { 16, 10, juce::jmax (0, width - 32), 32 };
         layout.help = row.removeFromRight (104);
         row.removeFromRight (12);
@@ -31,6 +31,7 @@ struct WorkspaceHeaderLayout
         layout.appearanceLabel = workspaces.removeFromRight (88).withTrimmedRight (8);
         workspaces.removeFromRight (12);
         layout.outputDevice = compact ? juce::Rectangle<int> { 16, 90, width - 32, 32 } : workspaces;
+        layout.auditionProtection = { 16, compact ? 128 : 88, width - 32, 32 };
         return layout;
     }
 };

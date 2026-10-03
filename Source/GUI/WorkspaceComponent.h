@@ -2,6 +2,7 @@
 #include "MainComponent.h"
 #include "ModernTheme.h"
 #include "WorkspaceHeaderLayout.h"
+#include "AuditionProtectionControls.h"
 #include "../Assimil8or/Audio/AudioPlayerProperties.h"
 #include "oolib/Properties/PersistentRootProperties.h"
 #include "oolib/Properties/RuntimeRootProperties.h"
@@ -57,6 +58,8 @@ public:
         audioPlayerProperties.onOutputDeviceNameChange = [this] (juce::String name) { updateOutputDevice (name); };
         updateOutputDevice (audioPlayerProperties.getOutputDeviceName ());
         addAndMakeVisible (outputDevice);
+        auditionProtection.init (root);
+        addAndMakeVisible (auditionProtection);
         appearanceSelector.setComponentID ("workspaceAppearance");
         appearanceSelector.addItem ("Dark", 1);
         appearanceSelector.addItem ("Light", 2);
@@ -83,12 +86,13 @@ public:
                 "Save/Export Bank: combine saved presets from explicitly added folders into a new flat bank folder. Resolve duplicate preset slots before export. Originals are always kept. Open bank after export is optional; once a bank is open, both workspaces save in place there instead of creating per-preset folders. Copy the whole bank folder directly under the SD-card root.\n\n"
                 "Values: left-drag vertically to adjust; Shift-drag for slower, unaccelerated fine steps. Focusing a field selects its contents; type to replace. Horizontal dragging selects text. Command-wheel on macOS / Ctrl-wheel elsewhere adjusts values; add Shift to nudge one increment.\n\n"
                 "Waveform: + / - zoom; click the zoom percentage or double-click to reset both axes. The arrow expands the view; X or Escape closes it. The gear/right-click menu offers Zoom, Jump (keys 1-4 with waveform focus) and Zero Crossing Nudge; right-click also offers Set Marker Here.\n\n"
-                "Markers: sample start = deep green, sample end = deep red, loop start = light green, loop end/length = pink, matching the zone-panel keys. By default loops stay inside SAMPLE, with stripes on its skipped tail. Allow loop outside sample (below XFADE GRP) permits independent, file-bounded loops for the whole channel and hides stripes; all loop edits/nudges retain a four-frame minimum. Imports preserve valid external loops and enable this option. Static simulation does not emulate external CV. Drag handles to edit; the side-panel selection follows. Option/Alt-drag INSIDE a region or on its handle moves that pair without resizing. In overlapping regions the selected pair wins; handles identify their own pair. Add Shift for finer movement. Plain drag pans; right-drag zooms.\n\n"
+                "Markers: sample start = deep green, sample end = deep red, loop start = light green, loop end/length = pink, matching the zone-panel keys. By default loops stay inside SAMPLE. Allow loop outside sample (below XFADE GRP) permits independent, file-bounded loops for the whole channel; all loop edits/nudges retain a four-frame minimum. Imports preserve valid external loops and enable this option. Dimming only identifies audio outside the selected audition region; it does not mark audio as inaccessible on the hardware. Static simulation does not emulate external CV. Drag handles to edit; the side-panel selection follows. Option/Alt-drag INSIDE a region or on its handle moves that pair without resizing. In overlapping regions the selected pair wins; handles identify their own pair. Add Shift for finer movement. Plain drag pans; right-drag zooms.\n\n"
                 "Times: marker timestamps are source-file positions. Lengths beside END markers and below the waveform include zone PITCH OFFSET, but exclude audition speed and Keep pitch stretching. The active region is undimmed.\n\n"
                 "Audition speed: drag or type a multiplier (0.0625x to 4x); double-click the slider for 1x. Keep pitch preserves pitch while changing duration; turn it off for sampler-style varispeed. Zone PITCH OFFSET is heard in either mode. Extreme stretching can introduce artifacts. These preview controls do not change the preset.\n\n"
                 "Loop join preview: END (left) meets START (right). Automatic visual gain makes quiet audio visible without changing its volume. Gear/right-click > Match Opposite Boundary > marker > Left << / Right >> stops at the nearest crossing of the opposite boundary's amplitude, even away from zero. It does not chase a distant, slightly better match; if the nearest crossing does not improve the join, nothing moves. The opposite marker stays fixed, including in Loop Length mode. Move START left or END right to retain material near the edge. Matching AND Zero Crossing Nudge require Yes/No confirmation for moves over 50 ms at the source sample rate. Unlike matching, nudging Loop Start in Length mode moves Loop End with it to preserve the length. Audition the result: matching amplitudes does not guarantee matching slopes or the other stereo side.\n\n"
                 "Zones: Copy > next duplicates the current zone; Continue > next starts the next slice at the current end. Both select the next zone at full-file Fit and vertical 100%. Occupied zones require confirmation. Parenthesized voltages below the boundaries are read-only midpoint CV targets for external zone selection.\n\n"
                 "Right-click END or START in the small join preview for that boundary's directional nudge/match commands. Direct typed positions do not need a distance confirmation; automated moves over 50 ms do. Stereo-right waveforms support read-only zoom, pan, marker jumps and expansion; edit their shared markers from the left channel.\n\n"
+                "Auto-reduce audition in the top bar lowers computer playback by an additional 24 dB when sustained DC or strong sub-audio is detected, without a confirmation prompt. A red indicator shows the finding and whether reduction is active. Turn the option off to retain normal monitoring level; the preference is remembered. This does not change WAVs or presets and is not a speaker-safety guarantee. Known CV files remain blocked from audition.\n\n"
                 "Audio Settings in the top bar selects the computer's audition output device. Output shows the live device or none. Appearance switches between Dark and Light; numeric parameters use monospaced text. Preset tools, Channel tools and Zone tools act on their named scopes. UI size scales text and controls together. Changes are kept in separate preferences. Preset files are only changed when you save.");
         };
         addAndMakeVisible (help);
@@ -103,6 +107,7 @@ private:
     juce::Viewport viewport;
     juce::ComboBox scaleSelector, appearanceSelector;
     juce::Label outputDevice;
+    AuditionProtectionControls auditionProtection;
     juce::TextButton help, audioSettings;
     juce::TextButton samples, designer, bankExport;
     double scale { 1.25 };
@@ -126,6 +131,7 @@ private:
         designer.setBounds (header.designer);
         bankExport.setBounds (header.bankExport);
         outputDevice.setBounds (header.outputDevice);
+        auditionProtection.setBounds (header.auditionProtection);
         appearanceSelector.setBounds (header.appearanceSelector);
         viewport.setBounds (bounds);
         const auto width { juce::jmax (1160, static_cast<int> ((bounds.getWidth () - 16) / scale)) };

@@ -466,11 +466,9 @@ struct WaveformWorkspace::Impl
     Control monitorLevel { "Monitor level", "design-monitor-level", -60, 0, 0.1, " dB" };
     Control monitorTranspose { "Transpose", "design-monitor-transpose", -48, 72, 0.01, " st" };
     WaveformAudition::PayloadPtr auditionPayload;
-    WaveformAudition::PayloadPtr inspectedPayload, approvedAuditionPayload;
-    double inspectedTranspose {}, approvedTranspose {}, approvedLevel {};
+    WaveformAudition::PayloadPtr inspectedPayload;
+    double inspectedTranspose {};
     AuditionSignalCheck::Report inspectedSignal;
-    unsigned auditionWarningRequest { 0 };
-    bool auditionWarningPending { false };
     juce::String auditionError, rangePauseReason, transposeLimitNotice;
     bool auditionSuspended { false }, deferredTransposeChange { false };
     juce::Viewport viewport;
@@ -802,30 +800,21 @@ struct WaveformWorkspace::Impl
             if (settings.mode == Mode::modulation || auditionSuspended) return;
             transposeLimitNotice.clear ();
             deferredTransposeChange = false;
-            if (auditionWarningPending)
+            if ((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
             {
-                ++auditionWarningRequest;
-                auditionWarningPending = false;
-                auditionError.clear ();
-                if (owner.onStopAudition) owner.onStopAudition ();
-            }
-            else if ((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
-            {
-                if (owner.onStopAudition) owner.onStopAudition ();
+                stopAudition ();
                 auditionError.clear ();
                 rangePauseReason.clear ();
             }
             else if (auditionPayload && displayedGeneration == generation && owner.onStartAudition)
             {
-                if (approveAuditionSignal ()) startAuditionNow ();
+                startAuditionNow ();
             }
             updateAuditionControls ();
         };
         auto monitorChanged = [this] (bool transposeChanged)
         {
             if (applying) return;
-            ++auditionWarningRequest;
-            auditionWarningPending = false;
             auditionError.clear ();
             transposeLimitNotice.clear ();
             // A pending source can have different hardware AND audible bounds.
@@ -842,17 +831,18 @@ struct WaveformWorkspace::Impl
             if (settings.mode != Mode::modulation && auditionPayload && owner.onAuditionMonitorChange
                 && monitorTranspose.slider.getValue () <= WaveformAudition::maximumTransposeSemitones (auditionPayload->getSettings ()))
             {
-                // Check a live pitch change before publishing it. Audible-range
-                // failures still use the existing pause/resume mechanism.
+                // Report a live pitch change before publishing it, so optional
+                // attenuation is in place before the altered audio can sound.
+                // Audible-range failures retain the pause/resume mechanism.
                 if (((owner.isAuditionActive && owner.isAuditionActive ()) || isRangePaused ())
-                    && currentSignalReport ().needsConfirmation () && ! approveAuditionSignal ())
+                    && ! publishAuditionSignal ())
                 { updateAuditionControls (); return; }
                 const auto result { owner.onAuditionMonitorChange (monitorLevel.slider.getValue (), monitorTranspose.slider.getValue ()) };
                 if (isRangePaused ()) rangePauseReason = result.getErrorMessage ();
                 else
                 {
                     auditionError = result.getErrorMessage ();
-                    if (result.failed () && owner.onStopAudition) owner.onStopAudition ();
+                    if (result.failed ()) stopAudition ();
                 }
             }
             updateAuditionControls ();
@@ -1027,8 +1017,6 @@ struct WaveformWorkspace::Impl
     void changed ()
     {
         if (applying) return;
-        ++auditionWarningRequest;
-        auditionWarningPending = false;
         ++generation;
         const auto now { juce::Time::getMillisecondCounterHiRes () };
         // Idle edits (especially long CV curves) are debounced. During live
@@ -1271,6 +1259,7 @@ struct WaveformWorkspace::Impl
     {
         if (auditionSuspended || settings.mode == Mode::modulation || ! auditionPayload
             || displayedGeneration != generation || ! owner.onStartAudition) return;
+        if (! publishAuditionSignal ()) return;
         if (owner.onAuditionPayload) owner.onAuditionPayload (auditionPayload);
         if (owner.onAuditionMonitorChange)
         {
@@ -1278,58 +1267,34 @@ struct WaveformWorkspace::Impl
             if (result.failed ())
             {
                 auditionError = result.getErrorMessage ();
-                if (owner.onStopAudition) owner.onStopAudition ();
+                stopAudition ();
                 updateAuditionControls ();
                 return;
             }
         }
         auditionError = owner.onStartAudition ().getErrorMessage ();
+        if (auditionError.isNotEmpty ()) stopAudition ();
         updateAuditionControls ();
     }
 
-    bool approveAuditionSignal ()
+    void stopAudition ()
+    {
+        if (owner.onStopAudition) owner.onStopAudition ();
+        if (owner.onAuditionSignalWarning) owner.onAuditionSignalWarning (false);
+    }
+
+    bool publishAuditionSignal ()
     {
         const auto& report { currentSignalReport () };
         if (report.isBlocked ())
         {
             auditionError = report.explanation ();
-            if (owner.onStopAudition) owner.onStopAudition ();
+            stopAudition ();
             return false;
         }
-        if (! report.needsConfirmation ()) return true;
-        const auto transpose { monitorTranspose.slider.getValue () }, level { monitorLevel.slider.getValue () };
-        if (approvedAuditionPayload == auditionPayload && approvedTranspose == transpose && level <= approvedLevel) return true;
-        if (auditionWarningPending) return false;
-        if (owner.onStopAudition) owner.onStopAudition ();
-        if (owner.onAuditionPayload) owner.onAuditionPayload ({});
-        auditionWarningPending = true;
-        const auto request { ++auditionWarningRequest };
-        const auto beforeGeneration { generation }, beforeEpoch { auditionEpoch };
-        const auto beforeName { fileName.getText () };
-        const auto payload { auditionPayload };
-        auditionError = "Audition is stopped pending signal-warning confirmation.";
-        updateAuditionControls ();
-        juce::Component::SafePointer<WaveformWorkspace> safe (&owner);
-        owner.confirmAuditionWarning (report.explanation (), [safe, request, beforeGeneration, beforeEpoch, beforeName, payload, transpose, level] (bool accepted)
-        {
-            if (safe == nullptr || safe->impl->auditionWarningRequest != request) return;
-            auto& self { *safe->impl };
-            ++self.auditionWarningRequest;
-            self.auditionWarningPending = false;
-            if (! accepted || self.auditionSuspended || self.generation != beforeGeneration || self.auditionEpoch != beforeEpoch
-                || self.fileName.getText () != beforeName || self.auditionPayload != payload
-                || self.monitorTranspose.slider.getValue () != transpose || self.monitorLevel.slider.getValue () != level)
-            {
-                self.auditionError = accepted ? "The audition changed. Press Start again when ready." : "Audition canceled.";
-                self.updateAuditionControls ();
-                return;
-            }
-            self.approvedAuditionPayload = payload;
-            self.approvedTranspose = transpose;
-            self.approvedLevel = level;
-            self.startAuditionNow ();
-        });
-        return false;
+        if (owner.onAuditionSignalWarning)
+            owner.onAuditionSignalWarning (report.status == AuditionSignalCheck::Status::warning);
+        return true;
     }
 
     void clearAudition (bool forgetPayload = true)
@@ -1338,9 +1303,7 @@ struct WaveformWorkspace::Impl
         // barriers. A stop ramp may still report active, but no older worker
         // result is permitted to cross this boundary and restore its payload.
         ++auditionEpoch;
-        ++auditionWarningRequest;
-        auditionWarningPending = false;
-        if (owner.onStopAudition) owner.onStopAudition ();
+        stopAudition ();
         if (owner.onAuditionPayload) owner.onAuditionPayload ({});
         if (forgetPayload) auditionPayload.reset ();
         else if (displayedGeneration != generation)
@@ -1374,7 +1337,7 @@ struct WaveformWorkspace::Impl
         const bool active { ! cv && owner.isAuditionActive && owner.isAuditionActive () };
         const bool paused { ! cv && isRangePaused () };
         if (! paused) rangePauseReason.clear ();
-        auditionButton.setButtonText (active || paused || auditionWarningPending ? "Stop audition" : "Start audition");
+        auditionButton.setButtonText (active || paused ? "Stop audition" : "Start audition");
         auditionButton.setEnabled (! cv && ! auditionSuspended && (active || paused || (auditionPayload && displayedGeneration == generation && owner.onStartAudition)));
         monitorLevel.setEnabled (! cv); monitorTranspose.setEnabled (! cv);
         auditionTitle.setText (cv ? "CV - VISUAL ONLY" : "LIVE AUDITION", juce::dontSendNotification);
@@ -1446,9 +1409,9 @@ struct WaveformWorkspace::Impl
             auditionPayload = std::move (completedAudition);
             auditionError = preparedError;
             rangePauseReason.clear (); // Cached limits belong to the previous render.
-            const auto needsSignalApproval { ! auditionSuspended && (wasAuditioning || wasRangePaused)
-                && auditionPayload && currentSignalReport ().needsConfirmation () && ! approveAuditionSignal () };
-            if (! auditionSuspended && ! needsSignalApproval && owner.onAuditionPayload)
+            const auto signalBlocked { ! auditionSuspended && (wasAuditioning || wasRangePaused)
+                && settings.mode != Mode::modulation && auditionPayload && ! publishAuditionSignal () };
+            if (! auditionSuspended && ! signalBlocked && owner.onAuditionPayload)
             {
                 owner.onAuditionPayload (settings.mode == Mode::modulation ? WaveformAudition::PayloadPtr {} : auditionPayload);
                 // A valid design edit can put an actively monitored voice
@@ -1469,7 +1432,7 @@ struct WaveformWorkspace::Impl
                         else
                         {
                             auditionError = monitor.getErrorMessage ();
-                            if (owner.onStopAudition) owner.onStopAudition ();
+                            stopAudition ();
                         }
                     }
                 }
@@ -1932,13 +1895,6 @@ WaveformWorkspace::WaveformWorkspace () : impl (std::make_unique<Impl> (*this))
     };
     inspectAuditionSignal = [] (WaveformAudition::PayloadPtr payload, double transpose)
     { return WaveformAudition::inspectSignal (std::move (payload), transpose); };
-    confirmAuditionWarning = [] (const juce::String& message, std::function<void (bool)> callback)
-    {
-        juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon, "Check signal before audition", message
-            + "\n\nThis is a warning heuristic, not a speaker-safety guarantee. Check the file's purpose and lower your listening level before continuing.",
-            "Continue audition", "Cancel", nullptr,
-            juce::ModalCallbackFunction::create ([completion = std::move (callback)] (int response) { completion (response == 1); }));
-    };
     startTimerHz (30);
 }
 WaveformWorkspace::~WaveformWorkspace () { stopTimer (); impl.reset (); }

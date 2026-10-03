@@ -25,6 +25,7 @@ public:
 
     // Designer monitoring shares the existing device and excludes sample playback.
     void setWaveformAuditionPayload (WaveformAudition::PayloadPtr payload);
+    void setWaveformSignalWarning (bool warning);
     juce::Result startWaveformAudition ();
     void stopWaveformAudition ();
     juce::Result setWaveformMonitor (double decibels, double semitones);
@@ -75,11 +76,16 @@ private:
     };
     struct SignalLifetime { AudioPlayer* owner {}; };
     std::shared_ptr<SignalLifetime> signalLifetime { std::make_shared<SignalLifetime> (SignalLifetime { this }) };
-    bool signalCheckEnabled { false }, signalApproved { false }, signalCheckNeeded { false }, signalDialogOpen { false };
-    bool signalCheckQueued { false };
+    bool signalCheckEnabled { false }, signalApproved { false }, signalCheckNeeded { false };
+    bool signalCheckQueued { false }, signalCheckRunning { false };
     std::uint64_t signalRequestGeneration {}, sampleBufferRevision {}, deviceRevision {};
     std::optional<SignalCheckKey> approvedSignal;
-    std::function<void (const juce::String&, std::function<void (bool)>)> confirmSignalWarning;
+    std::optional<std::uint64_t> finiteBufferRevision;
+    bool approvedSignalWarning { false }, sampleSignalWarning { false }, waveformSignalWarning { false };
+    bool waveformStopRequested { true };
+    bool autoReduceAudition { true };
+    float attenuationGain { 1.0f }, attenuationTarget { 1.0f };
+    int attenuationRampRemaining { 0 };
     std::function<void (const juce::String&)> notifySignalBlocked;
     std::function<bool (std::function<void ()>)> deferSignalCheck = [] (std::function<void ()> callback)
     { return juce::MessageManager::callAsync (std::move (callback)); };
@@ -87,7 +93,12 @@ private:
     void wakeSignalCheck ();
     void processSignalCheck ();
     SignalCheckKey signalCheckKey ();
-    void finishSignalCheck (std::uint64_t generation, const SignalCheckKey&, bool approved);
+    void finishSignalCheck (std::uint64_t generation, const SignalCheckKey&, bool valid, bool warning = false);
+    void handleAutoReduceAudition (bool enabled);
+    void publishAuditionSignalStatus ();
+    float auditionAttenuationTarget () const;
+    void resetAuditionAttenuation ();
+    void applyAuditionAttenuation (const juce::AudioSourceChannelInfo&);
     AudioPlayerProperties::PlayState playState { AudioPlayerProperties::PlayState::stop };
     double curSampleOffset { 0.0 }; // audible cursor, independent of resampler read-ahead
     int sampleStart { 0 };

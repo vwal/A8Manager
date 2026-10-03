@@ -25,7 +25,7 @@
 
 AudioPlayer::~AudioPlayer ()
 {
-    // Confirmation callbacks run on the message thread, and may outlive the
+    // Queued checks run on the message thread, and may outlive the
     // owning component or an explicit audio shutdown.
     signalLifetime->owner = nullptr;
     stopTimer ();
@@ -59,6 +59,8 @@ void AudioPlayer::init (juce::ValueTree rootPropertiesVT)
     audioPlayerProperties.onShowConfigDialog = [this] () { showConfigDialog (); };
     audioPlayerProperties.onAuditionRateChange = [this] (double rate) { handleAuditionRate (rate); };
     audioPlayerProperties.onPreservePitchChange = [this] (bool preserve) { handlePreservePitch (preserve); };
+    audioPlayerProperties.onAutoReduceAuditionChange = [this] (bool enabled) { handleAutoReduceAudition (enabled); };
+    handleAutoReduceAudition (audioPlayerProperties.getAutoReduceAudition ());
     handlePreservePitch (audioPlayerProperties.getPreservePitch ());
     handleAuditionRate (audioPlayerProperties.getAuditionRate ());
     audioPlayerProperties.onPlayStateChange = [this] (AudioPlayerProperties::PlayState newPlayState)
@@ -343,6 +345,8 @@ void AudioPlayer::prepareSampleForPlayback ()
 {
     juce::ScopedLock sl (dataCS);
     ++sampleBufferRevision;
+    signalApproved = false;
+    sampleSignalWarning = false;
     invalidateSignalCheck ();
     // A replacement file, stereo route, or device must not inherit a running
     // simulation from a different source. Marker edits never enter this path.
@@ -477,11 +481,22 @@ void AudioPlayer::shutdownAudio ()
     audioDeviceManager.closeAudioDevice ();
     audioPlayerProperties.setOutputDeviceName ({}, false);
     playbackPosition.store (-1.0);
+    publishAuditionSignalStatus ();
 }
 
 void AudioPlayer::setWaveformAuditionPayload (WaveformAudition::PayloadPtr payload)
 {
     waveformAudition.setPayload (std::move (payload));
+    publishAuditionSignalStatus ();
+}
+
+void AudioPlayer::setWaveformSignalWarning (bool warning)
+{
+    {
+        juce::ScopedLock sl (dataCS);
+        waveformSignalWarning = warning;
+    }
+    publishAuditionSignalStatus ();
 }
 
 juce::Result AudioPlayer::startWaveformAudition ()
@@ -496,25 +511,31 @@ juce::Result AudioPlayer::startWaveformAudition ()
         if (const auto result { waveformAudition.start () }; result.failed ())
             return result;
         waveformSelected = true;
+        waveformStopRequested = false;
         playState = AudioPlayerProperties::PlayState::stop;
         invalidateSignalCheck ();
         simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
         resetAuditionResampler = true;
         playbackFinished.store (false);
         playbackPosition.store (-1.0);
+        resetAuditionAttenuation ();
     }
     // Notify sample UI without re-entering its playback handler or touching
     // the preset, source selection, markers or audition-speed preferences.
     audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
     audioPlayerProperties.setSimulationPhase (AudioPlayerProperties::SimulationPhase::inactive, false);
     audioPlayerProperties.setPlaybackPosition (-1.0, false);
+    publishAuditionSignalStatus ();
     return juce::Result::ok ();
 }
 
 void AudioPlayer::stopWaveformAudition ()
 {
+    juce::ScopedLock sl (dataCS);
+    waveformStopRequested = true;
     waveformAudition.setPlaying (false);
     // Keep the route silent when the fade completes; never resume an old sample.
+    publishAuditionSignalStatus ();
 }
 
 juce::Result AudioPlayer::setWaveformMonitor (double decibels, double semitones)
@@ -531,7 +552,9 @@ juce::Result AudioPlayer::setWaveformMonitor (double decibels, double semitones)
         return juce::Result::fail ("Monitor level must be finite and within -60..0 dB.");
     }
     waveformAudition.setMonitorGain (juce::Decibels::decibelsToGain (decibels));
-    return waveformAudition.setTransposeSemitones (semitones);
+    const auto result { waveformAudition.setTransposeSemitones (semitones) };
+    publishAuditionSignalStatus ();
+    return result;
 }
 
 bool AudioPlayer::isWaveformAuditionActive () const
@@ -542,6 +565,73 @@ bool AudioPlayer::isWaveformAuditionActive () const
 bool AudioPlayer::isWaveformAuditionPausedForRange () const
 {
     return waveformAudition.isPausedForRange ();
+}
+
+void AudioPlayer::handleAutoReduceAudition (bool enabled)
+{
+    {
+        juce::ScopedLock sl (dataCS);
+        autoReduceAudition = enabled;
+    }
+    // Preference changes neither restart the cursor nor change the monitor
+    // level control. The output callback applies a smooth common gain ramp.
+    publishAuditionSignalStatus ();
+}
+
+float AudioPlayer::auditionAttenuationTarget () const
+{
+    const auto warningOrPending { waveformSelected ? waveformSignalWarning
+        : sampleSignalWarning || signalCheckNeeded || signalCheckRunning };
+    return autoReduceAudition && warningOrPending
+        ? juce::Decibels::decibelsToGain (static_cast<float> (AuditionSignalCheck::attenuationDecibels)) : 1.0f;
+}
+
+void AudioPlayer::resetAuditionAttenuation ()
+{
+    attenuationGain = attenuationTarget = auditionAttenuationTarget ();
+    attenuationRampRemaining = 0;
+}
+
+void AudioPlayer::applyAuditionAttenuation (const juce::AudioSourceChannelInfo& output)
+{
+    // Preserve protection throughout a designer fade-out. A subsequent Start
+    // resets the gain to its new source's checked result before any PCM plays.
+    const auto target { waveformSelected && waveformStopRequested ? attenuationTarget : auditionAttenuationTarget () };
+    if (target != attenuationTarget)
+    {
+        attenuationTarget = target;
+        attenuationRampRemaining = juce::jmax (1, static_cast<int> (sampleRate * (target < attenuationGain ? 0.005 : 0.12)));
+    }
+    for (int frame { 0 }; frame < output.numSamples; ++frame)
+    {
+        if (attenuationRampRemaining > 0)
+        {
+            attenuationGain += (attenuationTarget - attenuationGain) / static_cast<float> (attenuationRampRemaining);
+            --attenuationRampRemaining;
+        }
+        for (int channel { 0 }; channel < output.buffer->getNumChannels (); ++channel)
+            output.buffer->getWritePointer (channel, output.startSample)[frame] *= attenuationGain;
+    }
+}
+
+void AudioPlayer::publishAuditionSignalStatus ()
+{
+    // Sources/devices may invalidate state from a background callback. The
+    // message timer will publish that state; ValueTrees never cross into audio.
+    if (! juce::MessageManager::existsAndIsCurrentThread ()) return;
+    bool warning {}, attenuated {};
+    {
+        juce::ScopedLock sl (dataCS);
+        const auto audible { audioDeviceReady && (waveformSelected
+            ? ! waveformStopRequested && waveformAudition.isActive () && ! waveformAudition.isPausedForRange ()
+            : playState != AudioPlayerProperties::PlayState::stop && signalApproved && ! sampleAuditionBlocked) };
+        warning = audible && (waveformSelected ? waveformSignalWarning : sampleSignalWarning);
+        attenuated = audible && auditionAttenuationTarget () < 1.0f;
+    }
+    if (audioPlayerProperties.getAuditionSignalWarning () != warning)
+        audioPlayerProperties.setAuditionSignalWarning (warning, false);
+    if (audioPlayerProperties.getAuditionAttenuated () != attenuated)
+        audioPlayerProperties.setAuditionAttenuated (attenuated, false);
 }
 
 void AudioPlayer::configureAudioDevice (juce::String config)
@@ -583,7 +673,9 @@ void AudioPlayer::invalidateSignalCheck ()
     // Callers hold dataCS. Device/source callbacks only invalidate; the message
     // timer performs the bounded analysis after their prepared buffer is ready.
     ++signalRequestGeneration;
-    signalApproved = false;
+    signalCheckRunning = false;
+    // A finite, already playing buffer stays audible during marker drags. Its
+    // new frequency/range is provisionally reduced while the queued check runs.
     signalCheckNeeded = signalCheckEnabled && playState != AudioPlayerProperties::PlayState::stop;
     wakeSignalCheck ();
 }
@@ -612,30 +704,39 @@ AudioPlayer::SignalCheckKey AudioPlayer::signalCheckKey ()
              appProperties.isValid () ? appProperties.getMostRecentFolder () : juce::String {} };
 }
 
-void AudioPlayer::finishSignalCheck (std::uint64_t generation, const SignalCheckKey& key, bool approved)
+void AudioPlayer::finishSignalCheck (std::uint64_t generation, const SignalCheckKey& key, bool valid, bool warning)
 {
     {
         juce::ScopedLock sl (dataCS);
         if (generation != signalRequestGeneration || key != signalCheckKey () || waveformSelected || sampleAuditionBlocked)
             return;
-        signalApproved = approved;
-        if (approved)
+        const auto firstCheck { ! signalApproved };
+        signalCheckRunning = false;
+        signalApproved = valid;
+        sampleSignalWarning = valid && warning;
+        if (valid)
         {
             approvedSignal = key;
-            return;
+            approvedSignalWarning = warning;
+            finiteBufferRevision = key.bufferRevision;
+            if (firstCheck) resetAuditionAttenuation (); // No full-level burst at initial start.
         }
-        playState = AudioPlayerProperties::PlayState::stop;
-        simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
-        playbackPosition.store (-1.0);
-        playbackFinished.store (false);
-        invalidateSignalCheck ();
+        else
+        {
+            playState = AudioPlayerProperties::PlayState::stop;
+            simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
+            playbackPosition.store (-1.0);
+            playbackFinished.store (false);
+            invalidateSignalCheck ();
+        }
     }
-    if (audioPlayerProperties.isValid ())
+    if (! valid && audioPlayerProperties.isValid ())
     {
         audioPlayerProperties.setPlayState (AudioPlayerProperties::PlayState::stop, false);
         audioPlayerProperties.setSimulationPhase (AudioPlayerProperties::SimulationPhase::inactive, false);
         audioPlayerProperties.setPlaybackPosition (-1.0, false);
     }
+    publishAuditionSignalStatus ();
 }
 
 void AudioPlayer::processSignalCheck ()
@@ -643,19 +744,22 @@ void AudioPlayer::processSignalCheck ()
     std::shared_ptr<const juce::AudioBuffer<float>> buffer;
     SignalCheckKey key;
     std::uint64_t generation {};
+    bool needsFiniteCheck { true };
     {
         juce::ScopedLock sl (dataCS);
-        if (! signalCheckEnabled || ! signalCheckNeeded || signalDialogOpen || waveformSelected || sampleAuditionBlocked ||
+        if (! signalCheckEnabled || ! signalCheckNeeded || waveformSelected || sampleAuditionBlocked ||
             playState == AudioPlayerProperties::PlayState::stop) return;
         signalCheckNeeded = false;
+        signalCheckRunning = true;
         key = signalCheckKey ();
         generation = signalRequestGeneration;
         if (approvedSignal && *approvedSignal == key)
         {
-            signalApproved = true;
+            finishSignalCheck (generation, key, true, approvedSignalWarning);
             return;
         }
         buffer = sampleBuffer;
+        needsFiniteCheck = ! finiteBufferRevision || *finiteBufferRevision != key.bufferRevision;
     }
 
     // sampleBuffer was already converted to device-rate stereo. Retaining its
@@ -666,13 +770,32 @@ void AudioPlayer::processSignalCheck ()
     AuditionSignalCheck::Report report;
     if (buffer != nullptr)
     {
-        report = AuditionSignalCheck::analyse (*buffer, { key.start, key.length, 0, buffer->getNumChannels (), rate,
-            key.mode == AudioPlayerProperties::PlayState::loop });
+        // Validate the whole immutable buffer once per source revision. Range
+        // changes can then remain audible without allowing a previously hidden
+        // NaN/Inf into the resampler, even beyond the heuristic's analysis cap.
+        if (needsFiniteCheck)
+        {
+            for (int channel { 0 }; channel < buffer->getNumChannels (); ++channel)
+            {
+                const auto* values { buffer->getReadPointer (channel) };
+                for (int frame { 0 }; frame < buffer->getNumSamples (); ++frame)
+                    if (! std::isfinite (values[frame]))
+                    {
+                        report.status = AuditionSignalCheck::Status::blocked;
+                        report.reasons.add ("The sample contains non-finite PCM values.");
+                        break;
+                    }
+                if (report.isBlocked ()) break;
+            }
+        }
+        if (! report.isBlocked ())
+            report = AuditionSignalCheck::analyse (*buffer, { key.start, key.length, 0, buffer->getNumChannels (), rate,
+                key.mode == AudioPlayerProperties::PlayState::loop });
         if (simulation && ! report.isBlocked ())
         {
             const auto loopReport { AuditionSignalCheck::analyse (*buffer,
                 { key.loopStart, key.start + key.length - key.loopStart, 0, buffer->getNumChannels (), rate, true }) };
-            if (loopReport.isBlocked () || loopReport.needsConfirmation ()) report = loopReport;
+            if (loopReport.isBlocked () || loopReport.hasWarning ()) report = loopReport;
         }
     }
     {
@@ -688,39 +811,19 @@ void AudioPlayer::processSignalCheck ()
         else juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon, "Cannot audition this signal", explanation);
         return;
     }
-    if (! report.needsConfirmation ())
-    {
-        // Unavailable means inconclusive, not a claim that the signal is safe.
-        // Only high-confidence findings interrupt normal audition.
-        finishSignalCheck (generation, key, true);
-        return;
-    }
-    const auto message { report.explanation () + "\n\nThis may be CV or sub-audio material. Turn down your speakers or monitor level before continuing. "
-        "This check is not a guarantee of safe listening, and it does not lower the playback level. Continue auditioning?" };
-    auto complete = [lifetime = signalLifetime, generation, key] (bool proceed)
-    {
-        if (auto* owner { lifetime->owner })
-        {
-            owner->signalDialogOpen = false;
-            owner->finishSignalCheck (generation, key, proceed);
-            { juce::ScopedLock sl (owner->dataCS); owner->wakeSignalCheck (); }
-        }
-    };
-    signalDialogOpen = true;
-    if (confirmSignalWarning)
-        confirmSignalWarning (message, std::move (complete));
-    else
-        juce::AlertWindow::showAsync (juce::MessageBoxOptions {}.withIconType (juce::AlertWindow::WarningIcon)
-            .withTitle ("Check this signal before auditioning").withMessage (message).withButton ("Continue")
-            .withButton ("Stop"), [complete = std::move (complete)] (int result) { complete (result == 1); });
+    // Warnings never interrupt monitoring or require approval. Unavailable is
+    // inconclusive (not a safety claim), so it does not invent a warning.
+    finishSignalCheck (generation, key, true, report.hasWarning ());
 }
 
 void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState)
 {
     juce::ScopedLock sl (dataCS);
-    ++signalRequestGeneration; // STOP and every newer request cancel older confirmations.
+    ++signalRequestGeneration; // STOP and every newer request cancel stale checks.
     signalApproved = false;
+    sampleSignalWarning = false;
     signalCheckNeeded = false;
+    signalCheckRunning = false;
     const auto wasSimulation { simulationRangeActive };
     simulationPhase.store (AudioPlayerProperties::SimulationPhase::inactive);
     if (newPlayState != AudioPlayerProperties::PlayState::stop && sampleAuditionBlocked)
@@ -736,6 +839,7 @@ void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState
     {
         waveformAudition.stopImmediately ();
         waveformSelected = false;
+        waveformSignalWarning = false;
     }
     resetAuditionResampler = true;
     if (newPlayState == AudioPlayerProperties::PlayState::sampleIntoLoop)
@@ -784,6 +888,7 @@ void AudioPlayer::handlePlayState (AudioPlayerProperties::PlayState newPlayState
     playbackFinished.store (false);
     playbackPosition.store (newPlayState == AudioPlayerProperties::PlayState::stop || sampleRateRatio <= 0.0
                                 ? -1.0 : curSampleOffset / sampleRateRatio);
+    publishAuditionSignalStatus ();
 }
 
 void AudioPlayer::showConfigDialog ()
@@ -922,6 +1027,7 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
     if (waveformSelected)
     {
         waveformAudition.process (bufferToFill);
+        applyAuditionAttenuation (bufferToFill);
         return;
     }
     if (sampleAuditionBlocked)
@@ -989,6 +1095,7 @@ void AudioPlayer::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferT
         const juce::AudioSourceChannelInfo output { bufferToFill.buffer, bufferToFill.startSample, count };
         if (stretching) auditionStretch.process (output, speed);
         else auditionResampler.getNextAudioBlock (output);
+        applyAuditionAttenuation (output);
     }
     curSampleOffset += count * speed;
     if (simulating && curSampleOffset >= loopStart)
@@ -1044,4 +1151,5 @@ void AudioPlayer::timerCallback ()
                                                           ? AudioPlayerProperties::SamplePointsSelector::LoopPoints
                                                           : AudioPlayerProperties::SamplePointsSelector::SamplePoints, true);
     audioPlayerProperties.setPlaybackPosition (playbackPosition.load (), true);
+    publishAuditionSignalStatus ();
 }

@@ -18,8 +18,9 @@ namespace
             const auto layout { WorkspaceHeaderLayout::forWidth (width) };
             const juce::Rectangle<int> header { 0, 0, width, layout.height };
             const juce::Rectangle<int> title { 16, 5, 250, 40 };
-            const std::array<juce::Rectangle<int>, 10> controls { layout.samples, layout.designer, layout.bankExport, layout.scaleLabel,
-                layout.scaleSelector, layout.audioSettings, layout.help, layout.outputDevice, layout.appearanceLabel, layout.appearanceSelector };
+            const std::array<juce::Rectangle<int>, 11> controls { layout.samples, layout.designer, layout.bankExport, layout.scaleLabel,
+                layout.scaleSelector, layout.audioSettings, layout.help, layout.outputDevice, layout.appearanceLabel, layout.appearanceSelector,
+                layout.auditionProtection };
             for (size_t i { 0 }; i < controls.size (); ++i)
             {
                 check (header.contains (controls[i]) && ! controls[i].isEmpty (), "Global header controls remain visible at the minimum window width");
@@ -31,8 +32,10 @@ namespace
                    "Audio Settings stays between UI size and Quick help");
             check (layout.audioSettings.getWidth () >= 132 && layout.audioSettings.getHeight () >= 32,
                    "Audio Settings retains a readable, clickable size");
-            check (layout.height == (width < 1000 ? 132 : 92) && layout.outputDevice.getWidth () >= 280,
+            check (layout.height == (width < 1000 ? 168 : 128) && layout.outputDevice.getWidth () >= 280,
                    "Output device uses an extra row on compact screens rather than being crowded by bank export");
+            check (layout.auditionProtection.getWidth () >= 768 && layout.auditionProtection.getHeight () >= 32,
+                   "Audition reduction and its status stay outside the scrolling editor, including at minimum window width");
             check (layout.bankExport.getWidth () >= 158 && layout.bankExport.getHeight () >= 32,
                    "Save/Export Bank remains readable and outside the scrolling workspace");
         }

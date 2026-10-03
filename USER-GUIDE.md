@@ -200,7 +200,7 @@ LOOP independently anywhere within the audio file. This is a **channel** option
 covering all its zones; stereo pairs share it. It starts off for new channels.
 Explicit loops no longer move or shrink when you edit SAMPLE. Unset loops still
 follow SAMPLE, and every loop edit/nudge still respects the four-frame minimum
-and physical file bounds. All striped shading is hidden while this option is on.
+and physical file bounds.
 
 Use this for presets whose CV modulation exposes otherwise unreachable loop
 regions. The option permits those edits; it does not itself make a static
@@ -318,14 +318,11 @@ Zooming changes only the view. It does not alter sample boundaries, playback
 volume, audio files, or audition speed. The yellow playhead follows playback
 but does not automatically scroll the view; it may move off-screen when zoomed.
 
-**Diagonal gray stripes** identify the sample tail between **Loop End and Sample
-End** while looping is enabled, including during **Sample > Loop** simulation.
-That tail is not reached while playback keeps repeating the active loop. With
-**No Loop**, or when Loop End equals Sample End, there is no striped tail.
-The waveform remains visible through the stripes; audio outside the selected
-region is otherwise dimmed. This is a forward-loop indicator, not a prediction
-of gate-release, reverse playback or CV-modulated behavior. It appears in both
-the normal and expanded views.
+Audio outside the selected **SAMPLE** or **LOOP** audition region is dimmed in
+both the normal and expanded views. This shows which region the audition buttons
+play, not which audio is reachable on A8. In particular, audio after **Loop End**
+can be reached with **Loop/Release** or by moving the loop while scrubbing, so it
+has no special warning shading.
 
 ### Expanded view and marker tools
 
@@ -424,33 +421,50 @@ These controls use the word “loop,” but have different jobs:
 - **Sample > Loop:** a separate forward simulation that plays an intro and
   then repeats the loop, regardless of the saved channel mode.
 
-### Signal warnings before audition
+### Automatic audition-level reduction
 
-Sample **ONCE**, **LOOP**, Auto Loop and sample-into-loop audition check the
-selected signal before sound starts. The check deliberately avoids pop-ups for
-ordinary transients, loudness, clipping, or saw/pulse edges alone. It asks only
-when substantial sustained DC-like bias or strongly sub-audible content is found.
-Stereo sides are checked separately, so opposite polarities cannot cancel the
-warning. Known CV files remain blocked outright; this confirmation never
-overrides their CV protection.
+**Auto-reduce audition**, in the shared header below the workspace tabs/audio
+output, is on by default, applies to both workspaces, and is remembered across
+application restarts independently of presets. When the signal check detects
+substantial sustained DC-like bias or strongly sub-audible content, a red
+**DC / sub-audio detected** notice appears and computer playback receives an
+additional **−24 dB** attenuation. Playback continues at the reduced level;
+there is no confirmation dialog or interruption to marker dragging. This also
+helps when narrowing an ordinary sample to a very short, DC-biased loop.
+While a check is pending, **Checking signal — audition reduced** can appear
+with temporary attenuation. The red status explicitly shows **level −24 dB**
+or **reduction off** once a qualifying signal is detected.
 
-Choose **Stop/Cancel** if unsure. If you recognize the signal and intend to hear
-it, lower your physical listening level before continuing; the dialog does not
-automatically turn it down. An approval is remembered for that unchanged
-audition in this session. Changing the file, selected region, pitch/rate or
-relevant playback context requires a fresh check. STOP or a source change makes
-any old confirmation ineffective.
+The option covers Samples **ONCE**, **LOOP**, **Auto Loop** and **Sample > Loop**
+simulation, plus Designer audio audition, including imported cycles and layer
+banks. Stereo sides are checked separately so opposite polarities cannot cancel
+the detection. The check deliberately does not treat ordinary transients,
+loudness, clipping, or sharp saw/pulse edges alone as evidence of DC/sub-audio.
 
-The Designer checks its protected monitoring signal: its existing DC removal,
-audible-frequency limits and CV prohibition remain in force. Source DC that is
-removed before monitoring does not cause a redundant warning. These checks
-never rewrite WAVs or alter exports.
+You can switch **Auto-reduce audition** off or on during playback. Switching it
+off removes this automatic attenuation; the detection notice remains visible
+when applicable. Your **Monitor level** setting is not changed, and the
+reduction never changes WAVs, recipes or exported presets. For example, a
+Designer Monitor level of −18 dB becomes effectively −42 dB while the additional
+reduction is applied; the slider still reads −18 dB. Turning the option
+off can make playback substantially louder: lower your physical listening
+level first. Once the selected signal no longer meets the detection criteria,
+the automatic reduction is no longer applied.
 
-This is a warning heuristic, **not proof that a WAV is safe** for your speakers
-or headphones. It cannot know the gain, wiring or hardware. Analysis is bounded
-to two million frames per selected region (about 42 seconds at 48 kHz); longer
-regions are inconclusive and do not produce an alarm merely because they are
-long. No warning is not a safety certification. Start at a low listening level.
+Known CV files remain blocked outright, and known CV channels still require
+Mix Off. Turning off automatic reduction does not override those protections.
+Invalid audio containing non-finite sample values is also blocked. The
+Designer's existing DC removal and audible-frequency limits still apply; its
+signal check uses the protected monitoring signal, not source DC that has
+already been removed before listening.
+
+This is a conservative heuristic, **not a speaker-safety guarantee or a detector
+of every dangerous signal**. Attenuated playback is not muted and may still be
+unsafe at high downstream gain. The app cannot know the gain, wiring or
+hardware. Analysis is bounded to two million frames per selected region (about
+42 seconds at 48 kHz); longer regions are inconclusive and do not trigger
+reduction merely because they are long. No detection is not a safety
+certification. Start at a low listening level.
 
 ### Auto Loop while browsing samples
 
@@ -475,8 +489,8 @@ is hidden to leave room for the waveform and marker labels.
 
 - Playback starts at **Sample Start** and continues forward to **Loop Start**.
 - On reaching the loop, playback repeats between **Loop Start and Loop End**.
-  The loop must be entirely inside the sample region. The striped sample tail
-  after Loop End is not played while the loop remains active.
+  The loop must be entirely inside the sample region. This static simulation
+  keeps repeating the loop; it does not simulate releasing it into the sample tail.
 - During the intro, the Zones panel stays on **SAMPLE**, with
   **ONCE** highlighted as **STOP**. On entering the loop it switches to **LOOP**,
   with the **LOOP** transport button highlighted as **STOP**.

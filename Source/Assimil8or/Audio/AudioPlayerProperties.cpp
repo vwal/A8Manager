@@ -12,6 +12,39 @@ void AudioPlayerProperties::initValueTree ()
     setPreservePitch (true, false);
     setOutputDeviceName ({}, false);
     setAutoLoopEnabled (false, false);
+    setAutoReduceAudition (true, false);
+    setAuditionSignalWarning (false, false);
+    setAuditionAttenuated (false, false);
+}
+
+void AudioPlayerProperties::setAutoReduceAudition (bool enabled, bool includeSelfCallback)
+{
+    setValue (enabled, AutoReduceAuditionPropertyId, includeSelfCallback);
+}
+
+bool AudioPlayerProperties::getAutoReduceAudition ()
+{
+    return ! data.hasProperty (AutoReduceAuditionPropertyId) || getValue<bool> (AutoReduceAuditionPropertyId);
+}
+
+void AudioPlayerProperties::setAuditionSignalWarning (bool warning, bool includeSelfCallback)
+{
+    setValue (warning, AuditionSignalWarningPropertyId, includeSelfCallback);
+}
+
+bool AudioPlayerProperties::getAuditionSignalWarning ()
+{
+    return data.hasProperty (AuditionSignalWarningPropertyId) && getValue<bool> (AuditionSignalWarningPropertyId);
+}
+
+void AudioPlayerProperties::setAuditionAttenuated (bool attenuated, bool includeSelfCallback)
+{
+    setValue (attenuated, AuditionAttenuatedPropertyId, includeSelfCallback);
+}
+
+bool AudioPlayerProperties::getAuditionAttenuated ()
+{
+    return data.hasProperty (AuditionAttenuatedPropertyId) && getValue<bool> (AuditionAttenuatedPropertyId);
 }
 
 void AudioPlayerProperties::setAutoLoopEnabled (bool enabled, bool includeSelfCallback)
@@ -118,7 +151,19 @@ void AudioPlayerProperties::valueTreePropertyChanged (juce::ValueTree& treeWhose
 {
     if (treeWhosePropertyHasChanged == data)
     {
-        if (property == AutoLoopEnabledPropertyId)
+        if (property == AutoReduceAuditionPropertyId)
+        {
+            if (onAutoReduceAuditionChange) onAutoReduceAuditionChange (getAutoReduceAudition ());
+        }
+        else if (property == AuditionSignalWarningPropertyId)
+        {
+            if (onAuditionSignalWarningChange) onAuditionSignalWarningChange (getAuditionSignalWarning ());
+        }
+        else if (property == AuditionAttenuatedPropertyId)
+        {
+            if (onAuditionAttenuatedChange) onAuditionAttenuatedChange (getAuditionAttenuated ());
+        }
+        else if (property == AutoLoopEnabledPropertyId)
         {
             if (onAutoLoopEnabledChange != nullptr)
                 onAutoLoopEnabledChange (getAutoLoopEnabled ());

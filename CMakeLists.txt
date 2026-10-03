@@ -151,6 +151,7 @@ set(ASSIMIL8OR_VALIDATOR_FILES
     Source/Assimil8or/Validator/ValidatorResultProperties.h)
 
 set(GUI_FILES
+    Source/GUI/AuditionProtectionControls.h
     Source/GUI/BankExportComponent.cpp
     Source/GUI/BankExportComponent.h
     Source/GUI/A8NamePreview.h

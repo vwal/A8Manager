@@ -161,8 +161,9 @@ isolated audio-only test can still be useful.
    a static loop outside the sample does not normally loop. The default editor
    mode prevents that layout; **Allow loop outside sample** permits advanced CV-driven layouts.
    **Pass:** playback starts at Sample Start, travels forward to the loop and
-   then repeats that loop only. The striped tail from Loop End to Sample End is
-   not played while looping remains active. In the app, SAMPLE/ONCE STOP is
+   then repeats that loop only. The app's static simulation does not model release
+   into the sample tail; A8's Loop/Release and live scrubbing can reach post-loop
+   audio. No special warning shading should cover that audio. In the app, SAMPLE/ONCE STOP is
    highlighted during the initial passage; LOOP/LOOP STOP takes over when playback enters the loop. Either
    active STOP stops playback. Do not require the whole sample region to play
    once before an internal loop captures playback.
@@ -172,8 +173,8 @@ isolated audio-only test can still be useful.
    sample contraction accordingly; End mode contracts the contacted loop edge,
    never below four frames. An unset loop follows the sample. Save and reload
    these presets on both A8 and the computer. Import a file-bounded out-of-sample
-   loop: its positions must stay unchanged, the channel override must enable,
-   and stripes must disappear. Direct LOOP audition remains available, but the
+   loop: its positions must stay unchanged and the channel override must enable.
+   Direct LOOP audition remains available, but the
    static Sample > Loop simulation must not invent external CV behavior. The
    four-frame loop minimum applies in both modes. Turning the override off must
    ask before resetting external loops; Cancel preserves everything.
@@ -435,7 +436,7 @@ instrument, and record it with the measurement.
 | Software regression/build identifier | Tests pass; record output, not hardware claims | | |
 | Preset load and save/reload | Intended assignments/settings survive | | |
 | One Shot / Loop / Gated loop | Behaviors in Extended 4 | | |
-| Forward sample-to-loop cases | Initial passage then contained loop; striped post-loop sample tail is not reached while looping | | |
+| Forward sample-to-loop cases | Initial passage then contained loop; app simulation repeats the loop without modelling A8 release/scrubbing into post-loop audio | | |
 | Essential CV constants: 0 / +10% / -10% | Record actual volts; correct polarity, sustained DC | | |
 | Essential CV intended operating range | Measured extrema safe for the intended destination | | |
 | Essential Mix L and Mix R isolation | Both Off; no CV-correlated signal above recorded baseline | | |
@@ -517,6 +518,30 @@ DC removal and short fades/crossfades. Those measures do not modify exported WAV
 - [ ] Change Monitor level, then export. It must not change the WAV amplitude,
   the exported Channel LEVEL, or per-channel mix offsets. Use the design's
   amplitude/per-voice gain controls to change exported audio instead.
+- [ ] With speakers/headphones disconnected and a digital output capture or
+  test harness, audition an untagged WAV with substantial sustained DC-like
+  bias or strongly sub-audible content. **Auto-reduce audition** defaults on:
+  expect a red **DC / sub-audio detected** notice and an additional **−24 dB**
+  attenuation, not silence or a confirmation dialog. Check Samples ONCE/LOOP,
+  Auto Loop and Sample > Loop simulation; a narrow biased loop must remain
+  editable while playing. The detector is conservative, not a general test for
+  every hazardous waveform or steep edge.
+- [ ] With the same capture setup, switch **Auto-reduce audition** off and on
+  while playing a detected signal. Expect the reduction to be removed/restored
+  without restarting playback, and the red detection notice to remain while
+  applicable. Move to an undetected region: the reduction must clear. Stop:
+  there must be no unintended restart. Restart the app and confirm the chosen
+  option is remembered globally in both workspaces.
+- [ ] Import an audio cycle and expand it into a layer bank. Confirm Designer
+  audition uses the same detection/reduction policy on its protected monitor
+  signal. Source DC removed by that monitor should not trigger a redundant
+  notice; normal saw/pulse edges alone should not trigger reduction. Designer
+  out-of-range pitch still pauses audition independently of this option.
+- [ ] Export the same design with automatic reduction enabled and disabled.
+  The WAV samples, recipe and preset must be unchanged, and the displayed
+  Monitor level must not move. Invalid non-finite PCM must still be blocked;
+  tagged CV must still be blocked and keep Mix Off with either option setting.
+  These are computer-only checks: no oscilloscope or listening test is needed.
 - [ ] Open the export in the Samples workspace. That workspace auditions its
   selected sample/zone, not the complete linked bank. Its audition speed and
   Keep pitch controls are separate from the designer's monitor controls.

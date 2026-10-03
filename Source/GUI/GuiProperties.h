@@ -21,6 +21,8 @@ public:
     double getUiScale () { return std::clamp (getValue<double> (UiScalePropertyId), 1.0, 2.0); }
     void setLightAppearance (bool light) { setValue (light, LightAppearancePropertyId, false); }
     bool getLightAppearance () { return getValue<bool> (LightAppearancePropertyId); }
+    void setAutoReduceAudition (bool enabled) { setValue (enabled, AutoReduceAuditionPropertyId, false); }
+    bool getAutoReduceAudition () { return ! data.hasProperty (AutoReduceAuditionPropertyId) || getValue<bool> (AutoReduceAuditionPropertyId); }
 
     std::tuple<int,int> getPosition ();
     std::tuple<int, int> getSize ();
@@ -32,6 +34,7 @@ public:
     static inline const juce::Identifier PaneSizesPropertyId { "paneSizes" };
     static inline const juce::Identifier UiScalePropertyId { "uiScale" };
     static inline const juce::Identifier LightAppearancePropertyId { "lightAppearance" };
+    static inline const juce::Identifier AutoReduceAuditionPropertyId { "autoReduceAudition" };
 
     void initValueTree ();
     void processValueTree ();

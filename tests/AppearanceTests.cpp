@@ -1,6 +1,7 @@
 #include "GUI/ModernTheme.h"
 #include "GUI/DragValueEditor.h"
 #include "GUI/GuiProperties.h"
+#include "GUI/AuditionProtectionControls.h"
 #include "GUI/Assimil8or/Editor/Waveform/WaveformPresentation.h"
 #include <iostream>
 #include <stdexcept>
@@ -17,6 +18,71 @@ namespace
     {
         const auto a { luminance (foreground) }, b { luminance (background) };
         return (std::max (a, b) + 0.05) / (std::min (a, b) + 0.05);
+    }
+
+    void testAuditionProtectionControls (ModernLookAndFeel& look)
+    {
+        juce::ValueTree root { "Root" };
+        PersistentRootProperties persistent (root, PersistentRootProperties::WrapperType::owner, PersistentRootProperties::EnableCallbacks::no);
+        RuntimeRootProperties runtime (root, RuntimeRootProperties::WrapperType::owner, RuntimeRootProperties::EnableCallbacks::no);
+        AudioPlayerProperties player (runtime.getValueTree (), AudioPlayerProperties::WrapperType::owner, AudioPlayerProperties::EnableCallbacks::no);
+        GuiProperties prefs (persistent.getValueTree (), GuiProperties::WrapperType::owner, GuiProperties::EnableCallbacks::no);
+        struct Panel : juce::Component { void paint (juce::Graphics& g) override { g.fillAll (Theme::background); } } panel;
+        panel.setLookAndFeel (&look);
+        struct Detach { juce::Component& panel; ~Detach () { panel.setLookAndFeel (nullptr); } } detach { panel };
+        AuditionProtectionControls control;
+        panel.addAndMakeVisible (control);
+        panel.setSize (800, 48);
+        control.setBounds (16, 8, 768, 32);
+        control.init (root);
+        auto* toggle { dynamic_cast<juce::ToggleButton*> (control.findChildWithID ("autoReduceAudition")) };
+        auto* status { dynamic_cast<juce::Label*> (control.findChildWithID ("auditionSignalStatus")) };
+        check (toggle && status && toggle->getToggleState () && player.getAutoReduceAudition () && prefs.getAutoReduceAudition (),
+               "Auto-reduce audition is on by default in UI, runtime and persistent preferences");
+        check (status->getText ().isEmpty (), "No active detection leaves the status quiet");
+        player.setAuditionAttenuated (true, false);
+        check (status->getText ().contains ("Checking signal"), "Provisional reduction is not mislabelled as detected DC");
+        player.setAuditionSignalWarning (true, false);
+        check (status->getText ().contains (juce::String::fromUTF8 ("−24 dB")), "Detected signal explains the additional level reduction");
+        for (bool light : { false, true })
+        {
+            Theme::setAppearance (light);
+            Theme::refreshComponentTree (panel);
+            check (status->findColour (juce::Label::textColourId) == Theme::error
+                   && contrast (Theme::error, Theme::background) >= 4.5,
+                   "Detection is visibly red and legible in both appearances");
+            check (juce::GlyphArrangement::getStringWidth (status->getFont (), status->getText ()) < status->getWidth () - 10,
+                   "Complete status fits beside the toggle at minimum window width");
+            const auto artifactPath { juce::SystemStats::getEnvironmentVariable ("A8MANAGER_TEST_ARTIFACTS", {}) };
+            if (artifactPath.isNotEmpty ())
+            {
+                const juce::File folder { artifactPath };
+                check (folder.createDirectory ().wasOk (), "Create audition control snapshot folder");
+                auto stream { folder.getChildFile (light ? "audition-reduction-light.png" : "audition-reduction-dark.png").createOutputStream () };
+                check (stream && stream->setPosition (0) && juce::PNGImageFormat ().writeImageToStream (
+                    panel.createComponentSnapshot (panel.getLocalBounds (), true, 1.5f), *stream) && stream->truncate ().wasOk (),
+                    "Render the actual shared audition controls in both themes");
+            }
+        }
+        toggle->setToggleState (false, juce::dontSendNotification);
+        toggle->onClick ();
+        check (! player.getAutoReduceAudition () && ! prefs.getAutoReduceAudition (), "Disabling the option reaches the engine and persistent preference");
+        player.setAuditionAttenuated (false, false);
+        check (status->getText ().contains ("reduction off"), "Detected content remains indicated without falsely claiming attenuation when disabled");
+        check (juce::GlyphArrangement::getStringWidth (status->getFont (), status->getText ()) < status->getWidth () - 10,
+               "Disabled-reduction status is not truncated at minimum width");
+        const auto xml { persistent.getValueTree ().createXml () };
+        const auto restoredTree { juce::ValueTree::fromXml (*xml) };
+        GuiProperties restored (restoredTree, GuiProperties::WrapperType::owner, GuiProperties::EnableCallbacks::no);
+        check (! restored.getAutoReduceAudition (), "The disabled preference survives serialization");
+        player.setAuditionSignalWarning (false, false);
+        check (status->getText ().isEmpty (), "Stopping or clearing the signal removes the detection notice");
+        player.setAutoReduceAudition (true, false);
+        check (toggle->getToggleState () && prefs.getAutoReduceAudition (), "Changes from another UI/client synchronize the global toggle");
+        prefs.setAutoReduceAudition (false);
+        AuditionProtectionControls reopened;
+        reopened.init (root);
+        check (! player.getAutoReduceAudition (), "Reopening controls restores the saved choice rather than resetting it to on");
     }
 }
 
@@ -91,6 +157,8 @@ void testAppearance ()
     legacy.setProperty (GuiProperties::UiScalePropertyId, 1.5, nullptr);
     GuiProperties migrated (legacy, GuiProperties::WrapperType::owner, GuiProperties::EnableCallbacks::no);
     check (! migrated.getLightAppearance () && migrated.getUiScale () == 1.5, "Older settings gain a dark default without changing UI size");
+    check (migrated.getAutoReduceAudition (), "Older preferences gain default-on audition reduction");
+    testAuditionProtectionControls (look);
 
     { juce::Label temporary; Theme::bindColour (temporary, juce::Label::textColourId, [] { return Theme::muted; }); }
     Theme::setAppearance (false); // A destroyed popup/control must not leave a live callback target.

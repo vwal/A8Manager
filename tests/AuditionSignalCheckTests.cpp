@@ -28,7 +28,7 @@ void testAuditionSignalCheck ()
     auto sine { tone (96000, 48000, 440) };
     const juce::AudioBuffer<float> unchanged { sine };
     const auto sineReport { inspect (sine) };
-    require (sineReport.status == Status::clear && ! sineReport.needsConfirmation () && ! sineReport.isBlocked ()
+    require (sineReport.status == Status::clear && ! sineReport.hasWarning () && ! sineReport.isBlocked ()
              && sineReport.channels.size () == 1 && std::abs (sineReport.channels[0].mean) < 1.0e-7
              && sineReport.channels[0].lowFrequencyEnergyRatio < 0.01,
              "Ordinary audio tone has finite measured facts and no high-confidence signal warning");
@@ -78,7 +78,7 @@ void testAuditionSignalCheck ()
         dc.setSample (1, frame, -0.4f);
     }
     const auto dcReport { inspect (dc) };
-    require (dcReport.status == Status::warning && dcReport.needsConfirmation () && dcReport.channels.size () == 2
+    require (dcReport.status == Status::warning && dcReport.hasWarning () && dcReport.channels.size () == 2
              && dcReport.channels[0].mean > 0.39 && dcReport.channels[1].mean < -0.39
              && dcReport.channels[0].longestDcSeconds == 1.0 && dcReport.reasons.size () >= 2,
              "Sustained opposite-polarity DC is assessed independently in stereo, not hidden by averaging the channels");
@@ -154,7 +154,7 @@ void testAuditionSignalCheck ()
     juce::AudioBuffer<float> excessive (1, maximumFrames + 1);
     excessive.clear ();
     const auto unavailable { inspect (excessive) };
-    require (unavailable.status == Status::unavailable && ! unavailable.needsConfirmation () && ! unavailable.isBlocked ()
+    require (unavailable.status == Status::unavailable && ! unavailable.hasWarning () && ! unavailable.isBlocked ()
              && unavailable.channels.empty () && unavailable.explanation ().contains ("not been verified"),
              "Long regions remain quietly unverified rather than being subsampled into a misleading clear result");
     require (analyse (sine, { 0, 0, 0, 1, 48000, false }).status == Status::unavailable,

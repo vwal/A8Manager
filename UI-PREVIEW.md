@@ -43,14 +43,13 @@ unchanged.
 - **Waveform editing:** a wider display, +/− buttons, a clickable zoom percentage
   (reset horizontal fit and vertical 100%), and a horizontal scrollbar. Wheel
   zoom, plain drag-to-pan, right-drag zoom, and double-click-to-fit remain.
-  Sample start/end markers are red/blue; loop start/end are amber/pink, matching
+  Sample start/end markers are deep green/red; loop start/end are light green/pink, matching
   labels and colour keys in the zone panel. Always-visible, collision-aware marker
   overlays show grouped frame counts, source timestamps and pitch-adjusted region
   lengths. The active Sample/Loop selection follows marker editing; its surrounding
-  area is dimmed. The Sample End → later Loop Start bridge always has translucent
-  diagonal gray stripes, including when No Loop is saved. With hardware Loop or
-  Loop/Release enabled the striped extent continues to a later Loop End. This hint
-  is independent of audition selection; it does not emulate gate/reverse behavior.
+  area is dimmed. There is no special post-loop warning shading: Loop/Release or
+  scrubbing can reach audio after Loop End. Dimming indicates only the audition
+  selection, not a prediction of hardware gate/reverse/modulation behavior.
   Option/Alt-drag inside a region or on its handle moves that pair
   without resizing, with Shift for ten-times-finer travel. In overlapping regions
   the selected pair wins; handles identify their own pair. Outside both regions
